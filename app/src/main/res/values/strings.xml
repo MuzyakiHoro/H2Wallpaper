@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">H2Wallpaper</string> <string name="wallpaper_service_label">H2 定制壁纸</string>
+
+    <string name="wallpaper_description">自定义图片和颜色的动态壁纸</string>
+
+    <string name="select_image_button">选择图片</string>
+    <string name="set_wallpaper_button">应用动态壁纸</string>
+    <string name="preview_label_page1">第一页预览效果：</string>
+    <string name="select_background_color_label">选择背景颜色:</string>
+    <string name="image_preview_description">图片预览区域</string>
+    <string name="permission_needed_toast">需要读取图片权限以选择图片</string>
+    <string name="image_selection_failed_toast">图片选择失败</string>
+    <string name="image_load_failed_toast">加载图片失败</string>
+    <string name="please_select_image_first_toast">请先选择一张图片</string>
+    <string name="wallpaper_set_prompt_toast">请在列表中选择\'H2 定制壁纸\'并应用</string>
+    <string name="wallpaper_set_failed_toast">设置壁纸失败: %s</string>
+    <string name="loading_saved_image_failed_toast">加载已保存图片失败</string>
+</resources>
