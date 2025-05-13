@@ -14,7 +14,6 @@ import kotlin.math.min
 import android.graphics.Paint // 确保是这个
 import android.graphics.RenderEffect // 确保是这个
 import android.graphics.Shader // 因为 createBlurEffect 需要 Shader.TileMode
-import androidx.compose.ui.graphics.asComposeRenderEffect
 
 // ...
 
