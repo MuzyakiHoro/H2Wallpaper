@@ -30,18 +30,20 @@
     <FrameLayout
         android:id="@+id/previewContainer"
         android:layout_width="0dp"
-        android:layout_height="200dp"
-        android:layout_marginTop="8dp"
-        android:background="#CCCCCC"
-        app:layout_constraintTop_toBottomOf="@id/tvPreviewLabel"
+        android:layout_height="200dp" android:layout_marginTop="8dp"
+        android:background="#CCCCCC" app:layout_constraintTop_toBottomOf="@id/tvPreviewLabel"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"/>
+        app:layout_constraintEnd_toEndOf="parent">
 
-    <View
-        android:id="@+id/viewColorPreviewBottom"
+        <View
+            android:id="@+id/viewColorPreviewBottom"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#E0E0E0" /> <ImageView
+        android:id="@+id/ivImagePreviewTop"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="#E0E0E0" />
+        android:layout_height="match_parent" android:scaleType="centerCrop" android:contentDescription="@string/image_preview_description"
+        android:background="#00000000" /> </FrameLayout>
 
 
     <TextView
