@@ -4,18 +4,29 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.*
 import android.net.Uri
-import android.os.Handler
+import android.os.Build
+import android.os.Handler // 即使未使用，保留导入无大碍
 import android.os.Looper
 import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.SurfaceHolder
-import java.io.IOException
+// RenderScript imports
+import android.renderscript.Allocation
+import android.renderscript.Element
+import android.renderscript.RenderScript
+import android.renderscript.ScriptIntrinsicBlur
+
+// import java.io.IOException // 如果没有直接的IO异常处理，可以移除
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 class H2WallpaperService : WallpaperService() {
 
     companion object {
         private const val TAG = "H2WallpaperSvc"
+        private const val NUM_VIRTUAL_SCROLL_PAGES = 3
+        private const val P1_OVERLAY_FADE_TRANSITION_RATIO = 0.2f
+        private const val BACKGROUND_BLUR_RADIUS = 25f // 模糊半径 (1-25)，值越大越模糊
     }
 
     override fun onCreateEngine(): Engine {
@@ -24,29 +35,31 @@ class H2WallpaperService : WallpaperService() {
 
     private inner class H2WallpaperEngine : Engine(), SharedPreferences.OnSharedPreferenceChangeListener {
 
-        private val handler = Handler(Looper.getMainLooper())
+        // private val handler = Handler(Looper.getMainLooper())
         private var surfaceHolder: SurfaceHolder? = null
         private var isVisible: Boolean = false
         private var screenWidth: Int = 0
         private var screenHeight: Int = 0
 
         private var originalBitmap: Bitmap? = null
+        private var scrollingBackgroundBitmap: Bitmap? = null
+        private var blurredScrollingBackgroundBitmap: Bitmap? = null // 新增：模糊背景图
         private var page1TopCroppedBitmap: Bitmap? = null
-        private var page2PlusImageBitmap: Bitmap? = null
 
         private var page1BackgroundColor: Int = Color.LTGRAY
-        private var page1ImageHeightRatio: Float = 1f / 3f // Default height ratio, will be updated from prefs
-        // 在这里定义 Service 内部使用的默认高度比例
-        private val DEFAULT_HEIGHT_RATIO_ENGINE = 1f / 3f // 与 MainActivity 中的值保持一致
+        private var page1ImageHeightRatio: Float = 1f / 3f
+        private val DEFAULT_HEIGHT_RATIO_ENGINE = 1f / 3f
 
-
-        private val imagePaint = Paint().apply {
-            isAntiAlias = true
-            isFilterBitmap = true
+        private val scrollingBgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
+        private val p1OverlayBgPaint = Paint()
+        private val p1OverlayImagePaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
+        private val placeholderTextPaint = Paint().apply {
+            color = Color.WHITE; textSize = 40f; textAlign = Paint.Align.CENTER; isAntiAlias = true
         }
-        private val backgroundPaint = Paint()
+        private val placeholderBgPaint = Paint()
 
-        private var numPages = 1
+        private var numPagesReportedByLauncher = 1
+        private var currentXOffsetStep = 1.0f
         private var currentPageOffset = 0f
 
         private val prefs: SharedPreferences = applicationContext.getSharedPreferences(
@@ -57,13 +70,8 @@ class H2WallpaperService : WallpaperService() {
             super.onCreate(surfaceHolder)
             this.surfaceHolder = surfaceHolder
             prefs.registerOnSharedPreferenceChangeListener(this)
-            Log.d(TAG, "Engine Created. Initial screen: ${screenWidth}x${screenHeight}. Loading initial preferences.")
-            // Load preferences first to get ratio, but full bitmap prep might wait for surface dimensions
-            loadPreferencesOnly() // Just load values from SharedPreferences
-            // Actual bitmap loading and preparation will happen in onSurfaceChanged or onVisibilityChanged
-            // if screen dimensions are needed and not yet available.
-            // If screen dimensions are already somehow known (e.g. re-creation with existing surface),
-            // then loadAndPrepareWallpaperBitmaps might be called sooner.
+            Log.d(TAG, "H2WallpaperEngine Created.")
+            loadPreferencesOnly()
         }
 
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -74,35 +82,34 @@ class H2WallpaperService : WallpaperService() {
             this.screenHeight = height
             Log.d(TAG, "Surface changed: $width x $height. Old: ${oldScreenWidth}x${oldScreenHeight}")
 
-            // If dimensions actually changed or if bitmaps haven't been prepared with dimensions yet
-            if (oldScreenWidth != width || oldScreenHeight != height || page1TopCroppedBitmap == null || page2PlusImageBitmap == null) {
-                Log.d(TAG, "Dimensions changed or bitmaps not ready, reloading and preparing bitmaps.")
+            if (oldScreenWidth != width || oldScreenHeight != height || originalBitmap == null || scrollingBackgroundBitmap == null) {
+                Log.d(TAG, "Dimensions changed or bitmaps need (re)preparation.")
                 loadAndPrepareWallpaperBitmaps()
-            } else {
-                Log.d(TAG, "Dimensions unchanged and bitmaps seem ready, just redrawing.")
-                if (isVisible && surfaceHolder != null && surfaceHolder!!.surface.isValid) {
-                    drawCurrentFrame()
-                }
+            } else if (isVisible && surfaceHolder?.surface?.isValid == true) {
+                Log.d(TAG, "Dimensions unchanged, redrawing.")
+                drawCurrentFrame()
             }
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
             super.onSurfaceDestroyed(holder)
             isVisible = false
-            handler.removeCallbacks(drawRunner)
             prefs.unregisterOnSharedPreferenceChangeListener(this)
             recycleBitmaps()
-            Log.d(TAG, "Surface destroyed and bitmaps recycled.")
+            Log.d(TAG, "H2WallpaperEngine Surface destroyed.")
         }
 
         override fun onVisibilityChanged(visible: Boolean) {
             this.isVisible = visible
+            Log.d(TAG, "Visibility changed: $visible")
             if (visible) {
-                Log.d(TAG, "Wallpaper visible. Screen: ${screenWidth}x${screenHeight}. Ensuring bitmaps are loaded and prepared.")
-                loadAndPrepareWallpaperBitmaps() // Ensure latest data and correct bitmaps when becoming visible
-            } else {
-                Log.d(TAG, "Wallpaper not visible.")
-                handler.removeCallbacks(drawRunner)
+                if (originalBitmap == null || scrollingBackgroundBitmap == null || screenWidth == 0 || screenHeight == 0) {
+                    Log.d(TAG, "Visible but bitmaps or dimensions not ready, preparing.")
+                    loadAndPrepareWallpaperBitmaps()
+                } else if (surfaceHolder?.surface?.isValid == true) {
+                    Log.d(TAG, "Visible and ready, drawing frame.")
+                    drawCurrentFrame()
+                }
             }
         }
 
@@ -112,294 +119,348 @@ class H2WallpaperService : WallpaperService() {
             xPixelOffset: Int, yPixelOffset: Int
         ) {
             super.onOffsetsChanged(xOffset, yOffset, xOffsetStep, yOffsetStep, xPixelOffset, yPixelOffset)
-            numPages = if (xOffsetStep > 0f && xOffsetStep < 1f) ((1f / xOffsetStep).toInt()) + 1 else 1
-            if (numPages < 1) numPages = 1
-            currentPageOffset = xOffset
-            if (isVisible && surfaceHolder != null && surfaceHolder!!.surface.isValid) {
-                drawCurrentFrame()
+
+            val oldOffset = this.currentPageOffset
+            this.currentPageOffset = xOffset
+            this.currentXOffsetStep = if (xOffsetStep <= 0f || xOffsetStep >=1f) 1.0f else xOffsetStep
+
+            val reportedPages = if (this.currentXOffsetStep < 1.0f) {
+                (1f / this.currentXOffsetStep).roundToInt().coerceAtLeast(1)
+            } else {
+                1
+            }
+            this.numPagesReportedByLauncher = if (reportedPages < 1) 1 else reportedPages
+
+            if (oldOffset != xOffset) {
+                if (isVisible && surfaceHolder?.surface?.isValid == true) {
+                    drawCurrentFrame()
+                }
             }
         }
 
         override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
-            Log.e(TAG, ">>>> onSharedPreferenceChanged - Key: $key <<<<")
-            val oldRatio = page1ImageHeightRatio
-            loadPreferencesOnly() // Reload all preferences
-            if (oldRatio != page1ImageHeightRatio || key == MainActivity.KEY_IMAGE_URI || key == MainActivity.KEY_BACKGROUND_COLOR) {
-                if (isVisible && screenWidth > 0 && screenHeight > 0) {
-                    Log.d(TAG, "Relevant preference changed, reloading and preparing bitmaps.")
-                    loadAndPrepareWallpaperBitmaps() // This will re-prepare and redraw
-                } else {
-                    Log.d(TAG, "Prefs changed but not fully reprocessing (not visible or no dimensions yet)")
-                }
+            if (key == MainActivity.KEY_IMAGE_URI ||
+                key == MainActivity.KEY_BACKGROUND_COLOR ||
+                key == MainActivity.KEY_IMAGE_HEIGHT_RATIO) {
+                Log.d(TAG, "Relevant preference changed ('$key'), reloading bitmaps.")
+                loadAndPrepareWallpaperBitmaps()
             }
         }
 
-        // New method to only load preference values into member variables
         private fun loadPreferencesOnly() {
             page1BackgroundColor = prefs.getInt(MainActivity.KEY_BACKGROUND_COLOR, Color.LTGRAY)
             page1ImageHeightRatio = prefs.getFloat(MainActivity.KEY_IMAGE_HEIGHT_RATIO, DEFAULT_HEIGHT_RATIO_ENGINE)
-            Log.e(TAG, ">>>> Preferences loaded into variables: BgColor=$page1BackgroundColor, HeightRatio=$page1ImageHeightRatio <<<<")
         }
 
-
         private fun loadAndPrepareWallpaperBitmaps() {
-            // Ensure current preference values are loaded into member variables
-            loadPreferencesOnly() // Make sure page1ImageHeightRatio is up-to-date before loading bitmap
-
+            Log.d(TAG, "loadAndPrepareWallpaperBitmaps called.")
+            loadPreferencesOnly()
             val imageUriString = prefs.getString(MainActivity.KEY_IMAGE_URI, null)
-            Log.d(TAG, "loadAndPrepareWallpaperBitmaps: URI=$imageUriString")
+            recycleBitmaps()
 
+            if (imageUriString == null) {
+                Log.w(TAG, "No image URI set.")
+                if (isVisible && surfaceHolder?.surface?.isValid == true) drawCurrentFrame()
+                return
+            }
+            if (screenWidth == 0 || screenHeight == 0) {
+                Log.w(TAG, "Screen dimensions zero, cannot prepare bitmaps yet.")
+                return
+            }
 
-            if (imageUriString != null) {
-                try {
-                    val imageUri = Uri.parse(imageUriString)
-                    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    var inputStream = contentResolver.openInputStream(imageUri)
-                    BitmapFactory.decodeStream(inputStream, null, options)
-                    inputStream?.close()
+            try {
+                val imageUri = Uri.parse(imageUriString)
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                var inputStream = contentResolver.openInputStream(imageUri)
+                BitmapFactory.decodeStream(inputStream, null, options)
+                inputStream?.close()
 
-                    val reqW = if (screenWidth > 0) screenWidth * 2 else 2160 // Default if screen dims not ready
-                    val reqH = if (screenHeight > 0) screenHeight * 2 else 4096
+                val sampleSizeTargetWidth = screenWidth * NUM_VIRTUAL_SCROLL_PAGES
+                options.inSampleSize = calculateInSampleSize(options, sampleSizeTargetWidth, screenHeight)
+                options.inJustDecodeBounds = false
+                options.inPreferredConfig = Bitmap.Config.ARGB_8888
 
-                    options.inSampleSize = calculateInSampleSize(options, reqW, reqH)
-                    options.inJustDecodeBounds = false
+                inputStream = contentResolver.openInputStream(imageUri)
+                originalBitmap = BitmapFactory.decodeStream(inputStream, null, options)
+                inputStream?.close()
 
-                    recycleBitmaps() // Recycle previous bitmaps before loading new ones
-
-                    inputStream = contentResolver.openInputStream(imageUri)
-                    originalBitmap = BitmapFactory.decodeStream(inputStream, null, options)
-                    inputStream?.close()
-
-                    if (originalBitmap != null) {
-                        if (screenWidth > 0 && screenHeight > 0) {
-                            prepareDerivedBitmaps()
-                        } else {
-                            Log.w(TAG, "Original bitmap loaded, but screen dimensions unknown. Derived bitmaps will be prepared onSurfaceChanged.")
-                        }
-                    } else {
-                        Log.e(TAG, "Failed to decode original bitmap from URI after sampling.")
-                        // Ensure derived bitmaps are also nullified
-                        page1TopCroppedBitmap = null
-                        page2PlusImageBitmap = null
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error loading original image in service for URI: $imageUriString", e)
-                    recycleBitmaps()
-                    originalBitmap = null
+                if (originalBitmap != null) {
+                    Log.d(TAG, "Original bitmap decoded: ${originalBitmap!!.width}x${originalBitmap!!.height}")
+                    prepareDerivedBitmapsInternal(originalBitmap!!)
+                } else {
+                    Log.e(TAG, "Failed to decode originalBitmap after sampling.")
                 }
-            } else {
-                Log.w(TAG, "No image URI found in preferences. Clearing bitmaps.")
-                recycleBitmaps()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading originalBitmap from URI: $imageUriString", e)
                 originalBitmap = null
             }
 
-            // Always attempt to draw, drawCurrentFrame will handle null bitmaps by drawing placeholders
-            if (isVisible && surfaceHolder != null && surfaceHolder!!.surface.isValid) {
+            if (isVisible && surfaceHolder?.surface?.isValid == true) {
                 drawCurrentFrame()
             }
         }
 
-        private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
-            val (height: Int, width: Int) = options.outHeight to options.outWidth
-            var inSampleSize = 1
+        private fun prepareDerivedBitmapsInternal(sourceBitmap: Bitmap) {
+            Log.d(TAG, "prepareDerivedBitmapsInternal started.")
+            // 1. Prepare P1 overlay's top image
+            val targetTopHeight = (screenHeight * page1ImageHeightRatio).toInt()
+            page1TopCroppedBitmap?.recycle(); page1TopCroppedBitmap = null
+            if (targetTopHeight > 0 && screenWidth > 0) {
+                try {
+                    // ... (P1顶图的裁剪和缩放逻辑不变) ...
+                    val bmWidth = sourceBitmap.width; val bmHeight = sourceBitmap.height
+                    val targetWidth = screenWidth
+                    val bitmapAspectRatio = bmWidth.toFloat() / bmHeight.toFloat()
+                    val targetAspectRatio = targetWidth.toFloat() / targetTopHeight.toFloat()
+                    var srcX = 0; var srcY = 0; var cropWidth = bmWidth; var cropHeight = bmHeight
 
-            if (options.outWidth == 0 || options.outHeight == 0) { // Image has no dimensions
-                Log.e(TAG, "Image dimensions are zero (outWidth/outHeight is 0). Cannot calculate inSampleSize.")
-                return 1 // Or throw an error / handle appropriately
-            }
-            if (reqWidth <= 0 || reqHeight <= 0) {
-                Log.w(TAG, "Requested width ($reqWidth) or height ($reqHeight) is 0 or less. Defaulting inSampleSize to 1.")
-                return 1
-            }
-
-            if (height > reqHeight || width > reqWidth) {
-                val halfHeight: Int = height / 2
-                val halfWidth: Int = width / 2
-                while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
-                    if (inSampleSize == 0) { // Should not happen, but as an extreme guard
-                        Log.e(TAG, "inSampleSize became 0 in loop, breaking.")
-                        inSampleSize = 1024 // Arbitrary large to stop loop
-                        break
+                    if (bitmapAspectRatio > targetAspectRatio) {
+                        cropWidth = (bmHeight * targetAspectRatio).toInt(); srcX = (bmWidth - cropWidth) / 2
+                    } else {
+                        cropHeight = (bmWidth / targetAspectRatio).toInt(); srcY = (bmHeight - cropHeight) / 2
                     }
-                    inSampleSize *= 2
+                    cropWidth = min(cropWidth, bmWidth - srcX).coerceAtLeast(1)
+                    cropHeight = min(cropHeight, bmHeight - srcY).coerceAtLeast(1)
+                    srcX = srcX.coerceAtLeast(0); srcY = srcY.coerceAtLeast(0)
+                    if (srcX + cropWidth > bmWidth) cropWidth = bmWidth - srcX
+                    if (srcY + cropHeight > bmHeight) cropHeight = bmHeight - srcY
+
+                    if (cropWidth > 0 && cropHeight > 0) {
+                        val cropped = Bitmap.createBitmap(sourceBitmap, srcX, srcY, cropWidth, cropHeight)
+                        page1TopCroppedBitmap = Bitmap.createScaledBitmap(cropped, targetWidth, targetTopHeight, true)
+                        if (cropped != page1TopCroppedBitmap && !cropped.isRecycled) cropped.recycle()
+                        Log.d(TAG, "page1TopCroppedBitmap created: ${page1TopCroppedBitmap?.width}x${page1TopCroppedBitmap?.height}")
+                    }
+                } catch (e: Exception) { Log.e(TAG, "Error creating page1TopCroppedBitmap", e) }
+            }
+
+            // 2. Prepare scrolling background
+            scrollingBackgroundBitmap?.recycle(); scrollingBackgroundBitmap = null
+            blurredScrollingBackgroundBitmap?.recycle(); blurredScrollingBackgroundBitmap = null // 清理旧的模糊图
+
+            val bgTargetHeight = screenHeight
+            val obW = sourceBitmap.width.toFloat(); val obH = sourceBitmap.height.toFloat()
+            if (obW > 0 && obH > 0 && screenWidth > 0 && bgTargetHeight > 0) {
+                val scaleToFitScreenHeight = bgTargetHeight / obH
+                val scaledOriginalWidth = (obW * scaleToFitScreenHeight).toInt()
+                val actualNumVirtualPages = NUM_VIRTUAL_SCROLL_PAGES.coerceAtLeast(1)
+                val bgFinalTargetWidth = screenWidth * actualNumVirtualPages
+
+                if (scaledOriginalWidth > 0 && bgFinalTargetWidth > 0) {
+                    try {
+                        val tempScaledBitmap = Bitmap.createScaledBitmap(sourceBitmap, scaledOriginalWidth, bgTargetHeight, true)
+                        scrollingBackgroundBitmap = Bitmap.createBitmap(bgFinalTargetWidth, bgTargetHeight, Bitmap.Config.ARGB_8888)
+                        val canvas = Canvas(scrollingBackgroundBitmap!!)
+                        var currentX = 0
+                        if (scaledOriginalWidth >= bgFinalTargetWidth) {
+                            val offsetX = (scaledOriginalWidth - bgFinalTargetWidth) / 2
+                            val srcRect = Rect(offsetX, 0, offsetX + bgFinalTargetWidth, bgTargetHeight)
+                            val dstRect = Rect(0,0,bgFinalTargetWidth,bgTargetHeight)
+                            canvas.drawBitmap(tempScaledBitmap, srcRect, dstRect, null)
+                        } else {
+                            while(currentX < bgFinalTargetWidth) {
+                                canvas.drawBitmap(tempScaledBitmap, currentX.toFloat(), 0f, null)
+                                currentX += tempScaledBitmap.width
+                                if (tempScaledBitmap.width <= 0) break
+                            }
+                        }
+                        if (tempScaledBitmap != sourceBitmap && !tempScaledBitmap.isRecycled) tempScaledBitmap.recycle()
+                        Log.d(TAG, "scrollingBackgroundBitmap created: ${scrollingBackgroundBitmap!!.width}x${scrollingBackgroundBitmap!!.height}")
+
+                        // 尝试生成模糊背景图
+                        if (scrollingBackgroundBitmap != null && !scrollingBackgroundBitmap!!.isRecycled) {
+                            blurredScrollingBackgroundBitmap = blurBitmap(applicationContext, scrollingBackgroundBitmap!!, BACKGROUND_BLUR_RADIUS)
+                            if (blurredScrollingBackgroundBitmap != null) {
+                                Log.d(TAG, "blurredScrollingBackgroundBitmap created.")
+                            } else {
+                                Log.e(TAG, "Failed to blur scrollingBackgroundBitmap.")
+                            }
+                        }
+
+                    } catch (e: Exception) { Log.e(TAG, "Error creating scrollingBackgroundBitmap or blurring it", e) }
                 }
             }
-            Log.d(TAG, "Calculated inSampleSize: $inSampleSize for ${options.outWidth}x${options.outHeight} -> req ${reqWidth}x${reqHeight}")
+            if (scrollingBackgroundBitmap == null) Log.e(TAG, "Failed to create scrollingBackgroundBitmap.")
+            if (page1TopCroppedBitmap == null) Log.w(TAG, "page1TopCroppedBitmap is null after preparation.")
+        }
+
+        // 模糊图片的辅助方法
+        private fun blurBitmap(context: Context, bitmap: Bitmap, radius: Float): Bitmap? {
+            if (radius < 1f || radius > 25f) { // RenderScript blur radius is 1-25
+                Log.w(TAG, "Blur radius out of range (1-25): $radius. Returning original bitmap or null if failed.")
+                // 不能直接返回bitmap，因为调用者可能期望一个新的实例或者可以安全回收的实例
+                // 或者，我们可以复制一份原始bitmap返回，如果不想模糊的话
+                // return bitmap.copy(bitmap.config, true)
+                // 这里简单处理：如果半径无效，我们就不进行模糊，调用者会使用原始背景图
+                return null // 表示模糊失败或未进行
+            }
+            var rs: RenderScript? = null
+            var outputBitmap: Bitmap? = null
+            try {
+                // 创建一个与输入位图相同配置的输出位图
+                outputBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, bitmap.config ?: Bitmap.Config.ARGB_8888)
+                rs = RenderScript.create(context)
+                val input = Allocation.createFromBitmap(rs, bitmap)
+                val output = Allocation.createFromBitmap(rs, outputBitmap)
+                val script = ScriptIntrinsicBlur.create(rs, input.element) // 使用input的element确保类型匹配
+                script.setRadius(radius)
+                script.setInput(input)
+                script.forEach(output)
+                output.copyTo(outputBitmap)
+
+                // 释放RenderScript资源
+                input.destroy()
+                output.destroy()
+                script.destroy()
+
+                return outputBitmap
+            } catch (e: Exception) {
+                Log.e(TAG, "RenderScript blur failed", e)
+                outputBitmap?.recycle()
+                return null // 模糊失败
+            } finally {
+                rs?.destroy()
+            }
+        }
+
+
+        private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+            // ... (此方法不变) ...
+            val (height: Int, width: Int) = options.outHeight to options.outWidth
+            var inSampleSize = 1; if (width == 0 || height == 0 || reqWidth <= 0 || reqHeight <= 0) return 1
+            if (height > reqHeight || width > reqWidth) {
+                val halfH = height / 2; val halfW = width / 2
+                while ((halfH / inSampleSize) >= reqHeight && (halfW / inSampleSize) >= reqWidth) {
+                    inSampleSize *= 2; if (inSampleSize <= 0 || inSampleSize > 1024) { inSampleSize = 1024; break; }
+                }
+            }
             return inSampleSize
         }
 
-        private fun prepareDerivedBitmaps() {
-            Log.e(TAG, ">>>> prepareDerivedBitmaps - Using heightRatio: $page1ImageHeightRatio, Screen: ${screenWidth}x${screenHeight} <<<<")
-            val currentOriginalBitmap = originalBitmap // Use a local copy for safety within this function
-            if (currentOriginalBitmap == null) {
-                Log.w(TAG, "Original bitmap is null, cannot prepare derived bitmaps.")
-                page1TopCroppedBitmap?.recycle()
-                page1TopCroppedBitmap = null
-                page2PlusImageBitmap?.recycle()
-                page2PlusImageBitmap = null
-                return
-            }
-
-            if (screenWidth == 0 || screenHeight == 0) {
-                Log.w(TAG, "Screen dimensions are zero, cannot prepare derived bitmaps yet.")
-                return
-            }
-
-            // 1. 准备第一页上部分的图片 (page1TopCroppedBitmap)
-            val targetTopHeight = (screenHeight * page1ImageHeightRatio).toInt()
-            if (targetTopHeight <= 0) {
-                Log.e(TAG, "Target top height for page 1 is zero or less ($targetTopHeight from ratio $page1ImageHeightRatio and screenH $screenHeight). Cannot create bitmap.")
-                page1TopCroppedBitmap?.recycle()
-                page1TopCroppedBitmap = null
-            } else {
-                val targetAspectRatio = screenWidth.toFloat() / targetTopHeight.toFloat()
-                val originalAspectRatio = currentOriginalBitmap.width.toFloat() / currentOriginalBitmap.height.toFloat()
-                var srcX = 0
-                var srcY = 0
-                var cropWidth = currentOriginalBitmap.width
-                var cropHeight = currentOriginalBitmap.height
-
-                if (originalAspectRatio > targetAspectRatio) {
-                    cropHeight = currentOriginalBitmap.height
-                    cropWidth = (currentOriginalBitmap.height * targetAspectRatio).toInt()
-                    srcX = (currentOriginalBitmap.width - cropWidth) / 2
-                } else {
-                    cropWidth = currentOriginalBitmap.width
-                    cropHeight = (currentOriginalBitmap.width / targetAspectRatio).toInt()
-                    srcY = (currentOriginalBitmap.height - cropHeight) / 2
-                }
-                cropWidth = min(cropWidth, currentOriginalBitmap.width - srcX).coerceAtLeast(1)
-                cropHeight = min(cropHeight, currentOriginalBitmap.height - srcY).coerceAtLeast(1)
-                srcX = srcX.coerceAtLeast(0)
-                srcY = srcY.coerceAtLeast(0)
-
-                if (cropWidth <= 0 || cropHeight <= 0 || currentOriginalBitmap.width - srcX < cropWidth || currentOriginalBitmap.height - srcY < cropHeight) {
-                    Log.e(TAG, "Invalid crop dimensions calculated for page 1 top image. CmW:$cropWidth, CmH:$cropHeight, sX:$srcX, sY:$srcY, BmW:${currentOriginalBitmap.width}, BmH:${currentOriginalBitmap.height}")
-                    page1TopCroppedBitmap?.recycle()
-                    page1TopCroppedBitmap = null
-                } else {
-                    try {
-                        val croppedOriginal = Bitmap.createBitmap(currentOriginalBitmap, srcX, srcY, cropWidth, cropHeight)
-                        page1TopCroppedBitmap?.recycle()
-                        page1TopCroppedBitmap = Bitmap.createScaledBitmap(croppedOriginal, screenWidth, targetTopHeight, true)
-                        if (croppedOriginal != page1TopCroppedBitmap) croppedOriginal.recycle()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error creating page 1 top bitmap", e)
-                        page1TopCroppedBitmap = null
-                    }
-                }
-            }
-
-            // 2. 准备第二页及以后的图片 (page2PlusImageBitmap)
-            val aspect = currentOriginalBitmap.width.toFloat() / currentOriginalBitmap.height.toFloat()
-            var page2Width = screenWidth
-            var page2Height = (page2Width / aspect).toInt()
-            if (page2Height < screenHeight) {
-                page2Height = screenHeight
-                page2Width = (page2Height * aspect).toInt()
-            } else if (page2Width < screenWidth) {
-                page2Width = screenWidth
-                page2Height = (page2Width / aspect).toInt()
-            }
-
-            page2PlusImageBitmap?.recycle()
-            try {
-                page2PlusImageBitmap = Bitmap.createScaledBitmap(currentOriginalBitmap, page2Width.coerceAtLeast(1), page2Height.coerceAtLeast(1), true)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error creating page 2 image bitmap", e)
-                page2PlusImageBitmap = null
-            }
-
-            Log.d(TAG, "Derived bitmaps prepared. Page1: ${page1TopCroppedBitmap?.width}x${page1TopCroppedBitmap?.height}, Page2: ${page2PlusImageBitmap?.width}x${page2PlusImageBitmap?.height}")
-        }
-
-
         private fun recycleBitmaps() {
-            originalBitmap?.recycle()
-            page1TopCroppedBitmap?.recycle()
-            page2PlusImageBitmap?.recycle()
-            originalBitmap = null
-            page1TopCroppedBitmap = null
-            page2PlusImageBitmap = null
-            Log.d(TAG, "All service bitmaps recycled.")
+            Log.d(TAG, "Recycling bitmaps...")
+            originalBitmap?.recycle(); originalBitmap = null
+            scrollingBackgroundBitmap?.recycle(); scrollingBackgroundBitmap = null
+            blurredScrollingBackgroundBitmap?.recycle(); blurredScrollingBackgroundBitmap = null // 回收模糊图
+            page1TopCroppedBitmap?.recycle(); page1TopCroppedBitmap = null
         }
-
-        private val drawRunner = Runnable { drawCurrentFrame() }
 
         private fun drawCurrentFrame() {
-            if (!isVisible || surfaceHolder == null || !surfaceHolder!!.surface.isValid || screenWidth == 0 || screenHeight == 0) {
-                Log.d(TAG, "drawCurrentFrame: Not drawing (isVisible=$isVisible, surfaceValid=${surfaceHolder?.surface?.isValid}, screenW=$screenWidth, screenH=$screenHeight)")
+            if (!isVisible || surfaceHolder?.surface?.isValid != true || screenWidth == 0 || screenHeight == 0) {
                 return
             }
             var canvas: Canvas? = null
             try {
-                canvas = surfaceHolder!!.lockCanvas()
+                canvas = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    surfaceHolder!!.lockHardwareCanvas()
+                } else {
+                    surfaceHolder!!.lockCanvas()
+                }
+
                 if (canvas != null) {
                     canvas.drawColor(Color.BLACK)
-                    val isFirstPage = if (numPages <= 1) true else currentPageOffset < ((1.0f / numPages) / 2.0f) // Simplified first page check
-                    if (isFirstPage) {
-                        drawPage1Layout(canvas)
+
+                    // 1. 绘制可滚动的背景层 (优先使用模糊版本)
+                    val backgroundToDraw = blurredScrollingBackgroundBitmap ?: scrollingBackgroundBitmap
+
+                    backgroundToDraw?.let { bgBmp ->
+                        if (!bgBmp.isRecycled && bgBmp.width > 0) {
+                            val maxScrollPxPossible = (bgBmp.width - screenWidth).coerceAtLeast(0)
+                            val currentScrollPx = (currentPageOffset * maxScrollPxPossible).toInt()
+                                .coerceIn(0, maxScrollPxPossible)
+
+                            val bgTopOffset = ((screenHeight - bgBmp.height) / 2f)
+
+                            // Log.d(TAG, "DrawBG: offset=$currentPageOffset, scrollPx=$currentScrollPx, bgW=${bgBmp.width}, blurred=${bgBmp == blurredScrollingBackgroundBitmap}")
+
+                            canvas.save()
+                            canvas.translate(-currentScrollPx.toFloat(), bgTopOffset)
+                            scrollingBgPaint.alpha = 255
+                            canvas.drawBitmap(bgBmp, 0f, 0f, scrollingBgPaint)
+                            canvas.restore()
+                        } else {
+                            drawBackgroundPlaceholder(canvas, "背景处理中...")
+                        }
+                    } ?: run {
+                        drawBackgroundPlaceholder(canvas, "请选择图片以生成背景")
+                    }
+
+                    // 2. 计算并绘制第一屏的叠加层
+                    var overlayAlpha = 0
+                    val topImageActualHeight = (screenHeight * page1ImageHeightRatio).toInt()
+
+                    val safeNumPages = if (numPagesReportedByLauncher <= 0) 1 else numPagesReportedByLauncher
+                    val safeXOffsetStep = if (currentXOffsetStep <= 0f || currentXOffsetStep > 1f) 1.0f / safeNumPages else currentXOffsetStep
+
+                    if (safeNumPages == 1) {
+                        overlayAlpha = 255
                     } else {
-                        drawPage2PlusLayout(canvas)
+                        val transitionBoundary = safeXOffsetStep * P1_OVERLAY_FADE_TRANSITION_RATIO
+                        if (transitionBoundary > 0.001f) { // 避免除以非常小的值或零
+                            if (currentPageOffset <= transitionBoundary) {
+                                val progressOutOfP1FadeZone = (currentPageOffset / transitionBoundary).coerceIn(0f, 1f)
+                                overlayAlpha = ((1.0f - progressOutOfP1FadeZone) * 255).toInt().coerceIn(0, 255)
+                            } else {
+                                overlayAlpha = 0
+                            }
+                        } else { // 如果过渡区域无效（例如 xOffsetStep 太小），则根据是否在第一页粗略判断
+                            overlayAlpha = if (currentPageOffset < 0.01f) 255 else 0 // 几乎完全在第一页才显示
+                        }
+                    }
+                    // Log.d(TAG, "Overlay: alpha=$overlayAlpha, offset=$currentPageOffset, xStep=$safeXOffsetStep")
+
+                    if (overlayAlpha > 0) {
+                        p1OverlayBgPaint.color = page1BackgroundColor
+                        p1OverlayBgPaint.alpha = overlayAlpha
+                        canvas.drawRect(0f, topImageActualHeight.toFloat(), screenWidth.toFloat(), screenHeight.toFloat(), p1OverlayBgPaint)
+
+                        if (page1TopCroppedBitmap != null && !page1TopCroppedBitmap!!.isRecycled) {
+                            p1OverlayImagePaint.alpha = overlayAlpha
+                            canvas.drawBitmap(page1TopCroppedBitmap!!, 0f, 0f, p1OverlayImagePaint)
+                        } else if (originalBitmap != null) {
+                            drawPlaceholderForP1Overlay(canvas, topImageActualHeight, "P1顶图处理中...", overlayAlpha)
+                        }
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error during drawFrame", e)
-            }
-            finally {
+            } finally {
                 if (canvas != null) {
-                    try {
-                        surfaceHolder!!.unlockCanvasAndPost(canvas)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error unlocking canvas", e)
-                    }
+                    try { surfaceHolder!!.unlockCanvasAndPost(canvas) } catch (e: Exception) { Log.e(TAG, "Error unlocking canvas", e) }
                 }
+                scrollingBgPaint.alpha = 255
+                p1OverlayBgPaint.alpha = 255
+                p1OverlayImagePaint.alpha = 255
+                placeholderTextPaint.alpha = 255
+                placeholderBgPaint.alpha = 255
             }
         }
 
-        private fun drawPage1Layout(canvas: Canvas) {
-            // Ensure page1ImageHeightRatio is used for consistent calculations
-            val currentRatio = this.page1ImageHeightRatio // Use the member variable
-            val topImageActualHeight = (screenHeight * currentRatio).toInt()
-            Log.e(TAG, ">>>> drawPage1Layout - Using heightRatio: $currentRatio, Calculated topImageActualHeight: $topImageActualHeight <<<<")
-
-            backgroundPaint.color = page1BackgroundColor
-            canvas.drawRect(0f, topImageActualHeight.toFloat(), screenWidth.toFloat(), screenHeight.toFloat(), backgroundPaint)
-
-            page1TopCroppedBitmap?.let { bmp ->
-                if (!bmp.isRecycled) {
-                    canvas.drawBitmap(bmp, 0f, 0f, imagePaint)
-                } else {
-                    Log.e(TAG, "page1TopCroppedBitmap was recycled before drawing in drawPage1Layout!")
-                }
-            } ?: run {
-                backgroundPaint.color = Color.DKGRAY
-                canvas.drawRect(0f, 0f, screenWidth.toFloat(), topImageActualHeight.toFloat(), backgroundPaint)
-                val textPaint = Paint().apply { color = Color.WHITE; textSize = 40f; textAlign = Paint.Align.CENTER }
-                canvas.drawText("请选择图片", screenWidth / 2f, topImageActualHeight / 2f, textPaint)
-            }
+        private fun drawBackgroundPlaceholder(canvas: Canvas, text: String){
+            placeholderBgPaint.color = Color.DKGRAY
+            placeholderBgPaint.alpha = 255
+            canvas.drawRect(0f,0f, screenWidth.toFloat(), screenHeight.toFloat(), placeholderBgPaint)
+            placeholderTextPaint.alpha = 200
+            val textY = screenHeight / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
+            canvas.drawText(text, screenWidth/2f, textY, placeholderTextPaint)
         }
 
-        private fun drawPage2PlusLayout(canvas: Canvas) {
-            page2PlusImageBitmap?.let { bmp ->
-                if (!bmp.isRecycled) {
-                    val left = (screenWidth - bmp.width) / 2f
-                    val top = (screenHeight - bmp.height) / 2f
-                    canvas.drawBitmap(bmp, left, top, imagePaint)
-                } else {
-                    Log.e(TAG, "page2PlusImageBitmap was recycled before drawing in drawPage2PlusLayout!")
-                }
-            } ?: run {
-                backgroundPaint.color = Color.DKGRAY
-                canvas.drawRect(0f, 0f, screenWidth.toFloat(), screenHeight.toFloat(), backgroundPaint)
-                val textPaint = Paint().apply { color = Color.WHITE; textSize = 40f; textAlign = Paint.Align.CENTER }
-                canvas.drawText("请选择图片", screenWidth / 2f, screenHeight / 2f, textPaint)
-            }
+        private fun drawPlaceholderForP1Overlay(canvas: Canvas, topImageActualHeight: Int, text: String, overallAlpha: Int) {
+            // 确保 topImageActualHeight > 0 才绘制，避免无效矩形
+            if (topImageActualHeight <= 0) return
+
+            placeholderBgPaint.color = Color.GRAY
+            placeholderBgPaint.alpha = overallAlpha
+            canvas.drawRect(0f, 0f, screenWidth.toFloat(), topImageActualHeight.toFloat(), placeholderBgPaint)
+
+            placeholderTextPaint.alpha = overallAlpha
+            val textX = screenWidth / 2f
+            val textY = topImageActualHeight / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
+            canvas.drawText(text, textX, textY, placeholderTextPaint)
         }
 
         override fun onDestroy() {
             super.onDestroy()
-            handler.removeCallbacks(drawRunner)
             prefs.unregisterOnSharedPreferenceChangeListener(this)
             recycleBitmaps()
             Log.d(TAG, "H2WallpaperEngine destroyed.")
