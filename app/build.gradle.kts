@@ -52,6 +52,8 @@ dependencies {
     // 我们添加的库 (如果 libs.versions.toml 中没有定义，先这样写)
     implementation("androidx.palette:palette-ktx:1.0.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4") // ConstraintLayout 仍然需要，因为 activity_main.xml 用了它
+    implementation("androidx.appcompat:appcompat:1.6.1") // 你可以检查是否有更新的稳定版本
+    implementation("androidx.viewpager2:viewpager2:1.1.0") // 或更新的稳定版本 (1.1.0-beta02, 1.1.0等)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

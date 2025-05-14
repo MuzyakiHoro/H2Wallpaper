@@ -15,4 +15,10 @@
     <string name="wallpaper_set_prompt_toast">请在列表中选择\'H2 定制壁纸\'并应用</string>
     <string name="wallpaper_set_failed_toast">设置壁纸失败: %s</string>
     <string name="loading_saved_image_failed_toast">加载已保存图片失败</string>
+    <string name="color_palette_scroll_view_description">可选择的颜色列表</string>
+    <string name="image_preview_description_page1">壁纸第一页预览图</string>
+    <string name="image_preview_description_page_other">壁纸后续页预览图</string>
+    <string name="reset_height_button">复位高度</string>
+    <string name="increase_height_button">图片变大</string>
+    <string name="decrease_height_button">图片变小</string>
 </resources>
