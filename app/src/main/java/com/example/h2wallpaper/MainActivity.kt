@@ -22,7 +22,7 @@ import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.constraintlayout.widget.ConstraintLayout // For adjusting LayoutParams if needed
+import androidx.constraintlayout.widget.ConstraintLayout // For adjusting LayoutParams
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.Insets
@@ -76,16 +76,17 @@ class MainActivity : AppCompatActivity() {
                     selectedImageUri = uri
                     try {
                         val inputStream = contentResolver.openInputStream(uri)
+                        // TODO: Consider adding sampling here for very large images to prevent OOM in MainActivity preview
                         originalBitmap = BitmapFactory.decodeStream(inputStream)
                         inputStream?.close()
 
                         originalBitmap?.let { bitmap ->
-                            // 当选择新图片时，可以考虑是否重置高度比例
-                            // page1ImageHeightRatio = DEFAULT_HEIGHT_RATIO // 如果想保持当前调整，则注释掉这行
-                            extractColorsFromBitmap(bitmap) // 这会更新颜色并触发 adapter 更新和保存
+                            // When a new image is selected, you might want to reset the height ratio
+                            // page1ImageHeightRatio = DEFAULT_HEIGHT_RATIO // If new image should reset height
+                            extractColorsFromBitmap(bitmap) // This will update color and then adapter & prefs
                         } ?: run {
                             Toast.makeText(this, getString(R.string.image_load_failed_toast), Toast.LENGTH_SHORT).show()
-                            if (::previewPagerAdapter.isInitialized) {
+                            if (::previewPagerAdapter.isInitialized) { // Check if adapter is initialized
                                 previewPagerAdapter.updateData(null, selectedBackgroundColor, page1ImageHeightRatio)
                             }
                         }
@@ -125,41 +126,40 @@ class MainActivity : AppCompatActivity() {
         btnHeightIncrease = findViewById(R.id.btnHeightIncrease)
         btnHeightDecrease = findViewById(R.id.btnHeightDecrease)
 
-        loadPreferencesAndInitBitmapState() // 1. 加载数据到成员变量
+        loadPreferencesAndInitBitmapState() // 1. Load data into member variables
 
-        // 2. 用加载到的（或默认的）数据初始化Adapter
+        // 2. Initialize Adapter with loaded or default data
         previewPagerAdapter = WallpaperPreviewPagerAdapter(this, originalBitmap, selectedBackgroundColor, page1ImageHeightRatio)
         wallpaperPreviewPager.adapter = previewPagerAdapter
-        wallpaperPreviewPager.setPageTransformer(FadeAndScalePageTransformer())
+        wallpaperPreviewPager.setPageTransformer(FadeAndScalePageTransformer()) // Apply animation
 
-        // 3. 如果加载到了图片，确保通过extractColors来更新Adapter (extractColors内部会调用updateData)
-        //    如果没加载到图片，也确保Adapter是正确的空状态
+        // 3. If a bitmap was loaded from prefs, trigger color extraction which will update the adapter.
+        //    If no bitmap, ensure adapter shows empty state.
         if (originalBitmap != null) {
-            extractColorsFromBitmap(originalBitmap!!)
+            extractColorsFromBitmap(originalBitmap!!) // This calls adapter.updateData internally
         } else {
             previewPagerAdapter.updateData(null, selectedBackgroundColor, page1ImageHeightRatio)
-            populateColorPaletteView(listOf(Color.GRAY, Color.DKGRAY, Color.LTGRAY))
+            populateColorPaletteView(listOf(Color.GRAY, Color.DKGRAY, Color.LTGRAY)) // Show default color palette
         }
 
 
         val rootLayoutForInsets: View = findViewById(android.R.id.content)
         ViewCompat.setOnApplyWindowInsetsListener(rootLayoutForInsets) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+
             (btnSetWallpaper.layoutParams as? ConstraintLayout.LayoutParams)?.apply {
                 bottomMargin = systemBars.bottom + (16 * resources.displayMetrics.density).toInt()
-                btnSetWallpaper.layoutParams = this
+                // btnSetWallpaper.layoutParams = this // Not needed if only margin changes
             }
             (heightControlsContainer.layoutParams as? ConstraintLayout.LayoutParams)?.apply {
                 bottomMargin = systemBars.bottom + (8 * resources.displayMetrics.density).toInt()
-                heightControlsContainer.layoutParams = this
+                // heightControlsContainer.layoutParams = this
             }
-            // controlsContainer is constrained above heightControlsContainer,
-            // so its bottom margin relative to screen edge is indirectly handled.
-            // If controlsContainer also needs to adjust for top insets (status bar):
-            // (controlsContainer.layoutParams as? ConstraintLayout.LayoutParams)?.apply {
-            //     this.topMargin = systemBars.top + (DESIRED_TOP_MARGIN_DP * resources.displayMetrics.density).toInt()
-            //     controlsContainer.layoutParams = this
-            // }
+            // Request layout if margins changed. Simpler to do it once if multiple views are adjusted.
+            btnSetWallpaper.requestLayout()
+            heightControlsContainer.requestLayout()
+            // controlsContainer.requestLayout() // If its margins were also changed
+
             insets
         }
 
@@ -167,7 +167,7 @@ class MainActivity : AppCompatActivity() {
         btnSelectImage.setOnClickListener { checkAndRequestReadMediaImagesPermission() }
         btnSetWallpaper.setOnClickListener {
             if (selectedImageUri != null && originalBitmap != null) {
-                savePreferences() // 保存所有当前状态
+                savePreferences() // Save all current states
                 promptToSetWallpaper()
             } else {
                 Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
@@ -209,7 +209,7 @@ class MainActivity : AppCompatActivity() {
         if (::previewPagerAdapter.isInitialized) {
             previewPagerAdapter.updatePage1ImageHeightRatio(page1ImageHeightRatio)
         }
-        savePreferences() // 保存所有当前状态
+        savePreferences() // Save all current states
     }
 
     private fun checkAndRequestReadMediaImagesPermission() {
@@ -263,8 +263,9 @@ class MainActivity : AppCompatActivity() {
             if (::previewPagerAdapter.isInitialized) {
                 previewPagerAdapter.updateData(originalBitmap, selectedBackgroundColor, page1ImageHeightRatio)
             }
-            if (oldSelectedColor != selectedBackgroundColor || (selectedImageUri != null && originalBitmap !=null) ) {
-                savePreferences() // 如果颜色改变或有图，就保存
+            // Save preferences if color changed OR if a new image was just loaded (even if color choice didn't change from default)
+            if (oldSelectedColor != selectedBackgroundColor || (selectedImageUri != null && originalBitmap != null) ) {
+                savePreferences()
             }
         }
     }
@@ -291,23 +292,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Unified save function
+    // Unified save function, saves all current relevant states
     private fun savePreferences() {
         val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit()
         editor.putInt(KEY_BACKGROUND_COLOR, selectedBackgroundColor)
         editor.putFloat(KEY_IMAGE_HEIGHT_RATIO, page1ImageHeightRatio)
 
-        if (selectedImageUri != null && originalBitmap != null) { // 确保 originalBitmap 也存在
+        if (selectedImageUri != null && originalBitmap != null) {
             editor.putString(KEY_IMAGE_URI, selectedImageUri.toString())
         } else {
-            editor.remove(KEY_IMAGE_URI)
+            editor.remove(KEY_IMAGE_URI) // If no valid image, remove URI from prefs
         }
         editor.apply()
         Log.d(TAG, "Preferences saved: URI=${selectedImageUri?.toString()}, Color=$selectedBackgroundColor, HeightRatio=$page1ImageHeightRatio")
     }
 
-    // Renamed for clarity and to emphasize it only initializes state
+
     private fun loadPreferencesAndInitBitmapState() {
         val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val imageUriString = prefs.getString(KEY_IMAGE_URI, null)
@@ -323,9 +324,10 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading saved image URI: $imageUriString", e)
                 Toast.makeText(this, getString(R.string.loading_saved_image_failed_toast), Toast.LENGTH_SHORT).show()
+                // Nullify bitmap and URI if loading fails, so adapter shows empty state
                 originalBitmap = null
                 selectedImageUri = null
-                // Don't call clearImagePreferenceOnError here, let onCreate handle adapter update
+                // No need to call clearImagePreferenceOnError here, as savePreferences will handle removing URI if bitmap is null
             }
         } else {
             originalBitmap = null
@@ -334,29 +336,11 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "Preferences loaded: URI=${selectedImageUri?.toString()}, Color=$selectedBackgroundColor, HeightRatio=$page1ImageHeightRatio, Bitmap loaded: ${originalBitmap != null}")
     }
 
-    // This function is now primarily for clearing URI when load fails, not full state reset
-    private fun clearImagePreferenceOnError(resetHeightRatioToDefault: Boolean = false) { // Parameter might be less relevant now
-        val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val editor = prefs.edit()
-        editor.remove(KEY_IMAGE_URI)
-        // We might not want to reset height ratio here anymore,
-        // as it's loaded initially and saved on every change.
-        // If resetHeightRatioToDefault is true, then:
-        // if (resetHeightRatioToDefault) {
-        //    editor.putFloat(KEY_IMAGE_HEIGHT_RATIO, DEFAULT_HEIGHT_RATIO)
-        //    this.page1ImageHeightRatio = DEFAULT_HEIGHT_RATIO
-        // }
-        editor.apply()
-
-        selectedImageUri = null
-        originalBitmap = null
-        Log.w(TAG, "Cleared image URI from preferences.")
-
-        if (::previewPagerAdapter.isInitialized) {
-            previewPagerAdapter.updateData(null, selectedBackgroundColor, this.page1ImageHeightRatio)
-        }
-        populateColorPaletteView(listOf(Color.GRAY, Color.DKGRAY, Color.LTGRAY))
-    }
+    // This is less critical now as savePreferences handles removing URI if originalBitmap is null
+    // private fun clearImagePreferenceOnError(resetHeightRatioToDefault: Boolean = false) { ... }
+    // You can choose to keep it or remove it if savePreferences covers its main purpose.
+    // For now, I'll comment it out to simplify, as its main role (clearing URI)
+    // is implicitly handled by savePreferences when originalBitmap is null.
 
     private fun promptToSetWallpaper() {
         val wallpaperManager = WallpaperManager.getInstance(this)
