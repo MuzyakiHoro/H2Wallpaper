@@ -6,8 +6,8 @@
     android:layout_height="match_parent"
     tools:context=".MainActivity">
 
-    <androidx.viewpager2.widget.ViewPager2
-        android:id="@+id/wallpaperPreviewPager"
+    <com.example.h2wallpaper.WallpaperPreviewView
+        android:id="@+id/wallpaperPreviewView"
         android:layout_width="0dp"
         android:layout_height="0dp"
         app:layout_constraintTop_toTopOf="parent"
@@ -44,14 +44,14 @@
             android:id="@+id/btnHeightReset"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="复位高度"
+            android:text="@string/reset_height_button"
             style="?android:attr/buttonBarButtonStyle"
             android:layout_marginEnd="8dp"/>
         <Button
             android:id="@+id/btnHeightIncrease"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="图片变大"
+            android:text="@string/increase_height_button"
             style="?android:attr/buttonBarButtonStyle"
             android:layout_marginEnd="8dp"/>
         <Button
@@ -59,7 +59,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             style="?android:attr/buttonBarButtonStyle"
-            android:text="图片变小"/>
+            android:text="@string/decrease_height_button"/>
     </LinearLayout>
 
     <LinearLayout
@@ -75,12 +75,13 @@
         app:layout_constraintEnd_toEndOf="parent"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
-        android:layout_marginBottom="0dp"> <Button
-        android:id="@+id/btnSelectImage"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal"
-        android:text="@string/select_image_button" />
+        android:layout_marginBottom="0dp">
+        <Button
+            android:id="@+id/btnSelectImage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="@string/select_image_button" />
 
         <TextView
             android:id="@+id/tvSelectColorLabel"

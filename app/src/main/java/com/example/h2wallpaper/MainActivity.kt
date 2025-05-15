@@ -25,13 +25,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.constraintlayout.widget.ConstraintLayout // For adjusting LayoutParams
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.graphics.Insets
+// import androidx.core.graphics.Insets // Not explicitly used in the final version here
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 // import androidx.core.view.updatePadding // Can be useful for insets
 import androidx.palette.graphics.Palette
-import androidx.viewpager2.widget.ViewPager2
+// ViewPager2 and related imports are removed
 import java.io.IOException
 
 class MainActivity : AppCompatActivity() {
@@ -40,8 +40,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSelectImage: Button
     private lateinit var colorPaletteContainer: LinearLayout
     private lateinit var btnSetWallpaper: Button
-    private lateinit var wallpaperPreviewPager: ViewPager2
-    private lateinit var previewPagerAdapter: WallpaperPreviewPagerAdapter
+    private lateinit var wallpaperPreviewView: WallpaperPreviewView // 新的预览视图
     private lateinit var controlsContainer: LinearLayout
     private lateinit var heightControlsContainer: LinearLayout
     private lateinit var btnHeightReset: Button
@@ -51,13 +50,15 @@ class MainActivity : AppCompatActivity() {
     // 状态变量
     private var selectedImageUri: Uri? = null
     private var selectedBackgroundColor: Int = Color.LTGRAY
-    private var originalBitmap: Bitmap? = null
+    // originalBitmap 仍然可以用于颜色提取，但预览视图会自己根据URI加载图片
+    private var originalBitmapForColorExtraction: Bitmap? = null
+
 
     // 图片高度比例相关变量
     private var page1ImageHeightRatio: Float = 1f / 3f
     private val HEIGHT_RATIO_STEP = 0.05f
-    private val MIN_HEIGHT_RATIO = 0.15f
-    private val MAX_HEIGHT_RATIO = 0.60f
+    private val MIN_HEIGHT_RATIO = 0.15f // 与 WallpaperPreviewView 中的限制可以保持一致
+    private val MAX_HEIGHT_RATIO = 0.60f // 与 WallpaperPreviewView 中的限制可以保持一致
     private val DEFAULT_HEIGHT_RATIO = 1f / 3f
 
     companion object {
@@ -74,29 +75,36 @@ class MainActivity : AppCompatActivity() {
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
                     selectedImageUri = uri
+                    // 更新预览视图
+                    wallpaperPreviewView.setImageUri(selectedImageUri)
+
+                    // 为了提取颜色，我们仍然需要解码一次位图
+                    // 考虑性能，这里可以解码一个较小版本的位图用于颜色提取
                     try {
                         val inputStream = contentResolver.openInputStream(uri)
-                        // TODO: Consider adding sampling here for very large images to prevent OOM in MainActivity preview
-                        originalBitmap = BitmapFactory.decodeStream(inputStream)
+                        // 简单解码，不进行过于复杂的采样，因为仅用于颜色提取
+                        // 但如果图片过大，仍有OOM风险，可以加入适当采样
+                        val options = BitmapFactory.Options()
+                        options.inSampleSize = 2 // 简单采样，减少内存占用
+                        originalBitmapForColorExtraction = BitmapFactory.decodeStream(inputStream, null, options)
                         inputStream?.close()
 
-                        originalBitmap?.let { bitmap ->
-                            // When a new image is selected, you might want to reset the height ratio
-                            // page1ImageHeightRatio = DEFAULT_HEIGHT_RATIO // If new image should reset height
-                            extractColorsFromBitmap(bitmap) // This will update color and then adapter & prefs
+                        originalBitmapForColorExtraction?.let { bitmap ->
+                            extractColorsFromBitmap(bitmap)
                         } ?: run {
-                            Toast.makeText(this, getString(R.string.image_load_failed_toast), Toast.LENGTH_SHORT).show()
-                            if (::previewPagerAdapter.isInitialized) { // Check if adapter is initialized
-                                previewPagerAdapter.updateData(null, selectedBackgroundColor, page1ImageHeightRatio)
-                            }
+                            Toast.makeText(this, getString(R.string.image_load_failed_toast) + " (for color extraction)", Toast.LENGTH_SHORT).show()
+                            // 即便颜色提取失败，预览视图也已经收到了URI
+                            // 可以提供一个默认的颜色面板
+                            populateColorPaletteView(listOf(Color.GRAY, Color.DKGRAY, Color.LTGRAY))
+                            wallpaperPreviewView.setSelectedBackgroundColor(this.selectedBackgroundColor) // 确保预览使用当前颜色
                         }
                     } catch (e: IOException) {
-                        Log.e(TAG, "Error loading image from URI: $uri", e)
+                        Log.e(TAG, "Error loading image for color extraction: $uri", e)
                         Toast.makeText(this, getString(R.string.image_load_failed_toast), Toast.LENGTH_SHORT).show()
-                        if (::previewPagerAdapter.isInitialized) {
-                            previewPagerAdapter.updateData(null, selectedBackgroundColor, page1ImageHeightRatio)
-                        }
+                        populateColorPaletteView(listOf(Color.GRAY, Color.DKGRAY, Color.LTGRAY))
+                        wallpaperPreviewView.setSelectedBackgroundColor(this.selectedBackgroundColor)
                     }
+                    savePreferences() // 图片选择后就保存URI
                 } ?: run {
                     Toast.makeText(this, getString(R.string.image_selection_failed_toast) + " (No data URI)", Toast.LENGTH_SHORT).show()
                 }
@@ -116,58 +124,42 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(R.layout.activity_main)
 
+        // 初始化UI控件
         btnSelectImage = findViewById(R.id.btnSelectImage)
         colorPaletteContainer = findViewById(R.id.colorPaletteContainer)
         btnSetWallpaper = findViewById(R.id.btnSetWallpaper)
-        wallpaperPreviewPager = findViewById(R.id.wallpaperPreviewPager)
+        wallpaperPreviewView = findViewById(R.id.wallpaperPreviewView) // 获取新预览视图的引用
         controlsContainer = findViewById(R.id.controlsContainer)
         heightControlsContainer = findViewById(R.id.heightControlsContainer)
         btnHeightReset = findViewById(R.id.btnHeightReset)
         btnHeightIncrease = findViewById(R.id.btnHeightIncrease)
         btnHeightDecrease = findViewById(R.id.btnHeightDecrease)
 
-        loadPreferencesAndInitBitmapState() // 1. Load data into member variables
+        loadPreferencesAndInitState() // 修改了方法名并调整其内部逻辑
 
-        // 2. Initialize Adapter with loaded or default data
-        previewPagerAdapter = WallpaperPreviewPagerAdapter(this, originalBitmap, selectedBackgroundColor, page1ImageHeightRatio)
-        wallpaperPreviewPager.adapter = previewPagerAdapter
-        wallpaperPreviewPager.setPageTransformer(FadeAndScalePageTransformer()) // Apply animation
-
-        // 3. If a bitmap was loaded from prefs, trigger color extraction which will update the adapter.
-        //    If no bitmap, ensure adapter shows empty state.
-        if (originalBitmap != null) {
-            extractColorsFromBitmap(originalBitmap!!) // This calls adapter.updateData internally
-        } else {
-            previewPagerAdapter.updateData(null, selectedBackgroundColor, page1ImageHeightRatio)
-            populateColorPaletteView(listOf(Color.GRAY, Color.DKGRAY, Color.LTGRAY)) // Show default color palette
-        }
-
-
+        // 处理窗口边衬区
         val rootLayoutForInsets: View = findViewById(android.R.id.content)
         ViewCompat.setOnApplyWindowInsetsListener(rootLayoutForInsets) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
 
             (btnSetWallpaper.layoutParams as? ConstraintLayout.LayoutParams)?.apply {
                 bottomMargin = systemBars.bottom + (16 * resources.displayMetrics.density).toInt()
-                // btnSetWallpaper.layoutParams = this // Not needed if only margin changes
             }
             (heightControlsContainer.layoutParams as? ConstraintLayout.LayoutParams)?.apply {
                 bottomMargin = systemBars.bottom + (8 * resources.displayMetrics.density).toInt()
-                // heightControlsContainer.layoutParams = this
             }
-            // Request layout if margins changed. Simpler to do it once if multiple views are adjusted.
             btnSetWallpaper.requestLayout()
             heightControlsContainer.requestLayout()
-            // controlsContainer.requestLayout() // If its margins were also changed
-
             insets
         }
 
-
+        // 设置事件监听器
         btnSelectImage.setOnClickListener { checkAndRequestReadMediaImagesPermission() }
         btnSetWallpaper.setOnClickListener {
-            if (selectedImageUri != null && originalBitmap != null) {
-                savePreferences() // Save all current states
+            // 注意：现在不直接检查 originalBitmapForColorExtraction 是否为null来判断是否可以设置壁纸
+            // 而是检查 selectedImageUri 是否为null
+            if (selectedImageUri != null) {
+                savePreferences() // 保存所有当前状态
                 promptToSetWallpaper()
             } else {
                 Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
@@ -178,7 +170,7 @@ class MainActivity : AppCompatActivity() {
         btnHeightDecrease.setOnClickListener { updatePage1ImageHeightRatio((page1ImageHeightRatio - HEIGHT_RATIO_STEP)) }
 
         var controlsAreVisible = true
-        wallpaperPreviewPager.setOnClickListener {
+        wallpaperPreviewView.setOnClickListener { // 给新的预览视图设置点击事件
             controlsAreVisible = !controlsAreVisible
             val targetAlpha = if (controlsAreVisible) 1f else 0f
             val targetVisibility = if (controlsAreVisible) View.VISIBLE else View.GONE
@@ -206,17 +198,27 @@ class MainActivity : AppCompatActivity() {
         if (page1ImageHeightRatio == clampedRatio) return
 
         page1ImageHeightRatio = clampedRatio
-        if (::previewPagerAdapter.isInitialized) {
-            previewPagerAdapter.updatePage1ImageHeightRatio(page1ImageHeightRatio)
-        }
-        savePreferences() // Save all current states
+        wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio) // 更新预览视图
+        savePreferences() // 保存所有当前状态
     }
 
     private fun checkAndRequestReadMediaImagesPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_MEDIA_IMAGES), PERMISSION_REQUEST_READ_MEDIA_IMAGES)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) { // 运行时权限检查主要针对M及以上
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.READ_MEDIA_IMAGES
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.READ_MEDIA_IMAGES),
+                    PERMISSION_REQUEST_READ_MEDIA_IMAGES
+                )
+            } else {
+                openGallery()
+            }
         } else {
-            openGallery()
+            openGallery() // 对于低于M的版本，权限在安装时授予
         }
     }
 
@@ -247,24 +249,29 @@ class MainActivity : AppCompatActivity() {
                 palette?.vibrantSwatch, palette?.mutedSwatch, palette?.dominantSwatch,
                 palette?.lightVibrantSwatch, palette?.darkVibrantSwatch,
                 palette?.lightMutedSwatch, palette?.darkMutedSwatch
-            ).distinctBy { it.rgb }
-            val colors = swatches.map { it.rgb }.take(8)
+            ).distinctBy { it.rgb } // distinctBy 确保颜色不重复
+            val colors = swatches.map { it.rgb }.take(8) // 最多取8种颜色
 
             val oldSelectedColor = selectedBackgroundColor
             if (colors.isNotEmpty()) {
-                populateColorPaletteView(colors)
+                populateColorPaletteView(colors) // 用提取到的颜色更新UI调色板
+                // 如果当前选中的背景色是默认的 LTGRAY，或者不在新提取的颜色列表中，
+                // 则自动选择提取到的第一种颜色作为新的背景色。
                 if (selectedBackgroundColor == Color.LTGRAY || !colors.contains(selectedBackgroundColor)) {
                     selectedBackgroundColor = colors[0]
                 }
             } else {
+                // 如果没有提取到颜色，显示一个默认的调色板
                 populateColorPaletteView(listOf(Color.GRAY, Color.DKGRAY, Color.LTGRAY, Color.WHITE, Color.BLACK))
+                // 可以选择重置 selectedBackgroundColor 为一个安全值，或者保持不变
+                // selectedBackgroundColor = Color.LTGRAY; // 如果需要重置
             }
 
-            if (::previewPagerAdapter.isInitialized) {
-                previewPagerAdapter.updateData(originalBitmap, selectedBackgroundColor, page1ImageHeightRatio)
-            }
-            // Save preferences if color changed OR if a new image was just loaded (even if color choice didn't change from default)
-            if (oldSelectedColor != selectedBackgroundColor || (selectedImageUri != null && originalBitmap != null) ) {
+            // 更新预览视图的背景色
+            wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
+
+            // 如果颜色选择发生变化，或者刚加载了新图片（即使颜色选择没变），都保存偏好
+            if (oldSelectedColor != selectedBackgroundColor || originalBitmapForColorExtraction != null) {
                 savePreferences()
             }
         }
@@ -283,72 +290,81 @@ class MainActivity : AppCompatActivity() {
             colorView.setBackgroundColor(color)
             colorView.setOnClickListener {
                 selectedBackgroundColor = color
-                if (::previewPagerAdapter.isInitialized) {
-                    previewPagerAdapter.updateData(originalBitmap, selectedBackgroundColor, page1ImageHeightRatio)
-                }
-                savePreferences()
+                wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor) // 更新预览
+                savePreferences() // 保存偏好
             }
             colorPaletteContainer.addView(colorView)
         }
     }
 
-    // Unified save function, saves all current relevant states
     private fun savePreferences() {
         val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit()
         editor.putInt(KEY_BACKGROUND_COLOR, selectedBackgroundColor)
         editor.putFloat(KEY_IMAGE_HEIGHT_RATIO, page1ImageHeightRatio)
 
-        if (selectedImageUri != null && originalBitmap != null) {
+        if (selectedImageUri != null) {
             editor.putString(KEY_IMAGE_URI, selectedImageUri.toString())
         } else {
-            editor.remove(KEY_IMAGE_URI) // If no valid image, remove URI from prefs
+            editor.remove(KEY_IMAGE_URI)
         }
         editor.apply()
         Log.d(TAG, "Preferences saved: URI=${selectedImageUri?.toString()}, Color=$selectedBackgroundColor, HeightRatio=$page1ImageHeightRatio")
     }
 
-
-    private fun loadPreferencesAndInitBitmapState() {
+    private fun loadPreferencesAndInitState() {
         val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val imageUriString = prefs.getString(KEY_IMAGE_URI, null)
         selectedBackgroundColor = prefs.getInt(KEY_BACKGROUND_COLOR, Color.LTGRAY)
         page1ImageHeightRatio = prefs.getFloat(KEY_IMAGE_HEIGHT_RATIO, DEFAULT_HEIGHT_RATIO)
 
+        // 首先更新预览视图的颜色和高度比例，这些不依赖于图片加载
+        wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
+        wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio)
+
         if (imageUriString != null) {
             selectedImageUri = Uri.parse(imageUriString)
+            wallpaperPreviewView.setImageUri(selectedImageUri) // 让预览视图自己加载和处理图片
+
+            // 为了初始化颜色选择器，我们仍然需要从保存的URI中提取颜色
             try {
                 val inputStream = contentResolver.openInputStream(selectedImageUri!!)
-                originalBitmap = BitmapFactory.decodeStream(inputStream)
+                // 同样，这里解码一个用于颜色提取的位图
+                val options = BitmapFactory.Options()
+                options.inSampleSize = 2 // 简单采样
+                val bitmapForColorExtraction = BitmapFactory.decodeStream(inputStream, null, options)
                 inputStream?.close()
+
+                if (bitmapForColorExtraction != null) {
+                    this.originalBitmapForColorExtraction = bitmapForColorExtraction // 更新成员变量（如果其他地方仍需要）
+                    extractColorsFromBitmap(bitmapForColorExtraction)
+                } else {
+                    Log.e(TAG, "Failed to load bitmap for color extraction from saved URI.")
+                    populateColorPaletteView(listOf(Color.GRAY, Color.DKGRAY, Color.LTGRAY)) // 显示默认颜色
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "Error loading saved image URI: $imageUriString", e)
+                Log.e(TAG, "Error loading saved image URI for color extraction: $imageUriString", e)
                 Toast.makeText(this, getString(R.string.loading_saved_image_failed_toast), Toast.LENGTH_SHORT).show()
-                // Nullify bitmap and URI if loading fails, so adapter shows empty state
-                originalBitmap = null
-                selectedImageUri = null
-                // No need to call clearImagePreferenceOnError here, as savePreferences will handle removing URI if bitmap is null
+                populateColorPaletteView(listOf(Color.GRAY, Color.DKGRAY, Color.LTGRAY))
             }
         } else {
-            originalBitmap = null
+            // 没有保存的图片URI
             selectedImageUri = null
+            originalBitmapForColorExtraction = null
+            wallpaperPreviewView.setImageUri(null) // 确保预览视图也清空图片
+            populateColorPaletteView(listOf(Color.GRAY, Color.DKGRAY, Color.LTGRAY)) // 显示默认颜色
         }
-        Log.d(TAG, "Preferences loaded: URI=${selectedImageUri?.toString()}, Color=$selectedBackgroundColor, HeightRatio=$page1ImageHeightRatio, Bitmap loaded: ${originalBitmap != null}")
+        Log.d(TAG, "Preferences loaded and initial state set for PreviewView.")
     }
 
-    // This is less critical now as savePreferences handles removing URI if originalBitmap is null
-    // private fun clearImagePreferenceOnError(resetHeightRatioToDefault: Boolean = false) { ... }
-    // You can choose to keep it or remove it if savePreferences covers its main purpose.
-    // For now, I'll comment it out to simplify, as its main role (clearing URI)
-    // is implicitly handled by savePreferences when originalBitmap is null.
 
     private fun promptToSetWallpaper() {
-        val wallpaperManager = WallpaperManager.getInstance(this)
+        // WallpaperManager.getInstance(this)
         try {
             val componentName = ComponentName(packageName, H2WallpaperService::class.java.name)
             val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER)
             intent.putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, componentName)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // 对于 startActivity 通常不需要 NEW_TASK
             startActivity(intent)
             Toast.makeText(this, getString(R.string.wallpaper_set_prompt_toast), Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
