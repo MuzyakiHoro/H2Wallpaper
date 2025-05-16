@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.h2wallpaper"
-        minSdk = 32
+        minSdk = 31
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"

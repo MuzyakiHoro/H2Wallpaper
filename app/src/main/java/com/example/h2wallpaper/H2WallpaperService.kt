@@ -17,7 +17,7 @@ class H2WallpaperService : WallpaperService() {
     companion object {
         private const val TAG = "H2WallpaperSvc"
         private const val DEBUG_TAG = "H2WallpaperSvc_Debug"
-        private const val BACKGROUND_BLUR_RADIUS = 25f
+       // private const val BACKGROUND_BLUR_RADIUS = 25f
         private const val DEFAULT_VIRTUAL_PAGES_FOR_SCROLLING = 3
     }
 
@@ -228,7 +228,7 @@ class H2WallpaperService : WallpaperService() {
                         SharedWallpaperRenderer.loadAndProcessInitialBitmaps(
                             applicationContext, uri, screenWidth, screenHeight,
                             page1ImageHeightRatio, pagesForBackground,
-                            BACKGROUND_BLUR_RADIUS
+                            SharedWallpaperRenderer.DEFAULT_BACKGROUND_BLUR_RADIUS
                         )
                     }
                     ensureActive()
@@ -340,7 +340,7 @@ class H2WallpaperService : WallpaperService() {
                         ensureActive()
                         SharedWallpaperRenderer.prepareScrollingAndBlurredBitmaps(
                             applicationContext, currentSource, screenWidth, screenHeight,
-                            pagesForBg, BACKGROUND_BLUR_RADIUS
+                            pagesForBg, SharedWallpaperRenderer.DEFAULT_BACKGROUND_BLUR_RADIUS
                         )
                     }
                     ensureActive()
@@ -386,7 +386,8 @@ class H2WallpaperService : WallpaperService() {
                         val config = SharedWallpaperRenderer.WallpaperConfig(
                             screenWidth, screenHeight, page1BackgroundColor, page1ImageHeightRatio,
                             currentPageOffset, pagesForConfig,
-                            p1OverlayFadeTransitionRatio = 0.2f,
+                            //p1OverlayFadeTransitionRatio = 0.5f, // P1 在前 50% 滑动距离内淡出
+                            //p2BackgroundFadeInRatio = 0.5f,    // P2 在前 50% 滑动距离内淡入
                             scrollSensitivityFactor = this.currentScrollSensitivity
                         )
                         SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps)

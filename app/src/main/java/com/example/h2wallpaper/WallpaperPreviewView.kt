@@ -183,7 +183,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
                     ensureActive()
                     SharedWallpaperRenderer.loadAndProcessInitialBitmaps(
                         context, uriToLoad, viewWidth, viewHeight,
-                        page1ImageHeightRatio, numVirtualPages, 0f // 预览时不模糊
+                        page1ImageHeightRatio, numVirtualPages, SharedWallpaperRenderer.DEFAULT_BACKGROUND_BLUR_RADIUS // 预览时不模糊
                     )
                 }
                 ensureActive()
