@@ -60,7 +60,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
 
     companion object {
-        private const val SNAP_ANIMATION_DURATION_MS = 400
+        private const val SNAP_ANIMATION_DURATION_MS = 700
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
