@@ -5,28 +5,27 @@ import android.content.SharedPreferences
 import android.graphics.*
 import android.net.Uri
 import android.os.Build
-import android.os.Handler // 即使未使用，保留导入无大碍
-import android.os.Looper
+// import android.os.Handler // 未使用，可以移除
+// import android.os.Looper // 未使用，可以移除
 import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.SurfaceHolder
-// RenderScript imports
-import android.renderscript.Allocation
-import android.renderscript.Element
-import android.renderscript.RenderScript
-import android.renderscript.ScriptIntrinsicBlur
-
-// import java.io.IOException // 如果没有直接的IO异常处理，可以移除
-import kotlin.math.min
+// RenderScript imports 仍然需要，因为 SharedWallpaperRenderer 内部使用了它
+// import android.renderscript.Allocation // 如果 SharedWallpaperRenderer 完全封装了RenderScript则不需要在这里导入
+// import android.renderscript.Element
+// import android.renderscript.RenderScript
+// import android.renderscript.ScriptIntrinsicBlur
+import kotlinx.coroutines.* // 引入协程
 import kotlin.math.roundToInt
 
 class H2WallpaperService : WallpaperService() {
 
     companion object {
         private const val TAG = "H2WallpaperSvc"
-        private const val NUM_VIRTUAL_SCROLL_PAGES = 3
-        private const val P1_OVERLAY_FADE_TRANSITION_RATIO = 0.2f
-        private const val BACKGROUND_BLUR_RADIUS = 25f // 模糊半径 (1-25)，值越大越模糊
+        // 这些常量现在由 SharedWallpaperRenderer.WallpaperConfig 的默认值或参数控制
+        // private const val NUM_VIRTUAL_SCROLL_PAGES = 3
+        // private const val P1_OVERLAY_FADE_TRANSITION_RATIO = 0.2f
+        private const val BACKGROUND_BLUR_RADIUS = 25f // 这个可以作为参数传给 prepareAllBitmaps
     }
 
     override fun onCreateEngine(): Engine {
@@ -35,32 +34,30 @@ class H2WallpaperService : WallpaperService() {
 
     private inner class H2WallpaperEngine : Engine(), SharedPreferences.OnSharedPreferenceChangeListener {
 
-        // private val handler = Handler(Looper.getMainLooper())
+        // private val handler = Handler(Looper.getMainLooper()) // 不再需要
         private var surfaceHolder: SurfaceHolder? = null
         private var isVisible: Boolean = false
         private var screenWidth: Int = 0
         private var screenHeight: Int = 0
 
-        private var originalBitmap: Bitmap? = null
-        private var scrollingBackgroundBitmap: Bitmap? = null
-        private var blurredScrollingBackgroundBitmap: Bitmap? = null // 新增：模糊背景图
-        private var page1TopCroppedBitmap: Bitmap? = null
+        // --- 新的成员变量，用于存储通过 SharedWallpaperRenderer 准备的位图 ---
+        private var engineWallpaperBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
+        private val engineScope = CoroutineScope(Dispatchers.Main + SupervisorJob()) // 用于加载位图
 
+        // --- 存储从 SharedPreferences 读取的配置 ---
+        private var imageUriString: String? = null // 存储 URI 字符串
         private var page1BackgroundColor: Int = Color.LTGRAY
         private var page1ImageHeightRatio: Float = 1f / 3f
-        private val DEFAULT_HEIGHT_RATIO_ENGINE = 1f / 3f
+        private val defaultHeightRatioEngine = 1f / 3f // 引擎内的默认值
 
-        private val scrollingBgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
-        private val p1OverlayBgPaint = Paint()
-        private val p1OverlayImagePaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
-        private val placeholderTextPaint = Paint().apply {
-            color = Color.WHITE; textSize = 40f; textAlign = Paint.Align.CENTER; isAntiAlias = true
-        }
-        private val placeholderBgPaint = Paint()
+        // --- Paint 对象现在由 SharedWallpaperRenderer 管理，这里不再需要 ---
+        // private val scrollingBgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
+        // ... 其他 Paint 对象 ...
 
-        private var numPagesReportedByLauncher = 1
-        private var currentXOffsetStep = 1.0f
-        private var currentPageOffset = 0f
+        private var numPagesReportedByLauncher = 1 // 由 Launcher 报告的页面数
+        private var currentXOffsetStep = 1.0f      // 由 Launcher 报告的每页偏移步长
+        private var currentPageOffset = 0f         // 由 Launcher 报告的当前总偏移 (0.0 - 1.0)
+
 
         private val prefs: SharedPreferences = applicationContext.getSharedPreferences(
             MainActivity.PREFS_NAME, Context.MODE_PRIVATE
@@ -71,6 +68,7 @@ class H2WallpaperService : WallpaperService() {
             this.surfaceHolder = surfaceHolder
             prefs.registerOnSharedPreferenceChangeListener(this)
             Log.d(TAG, "H2WallpaperEngine Created.")
+            // 初始加载偏好设置，但不立即准备位图，等待 surfaceC hanged 或 visibilityChanged
             loadPreferencesOnly()
         }
 
@@ -82,20 +80,29 @@ class H2WallpaperService : WallpaperService() {
             this.screenHeight = height
             Log.d(TAG, "Surface changed: $width x $height. Old: ${oldScreenWidth}x${oldScreenHeight}")
 
-            if (oldScreenWidth != width || oldScreenHeight != height || originalBitmap == null || scrollingBackgroundBitmap == null) {
-                Log.d(TAG, "Dimensions changed or bitmaps need (re)preparation.")
-                loadAndPrepareWallpaperBitmaps()
-            } else if (isVisible && surfaceHolder?.surface?.isValid == true) {
-                Log.d(TAG, "Dimensions unchanged, redrawing.")
-                drawCurrentFrame()
+            // 只有当屏幕尺寸有效且发生变化，或者位图尚未准备好时，才重新准备位图
+            if (screenWidth > 0 && screenHeight > 0) {
+                if (oldScreenWidth != width || oldScreenHeight != height || engineWallpaperBitmaps == null) {
+                    Log.d(TAG, "Dimensions changed or bitmaps need (re)preparation.")
+                    loadAndPrepareWallpaperBitmapsAsync()
+                } else if (isVisible && this.surfaceHolder?.surface?.isValid == true) {
+                    Log.d(TAG, "Dimensions unchanged, redrawing.")
+                    drawCurrentFrame()
+                }
+            } else {
+                // 屏幕尺寸无效，清理位图
+                SharedWallpaperRenderer.recycleBitmaps(engineWallpaperBitmaps)
+                engineWallpaperBitmaps = null
             }
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
             super.onSurfaceDestroyed(holder)
             isVisible = false
+            engineScope.cancel() // 取消所有协程
             prefs.unregisterOnSharedPreferenceChangeListener(this)
-            recycleBitmaps()
+            SharedWallpaperRenderer.recycleBitmaps(engineWallpaperBitmaps)
+            engineWallpaperBitmaps = null
             Log.d(TAG, "H2WallpaperEngine Surface destroyed.")
         }
 
@@ -103,33 +110,42 @@ class H2WallpaperService : WallpaperService() {
             this.isVisible = visible
             Log.d(TAG, "Visibility changed: $visible")
             if (visible) {
-                if (originalBitmap == null || scrollingBackgroundBitmap == null || screenWidth == 0 || screenHeight == 0) {
-                    Log.d(TAG, "Visible but bitmaps or dimensions not ready, preparing.")
-                    loadAndPrepareWallpaperBitmaps()
-                } else if (surfaceHolder?.surface?.isValid == true) {
-                    Log.d(TAG, "Visible and ready, drawing frame.")
-                    drawCurrentFrame()
+                // 确保偏好是最新的
+                loadPreferencesOnly() // 重新加载偏好，以防在不可见时发生变化
+                if (screenWidth > 0 && screenHeight > 0) {
+                    if (engineWallpaperBitmaps == null) { // 如果位图还未加载
+                        Log.d(TAG, "Visible but bitmaps not ready, preparing.")
+                        loadAndPrepareWallpaperBitmapsAsync()
+                    } else if (surfaceHolder?.surface?.isValid == true) {
+                        Log.d(TAG, "Visible and ready, drawing frame.")
+                        drawCurrentFrame()
+                    }
                 }
             }
         }
 
         override fun onOffsetsChanged(
             xOffset: Float, yOffset: Float,
-            xOffsetStep: Float, yOffsetStep: Float,
+            xOffsetStepParam: Float, yOffsetStep: Float,
             xPixelOffset: Int, yPixelOffset: Int
         ) {
-            super.onOffsetsChanged(xOffset, yOffset, xOffsetStep, yOffsetStep, xPixelOffset, yPixelOffset)
+            super.onOffsetsChanged(xOffset, yOffset, xOffsetStepParam, yOffsetStep, xPixelOffset, yPixelOffset)
 
             val oldOffset = this.currentPageOffset
-            this.currentPageOffset = xOffset
-            this.currentXOffsetStep = if (xOffsetStep <= 0f || xOffsetStep >=1f) 1.0f else xOffsetStep
+            this.currentPageOffset = xOffset // Launcher 报告的 xOffset 通常是 0 到 1 之间的值，代表当前屏幕中心点在总宽度上的位置
+            this.currentXOffsetStep = if (xOffsetStepParam <= 0f || xOffsetStepParam >= 1f) 1.0f else xOffsetStepParam
 
-            val reportedPages = if (this.currentXOffsetStep < 1.0f) {
+            // 根据 Launcher 报告的 xOffsetStep 计算实际页面数
+            // 例如，如果 xOffsetStep 是 0.25，表示有 1/0.25 = 4 页 (索引 0, 1, 2, 3)
+            // 但要注意，有些 Launcher 可能报告的 xOffsetStep 不准确，或页面数与 (1/xOffsetStep) 不完全对应
+            val reportedPages = if (this.currentXOffsetStep > 0.0001f && this.currentXOffsetStep < 1.0f) {
                 (1f / this.currentXOffsetStep).roundToInt().coerceAtLeast(1)
             } else {
-                1
+                1 // 如果 xOffsetStep 无效或为1，则认为只有1页
             }
-            this.numPagesReportedByLauncher = if (reportedPages < 1) 1 else reportedPages
+            this.numPagesReportedByLauncher = reportedPages
+            // Log.d(TAG, "OffsetsChanged: xOffset=$xOffset, xOffsetStep=${this.currentXOffsetStep}, reportedPages=$numPagesReportedByLauncher")
+
 
             if (oldOffset != xOffset) {
                 if (isVisible && surfaceHolder?.surface?.isValid == true) {
@@ -139,216 +155,108 @@ class H2WallpaperService : WallpaperService() {
         }
 
         override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
-            if (key == MainActivity.KEY_IMAGE_URI ||
-                key == MainActivity.KEY_BACKGROUND_COLOR ||
-                key == MainActivity.KEY_IMAGE_HEIGHT_RATIO) {
-                Log.d(TAG, "Relevant preference changed ('$key'), reloading bitmaps.")
-                loadAndPrepareWallpaperBitmaps()
+            Log.d(TAG, "Preference changed: '$key'")
+            // 重新加载影响视觉的偏好
+            loadPreferencesOnly()
+
+            if (key == MainActivity.KEY_IMAGE_URI) {
+                // 图片 URI 变化，需要重新加载和准备所有位图
+                SharedWallpaperRenderer.recycleBitmaps(engineWallpaperBitmaps) // 先回收旧的
+                engineWallpaperBitmaps = null
+                if (screenWidth > 0 && screenHeight > 0) { // 仅当有有效尺寸时才加载
+                    loadAndPrepareWallpaperBitmapsAsync()
+                }
+            } else if (key == MainActivity.KEY_BACKGROUND_COLOR || key == MainActivity.KEY_IMAGE_HEIGHT_RATIO) {
+                // 颜色或高度比例变化
+                if (key == MainActivity.KEY_IMAGE_HEIGHT_RATIO) {
+                    // 高度比例变化影响 page1TopCroppedBitmap，需要重新准备位图
+                    SharedWallpaperRenderer.recycleBitmaps(engineWallpaperBitmaps)
+                    engineWallpaperBitmaps = null
+                    if (screenWidth > 0 && screenHeight > 0) {
+                        loadAndPrepareWallpaperBitmapsAsync()
+                    }
+                } else {
+                    // 仅背景颜色变化，不需要重新准备位图，直接重绘即可
+                    if (isVisible && surfaceHolder?.surface?.isValid == true) {
+                        drawCurrentFrame()
+                    }
+                }
             }
         }
 
         private fun loadPreferencesOnly() {
+            imageUriString = prefs.getString(MainActivity.KEY_IMAGE_URI, null)
             page1BackgroundColor = prefs.getInt(MainActivity.KEY_BACKGROUND_COLOR, Color.LTGRAY)
-            page1ImageHeightRatio = prefs.getFloat(MainActivity.KEY_IMAGE_HEIGHT_RATIO, DEFAULT_HEIGHT_RATIO_ENGINE)
+            page1ImageHeightRatio = prefs.getFloat(MainActivity.KEY_IMAGE_HEIGHT_RATIO, defaultHeightRatioEngine)
+            Log.d(TAG, "Preferences loaded: URI=$imageUriString, Color=$page1BackgroundColor, Ratio=$page1ImageHeightRatio")
         }
 
-        private fun loadAndPrepareWallpaperBitmaps() {
-            Log.d(TAG, "loadAndPrepareWallpaperBitmaps called.")
-            loadPreferencesOnly()
-            val imageUriString = prefs.getString(MainActivity.KEY_IMAGE_URI, null)
-            recycleBitmaps()
-
-            if (imageUriString == null) {
-                Log.w(TAG, "No image URI set.")
-                if (isVisible && surfaceHolder?.surface?.isValid == true) drawCurrentFrame()
+        private fun loadAndPrepareWallpaperBitmapsAsync() {
+            if (screenWidth <= 0 || screenHeight <= 0) {
+                Log.w(TAG, "Cannot prepare bitmaps, screen dimensions are invalid.")
+                SharedWallpaperRenderer.recycleBitmaps(engineWallpaperBitmaps)
+                engineWallpaperBitmaps = null
+                if(isVisible) drawCurrentFrame() // 尝试绘制占位符
                 return
             }
-            if (screenWidth == 0 || screenHeight == 0) {
-                Log.w(TAG, "Screen dimensions zero, cannot prepare bitmaps yet.")
+            val currentImageUriString = imageUriString // 从成员变量获取最新的URI
+            if (currentImageUriString == null) {
+                Log.w(TAG, "No image URI set, clearing bitmaps.")
+                SharedWallpaperRenderer.recycleBitmaps(engineWallpaperBitmaps)
+                engineWallpaperBitmaps = null
+                if(isVisible) drawCurrentFrame() // 绘制占位符
                 return
             }
 
-            try {
-                val imageUri = Uri.parse(imageUriString)
-                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                var inputStream = contentResolver.openInputStream(imageUri)
-                BitmapFactory.decodeStream(inputStream, null, options)
-                inputStream?.close()
+            val uriToLoad = Uri.parse(currentImageUriString)
 
-                val sampleSizeTargetWidth = screenWidth * NUM_VIRTUAL_SCROLL_PAGES
-                options.inSampleSize = calculateInSampleSize(options, sampleSizeTargetWidth, screenHeight)
-                options.inJustDecodeBounds = false
-                options.inPreferredConfig = Bitmap.Config.ARGB_8888
+            // 显示加载状态 (可选：立即绘制一个加载中的占位符)
+            // SharedWallpaperRenderer.recycleBitmaps(engineWallpaperBitmaps) // 在协程开始前回收
+            // engineWallpaperBitmaps = null
+            // if(isVisible) drawCurrentFrame() // 绘制占位符
 
-                inputStream = contentResolver.openInputStream(imageUri)
-                originalBitmap = BitmapFactory.decodeStream(inputStream, null, options)
-                inputStream?.close()
+            engineScope.launch {
+                Log.d(TAG, "Starting async bitmap preparation for URI: $uriToLoad")
+                // 先回收旧位图
+                SharedWallpaperRenderer.recycleBitmaps(engineWallpaperBitmaps)
+                engineWallpaperBitmaps = null
 
-                if (originalBitmap != null) {
-                    Log.d(TAG, "Original bitmap decoded: ${originalBitmap!!.width}x${originalBitmap!!.height}")
-                    prepareDerivedBitmapsInternal(originalBitmap!!)
+                val preparedBitmaps = withContext(Dispatchers.IO) {
+                    SharedWallpaperRenderer.prepareAllBitmaps(
+                        applicationContext, // 使用 applicationContext
+                        uriToLoad,
+                        screenWidth,
+                        screenHeight,
+                        page1ImageHeightRatio,
+                        numPagesReportedByLauncher.coerceAtLeast(1), // 使用Launcher报告的页数，至少为1
+                        BACKGROUND_BLUR_RADIUS
+                    )
+                }
+
+                // 确保在协程执行期间，用户没有更改设置导致 URI 不同
+                if (imageUriString == currentImageUriString) {
+                    engineWallpaperBitmaps = preparedBitmaps
+                    Log.d(TAG, "Async bitmaps prepared successfully.")
                 } else {
-                    Log.e(TAG, "Failed to decode originalBitmap after sampling.")
+                    Log.d(TAG, "Image URI changed during async preparation, discarding results.")
+                    SharedWallpaperRenderer.recycleBitmaps(preparedBitmaps) // 回收已加载但过时的位图
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error loading originalBitmap from URI: $imageUriString", e)
-                originalBitmap = null
-            }
 
-            if (isVisible && surfaceHolder?.surface?.isValid == true) {
-                drawCurrentFrame()
-            }
-        }
-
-        private fun prepareDerivedBitmapsInternal(sourceBitmap: Bitmap) {
-            Log.d(TAG, "prepareDerivedBitmapsInternal started.")
-            // 1. Prepare P1 overlay's top image
-            val targetTopHeight = (screenHeight * page1ImageHeightRatio).toInt()
-            page1TopCroppedBitmap?.recycle(); page1TopCroppedBitmap = null
-            if (targetTopHeight > 0 && screenWidth > 0) {
-                try {
-                    // ... (P1顶图的裁剪和缩放逻辑不变) ...
-                    val bmWidth = sourceBitmap.width; val bmHeight = sourceBitmap.height
-                    val targetWidth = screenWidth
-                    val bitmapAspectRatio = bmWidth.toFloat() / bmHeight.toFloat()
-                    val targetAspectRatio = targetWidth.toFloat() / targetTopHeight.toFloat()
-                    var srcX = 0; var srcY = 0; var cropWidth = bmWidth; var cropHeight = bmHeight
-
-                    if (bitmapAspectRatio > targetAspectRatio) {
-                        cropWidth = (bmHeight * targetAspectRatio).toInt(); srcX = (bmWidth - cropWidth) / 2
-                    } else {
-                        cropHeight = (bmWidth / targetAspectRatio).toInt(); srcY = (bmHeight - cropHeight) / 2
-                    }
-                    cropWidth = min(cropWidth, bmWidth - srcX).coerceAtLeast(1)
-                    cropHeight = min(cropHeight, bmHeight - srcY).coerceAtLeast(1)
-                    srcX = srcX.coerceAtLeast(0); srcY = srcY.coerceAtLeast(0)
-                    if (srcX + cropWidth > bmWidth) cropWidth = bmWidth - srcX
-                    if (srcY + cropHeight > bmHeight) cropHeight = bmHeight - srcY
-
-                    if (cropWidth > 0 && cropHeight > 0) {
-                        val cropped = Bitmap.createBitmap(sourceBitmap, srcX, srcY, cropWidth, cropHeight)
-                        page1TopCroppedBitmap = Bitmap.createScaledBitmap(cropped, targetWidth, targetTopHeight, true)
-                        if (cropped != page1TopCroppedBitmap && !cropped.isRecycled) cropped.recycle()
-                        Log.d(TAG, "page1TopCroppedBitmap created: ${page1TopCroppedBitmap?.width}x${page1TopCroppedBitmap?.height}")
-                    }
-                } catch (e: Exception) { Log.e(TAG, "Error creating page1TopCroppedBitmap", e) }
-            }
-
-            // 2. Prepare scrolling background
-            scrollingBackgroundBitmap?.recycle(); scrollingBackgroundBitmap = null
-            blurredScrollingBackgroundBitmap?.recycle(); blurredScrollingBackgroundBitmap = null // 清理旧的模糊图
-
-            val bgTargetHeight = screenHeight
-            val obW = sourceBitmap.width.toFloat(); val obH = sourceBitmap.height.toFloat()
-            if (obW > 0 && obH > 0 && screenWidth > 0 && bgTargetHeight > 0) {
-                val scaleToFitScreenHeight = bgTargetHeight / obH
-                val scaledOriginalWidth = (obW * scaleToFitScreenHeight).toInt()
-                val actualNumVirtualPages = NUM_VIRTUAL_SCROLL_PAGES.coerceAtLeast(1)
-                val bgFinalTargetWidth = screenWidth * actualNumVirtualPages
-
-                if (scaledOriginalWidth > 0 && bgFinalTargetWidth > 0) {
-                    try {
-                        val tempScaledBitmap = Bitmap.createScaledBitmap(sourceBitmap, scaledOriginalWidth, bgTargetHeight, true)
-                        scrollingBackgroundBitmap = Bitmap.createBitmap(bgFinalTargetWidth, bgTargetHeight, Bitmap.Config.ARGB_8888)
-                        val canvas = Canvas(scrollingBackgroundBitmap!!)
-                        var currentX = 0
-                        if (scaledOriginalWidth >= bgFinalTargetWidth) {
-                            val offsetX = (scaledOriginalWidth - bgFinalTargetWidth) / 2
-                            val srcRect = Rect(offsetX, 0, offsetX + bgFinalTargetWidth, bgTargetHeight)
-                            val dstRect = Rect(0,0,bgFinalTargetWidth,bgTargetHeight)
-                            canvas.drawBitmap(tempScaledBitmap, srcRect, dstRect, null)
-                        } else {
-                            while(currentX < bgFinalTargetWidth) {
-                                canvas.drawBitmap(tempScaledBitmap, currentX.toFloat(), 0f, null)
-                                currentX += tempScaledBitmap.width
-                                if (tempScaledBitmap.width <= 0) break
-                            }
-                        }
-                        if (tempScaledBitmap != sourceBitmap && !tempScaledBitmap.isRecycled) tempScaledBitmap.recycle()
-                        Log.d(TAG, "scrollingBackgroundBitmap created: ${scrollingBackgroundBitmap!!.width}x${scrollingBackgroundBitmap!!.height}")
-
-                        // 尝试生成模糊背景图
-                        if (scrollingBackgroundBitmap != null && !scrollingBackgroundBitmap!!.isRecycled) {
-                            blurredScrollingBackgroundBitmap = blurBitmap(applicationContext, scrollingBackgroundBitmap!!, BACKGROUND_BLUR_RADIUS)
-                            if (blurredScrollingBackgroundBitmap != null) {
-                                Log.d(TAG, "blurredScrollingBackgroundBitmap created.")
-                            } else {
-                                Log.e(TAG, "Failed to blur scrollingBackgroundBitmap.")
-                            }
-                        }
-
-                    } catch (e: Exception) { Log.e(TAG, "Error creating scrollingBackgroundBitmap or blurring it", e) }
+                if (isVisible && surfaceHolder?.surface?.isValid == true) {
+                    drawCurrentFrame() // 无论成功与否都尝试重绘
                 }
             }
-            if (scrollingBackgroundBitmap == null) Log.e(TAG, "Failed to create scrollingBackgroundBitmap.")
-            if (page1TopCroppedBitmap == null) Log.w(TAG, "page1TopCroppedBitmap is null after preparation.")
-        }
-
-        // 模糊图片的辅助方法
-        private fun blurBitmap(context: Context, bitmap: Bitmap, radius: Float): Bitmap? {
-            if (radius < 1f || radius > 25f) { // RenderScript blur radius is 1-25
-                Log.w(TAG, "Blur radius out of range (1-25): $radius. Returning original bitmap or null if failed.")
-                // 不能直接返回bitmap，因为调用者可能期望一个新的实例或者可以安全回收的实例
-                // 或者，我们可以复制一份原始bitmap返回，如果不想模糊的话
-                // return bitmap.copy(bitmap.config, true)
-                // 这里简单处理：如果半径无效，我们就不进行模糊，调用者会使用原始背景图
-                return null // 表示模糊失败或未进行
-            }
-            var rs: RenderScript? = null
-            var outputBitmap: Bitmap? = null
-            try {
-                // 创建一个与输入位图相同配置的输出位图
-                outputBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, bitmap.config ?: Bitmap.Config.ARGB_8888)
-                rs = RenderScript.create(context)
-                val input = Allocation.createFromBitmap(rs, bitmap)
-                val output = Allocation.createFromBitmap(rs, outputBitmap)
-                val script = ScriptIntrinsicBlur.create(rs, input.element) // 使用input的element确保类型匹配
-                script.setRadius(radius)
-                script.setInput(input)
-                script.forEach(output)
-                output.copyTo(outputBitmap)
-
-                // 释放RenderScript资源
-                input.destroy()
-                output.destroy()
-                script.destroy()
-
-                return outputBitmap
-            } catch (e: Exception) {
-                Log.e(TAG, "RenderScript blur failed", e)
-                outputBitmap?.recycle()
-                return null // 模糊失败
-            } finally {
-                rs?.destroy()
-            }
         }
 
 
-        private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
-            // ... (此方法不变) ...
-            val (height: Int, width: Int) = options.outHeight to options.outWidth
-            var inSampleSize = 1; if (width == 0 || height == 0 || reqWidth <= 0 || reqHeight <= 0) return 1
-            if (height > reqHeight || width > reqWidth) {
-                val halfH = height / 2; val halfW = width / 2
-                while ((halfH / inSampleSize) >= reqHeight && (halfW / inSampleSize) >= reqWidth) {
-                    inSampleSize *= 2; if (inSampleSize <= 0 || inSampleSize > 1024) { inSampleSize = 1024; break; }
-                }
-            }
-            return inSampleSize
-        }
-
-        private fun recycleBitmaps() {
-            Log.d(TAG, "Recycling bitmaps...")
-            originalBitmap?.recycle(); originalBitmap = null
-            scrollingBackgroundBitmap?.recycle(); scrollingBackgroundBitmap = null
-            blurredScrollingBackgroundBitmap?.recycle(); blurredScrollingBackgroundBitmap = null // 回收模糊图
-            page1TopCroppedBitmap?.recycle(); page1TopCroppedBitmap = null
-        }
+        // 移除旧的 prepareDerivedBitmapsInternal 和 calculateInSampleSize，因为逻辑已移至 SharedWallpaperRenderer
 
         private fun drawCurrentFrame() {
             if (!isVisible || surfaceHolder?.surface?.isValid != true || screenWidth == 0 || screenHeight == 0) {
+                Log.d(TAG, "drawCurrentFrame: Conditions not met (visible=$isVisible, validSurface=${surfaceHolder?.surface?.isValid}, w=$screenWidth, h=$screenHeight)")
                 return
             }
+
             var canvas: Canvas? = null
             try {
                 canvas = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -358,111 +266,48 @@ class H2WallpaperService : WallpaperService() {
                 }
 
                 if (canvas != null) {
-                    canvas.drawColor(Color.BLACK)
-
-                    // 1. 绘制可滚动的背景层 (优先使用模糊版本)
-                    val backgroundToDraw = blurredScrollingBackgroundBitmap ?: scrollingBackgroundBitmap
-
-                    backgroundToDraw?.let { bgBmp ->
-                        if (!bgBmp.isRecycled && bgBmp.width > 0) {
-                            val maxScrollPxPossible = (bgBmp.width - screenWidth).coerceAtLeast(0)
-                            val currentScrollPx = (currentPageOffset * maxScrollPxPossible).toInt()
-                                .coerceIn(0, maxScrollPxPossible)
-
-                            val bgTopOffset = ((screenHeight - bgBmp.height) / 2f)
-
-                            // Log.d(TAG, "DrawBG: offset=$currentPageOffset, scrollPx=$currentScrollPx, bgW=${bgBmp.width}, blurred=${bgBmp == blurredScrollingBackgroundBitmap}")
-
-                            canvas.save()
-                            canvas.translate(-currentScrollPx.toFloat(), bgTopOffset)
-                            scrollingBgPaint.alpha = 255
-                            canvas.drawBitmap(bgBmp, 0f, 0f, scrollingBgPaint)
-                            canvas.restore()
-                        } else {
-                            drawBackgroundPlaceholder(canvas, "背景处理中...")
-                        }
-                    } ?: run {
-                        drawBackgroundPlaceholder(canvas, "请选择图片以生成背景")
-                    }
-
-                    // 2. 计算并绘制第一屏的叠加层
-                    var overlayAlpha = 0
-                    val topImageActualHeight = (screenHeight * page1ImageHeightRatio).toInt()
-
-                    val safeNumPages = if (numPagesReportedByLauncher <= 0) 1 else numPagesReportedByLauncher
-                    val safeXOffsetStep = if (currentXOffsetStep <= 0f || currentXOffsetStep > 1f) 1.0f / safeNumPages else currentXOffsetStep
-
-                    if (safeNumPages == 1) {
-                        overlayAlpha = 255
+                    val currentBitmaps = engineWallpaperBitmaps
+                    if (currentBitmaps != null &&
+                        (currentBitmaps.scrollingBackgroundBitmap != null || currentBitmaps.page1TopCroppedBitmap != null) ) { // 至少有一个有效位图
+                        // 创建配置对象
+                        val config = SharedWallpaperRenderer.WallpaperConfig(
+                            screenWidth = screenWidth,
+                            screenHeight = screenHeight,
+                            page1BackgroundColor = page1BackgroundColor,
+                            page1ImageHeightRatio = page1ImageHeightRatio,
+                            currentXOffset = currentPageOffset, // 使用 Launcher 报告的 xOffset
+                            numVirtualPages = numPagesReportedByLauncher.coerceAtLeast(1), // 使用 Launcher 报告的页数
+                            p1OverlayFadeTransitionRatio = 0.2f // 或者从 SharedWallpaperRenderer 统一获取
+                        )
+                        // 调用共享的绘制方法
+                        SharedWallpaperRenderer.drawFrame(canvas, config, currentBitmaps)
                     } else {
-                        val transitionBoundary = safeXOffsetStep * P1_OVERLAY_FADE_TRANSITION_RATIO
-                        if (transitionBoundary > 0.001f) { // 避免除以非常小的值或零
-                            if (currentPageOffset <= transitionBoundary) {
-                                val progressOutOfP1FadeZone = (currentPageOffset / transitionBoundary).coerceIn(0f, 1f)
-                                overlayAlpha = ((1.0f - progressOutOfP1FadeZone) * 255).toInt().coerceIn(0, 255)
-                            } else {
-                                overlayAlpha = 0
-                            }
-                        } else { // 如果过渡区域无效（例如 xOffsetStep 太小），则根据是否在第一页粗略判断
-                            overlayAlpha = if (currentPageOffset < 0.01f) 255 else 0 // 几乎完全在第一页才显示
-                        }
-                    }
-                    // Log.d(TAG, "Overlay: alpha=$overlayAlpha, offset=$currentPageOffset, xStep=$safeXOffsetStep")
-
-                    if (overlayAlpha > 0) {
-                        p1OverlayBgPaint.color = page1BackgroundColor
-                        p1OverlayBgPaint.alpha = overlayAlpha
-                        canvas.drawRect(0f, topImageActualHeight.toFloat(), screenWidth.toFloat(), screenHeight.toFloat(), p1OverlayBgPaint)
-
-                        if (page1TopCroppedBitmap != null && !page1TopCroppedBitmap!!.isRecycled) {
-                            p1OverlayImagePaint.alpha = overlayAlpha
-                            canvas.drawBitmap(page1TopCroppedBitmap!!, 0f, 0f, p1OverlayImagePaint)
-                        } else if (originalBitmap != null) {
-                            drawPlaceholderForP1Overlay(canvas, topImageActualHeight, "P1顶图处理中...", overlayAlpha)
-                        }
+                        // 如果位图无效或正在加载，绘制占位符
+                        SharedWallpaperRenderer.drawPlaceholder(canvas, screenWidth, screenHeight,
+                            if (imageUriString == null) "请选择图片" else "壁纸加载中...")
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error during drawFrame", e)
             } finally {
                 if (canvas != null) {
-                    try { surfaceHolder!!.unlockCanvasAndPost(canvas) } catch (e: Exception) { Log.e(TAG, "Error unlocking canvas", e) }
+                    try {
+                        surfaceHolder!!.unlockCanvasAndPost(canvas)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error unlocking canvas", e)
+                    }
                 }
-                scrollingBgPaint.alpha = 255
-                p1OverlayBgPaint.alpha = 255
-                p1OverlayImagePaint.alpha = 255
-                placeholderTextPaint.alpha = 255
-                placeholderBgPaint.alpha = 255
             }
         }
 
-        private fun drawBackgroundPlaceholder(canvas: Canvas, text: String){
-            placeholderBgPaint.color = Color.DKGRAY
-            placeholderBgPaint.alpha = 255
-            canvas.drawRect(0f,0f, screenWidth.toFloat(), screenHeight.toFloat(), placeholderBgPaint)
-            placeholderTextPaint.alpha = 200
-            val textY = screenHeight / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
-            canvas.drawText(text, screenWidth/2f, textY, placeholderTextPaint)
-        }
+        // 移除旧的 drawBackgroundPlaceholder 和 drawPlaceholderForP1Overlay
 
-        private fun drawPlaceholderForP1Overlay(canvas: Canvas, topImageActualHeight: Int, text: String, overallAlpha: Int) {
-            // 确保 topImageActualHeight > 0 才绘制，避免无效矩形
-            if (topImageActualHeight <= 0) return
-
-            placeholderBgPaint.color = Color.GRAY
-            placeholderBgPaint.alpha = overallAlpha
-            canvas.drawRect(0f, 0f, screenWidth.toFloat(), topImageActualHeight.toFloat(), placeholderBgPaint)
-
-            placeholderTextPaint.alpha = overallAlpha
-            val textX = screenWidth / 2f
-            val textY = topImageActualHeight / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
-            canvas.drawText(text, textX, textY, placeholderTextPaint)
-        }
-
-        override fun onDestroy() {
+        override fun onDestroy() { // WallpaperService.Engine.onDestroy
             super.onDestroy()
+            engineScope.cancel() // 确保协程在引擎销毁时取消
             prefs.unregisterOnSharedPreferenceChangeListener(this)
-            recycleBitmaps()
+            SharedWallpaperRenderer.recycleBitmaps(engineWallpaperBitmaps)
+            engineWallpaperBitmaps = null
             Log.d(TAG, "H2WallpaperEngine destroyed.")
         }
     }

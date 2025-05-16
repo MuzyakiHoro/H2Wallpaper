@@ -12,10 +12,11 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.widget.OverScroller
 import kotlinx.coroutines.*
+import kotlin.coroutines.coroutineContext // 需要导入这个来访问 coroutineContext[Job]
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
-import kotlin.math.roundToInt // 确保这个导入存在
+import kotlin.math.roundToInt
 
 class WallpaperPreviewView @JvmOverloads constructor(
     context: Context,
@@ -34,13 +35,11 @@ class WallpaperPreviewView @JvmOverloads constructor(
     // --- 内部状态 ---
     private var viewWidth: Int = 0
     private var viewHeight: Int = 0
-    // currentPreviewXOffset: 0.0 (第一页最左端，内容完全显示第一页的开始)
-    // 到 1.0 (最后一页最右端，内容完全显示最后一页的末尾，即背景图滚动到最大偏移)
     private var currentPreviewXOffset: Float = 0f
-    private val numVirtualPages: Int = 3 // 固定为3页预览
+    private val numVirtualPages: Int = 3
     private val p1OverlayFadeTransitionRatio: Float = 0.2f
 
-    // --- 用于处理滑动和惯性滚动 ---
+    // --- 滑动和惯性滚动 ---
     private var velocityTracker: VelocityTracker? = null
     private var scroller: OverScroller = OverScroller(context)
     private var lastTouchX: Float = 0f
@@ -51,19 +50,29 @@ class WallpaperPreviewView @JvmOverloads constructor(
     private val maxFlingVelocity: Int by lazy { ViewConfiguration.get(context).scaledMaximumFlingVelocity }
     private var activePointerId: Int = MotionEvent.INVALID_POINTER_ID
 
+    // --- 协程 ---
     private val viewScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    //动画平滑速度
-    private  val SNAP_ANIMATION_DURATION_MS = 700 // 默认半秒，可调整
+    private var currentBitmapLoadingJob: Job? = null // 用于跟踪当前加载任务
+
+    companion object {
+        private const val SNAP_ANIMATION_DURATION_MS = 400 // 吸附动画时长
+    }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+        val oldViewWidth = viewWidth
+        val oldViewHeight = viewHeight
         viewWidth = w
         viewHeight = h
         Log.d(TAG, "onSizeChanged: $viewWidth x $viewHeight")
-        if (imageUri != null) {
-            loadAndPrepareBitmaps()
-        } else {
-            invalidate()
+
+        // 只有当尺寸实际发生变化，或者首次获取到有效尺寸时才重新加载
+        if (w > 0 && h > 0 && (w != oldViewWidth || h != oldViewHeight || wallpaperBitmaps == null)) {
+            if (imageUri != null) {
+                loadAndPrepareBitmaps(keepOldBitmapWhileLoading = wallpaperBitmaps != null && (w == oldViewWidth && h == oldViewHeight) )
+            } else {
+                invalidate() // 如果没有图片，仅重绘占位符
+            }
         }
     }
 
@@ -72,7 +81,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
         if (viewWidth <= 0 || viewHeight <= 0) return
 
         val currentBitmaps = wallpaperBitmaps
-        if (currentBitmaps != null) {
+        // 确保至少有一个有效位图才尝试绘制，否则显示占位符
+        if (currentBitmaps != null && (currentBitmaps.scrollingBackgroundBitmap != null || currentBitmaps.page1TopCroppedBitmap != null)) {
             SharedWallpaperRenderer.drawFrame(
                 canvas,
                 SharedWallpaperRenderer.WallpaperConfig(
@@ -87,32 +97,45 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 currentBitmaps
             )
         } else {
-            SharedWallpaperRenderer.drawPlaceholder(canvas, viewWidth, viewHeight, "请选择图片或加载中...")
+            SharedWallpaperRenderer.drawPlaceholder(canvas, viewWidth, viewHeight,
+                if (imageUri != null && currentBitmapLoadingJob?.isActive == true) "图片加载中..."
+                else if (imageUri != null && wallpaperBitmaps == null) "加载失败或无图片" // 可以更具体
+                else "请选择图片"
+            )
         }
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        viewScope.cancel()
+        currentBitmapLoadingJob?.cancel() // 取消正在进行的加载
+        currentBitmapLoadingJob = null
+        viewScope.cancel() // 取消整个作用域
         SharedWallpaperRenderer.recycleBitmaps(wallpaperBitmaps)
         wallpaperBitmaps = null
+        Log.d(TAG, "onDetachedFromWindow: Cleaned up resources.")
     }
 
     fun setImageUri(uri: Uri?) {
-        if (this.imageUri == uri && wallpaperBitmaps != null && uri != null) {
-            invalidate() // 即使URI相同，也可能需要因为其他状态（如颜色）变化而重绘
+        if (this.imageUri == uri && uri != null && wallpaperBitmaps != null) {
+            invalidate()
             return
         }
-        SharedWallpaperRenderer.recycleBitmaps(wallpaperBitmaps)
-        wallpaperBitmaps = null
+        // URI 变化或从 null 变为非 null，或从非 null 变为 null
+        currentBitmapLoadingJob?.cancel() // 取消任何正在进行的加载
+        currentBitmapLoadingJob = null
+
+        val oldBitmaps = wallpaperBitmaps // 保存旧位图引用
+        wallpaperBitmaps = null        // 先置空以显示加载状态
         this.imageUri = uri
-        currentPreviewXOffset = 0f // 新图片，重置到第一页
-        scroller.abortAnimation() // 停止任何正在进行的滚动
+        currentPreviewXOffset = 0f     // 新图片重置到第一页
+        if (!scroller.isFinished) scroller.abortAnimation()
 
         if (uri != null) {
-            loadAndPrepareBitmaps()
+            invalidate() // 立即重绘，显示占位符
+            loadAndPrepareBitmaps(keepOldBitmapWhileLoading = false) // 强制重新加载
         } else {
-            invalidate()
+            SharedWallpaperRenderer.recycleBitmaps(oldBitmaps) // 新URI为null，回收旧的
+            invalidate() // 显示“请选择图片”
         }
     }
 
@@ -128,54 +151,110 @@ class WallpaperPreviewView @JvmOverloads constructor(
         if (this.page1ImageHeightRatio != clampedRatio) {
             this.page1ImageHeightRatio = clampedRatio
             if (imageUri != null) {
-                // 高度比例变化会影响 page1TopCroppedBitmap，需要重新准备
-                loadAndPrepareBitmaps()
+                loadAndPrepareBitmaps(keepOldBitmapWhileLoading = true)
             } else {
                 invalidate()
             }
         }
     }
 
-    private fun loadAndPrepareBitmaps() {
-        val currentUri = imageUri
-        if (currentUri == null || viewWidth <= 0 || viewHeight <= 0) {
+    private fun loadAndPrepareBitmaps(keepOldBitmapWhileLoading: Boolean = false) {
+        val currentUriToLoad = imageUri
+        if (currentUriToLoad == null || viewWidth <= 0 || viewHeight <= 0) {
+            currentBitmapLoadingJob?.cancel()
+            currentBitmapLoadingJob = null
             SharedWallpaperRenderer.recycleBitmaps(wallpaperBitmaps)
             wallpaperBitmaps = null
             invalidate()
             return
         }
 
-        SharedWallpaperRenderer.recycleBitmaps(wallpaperBitmaps)
-        wallpaperBitmaps = null
-        invalidate() // 显示加载占位符
+        val oldBitmapsBeingReplaced = wallpaperBitmaps // 当前正在显示的位图
 
-        viewScope.launch {
+        if (!keepOldBitmapWhileLoading || oldBitmapsBeingReplaced == null) {
+            currentBitmapLoadingJob?.cancel() // 取消之前的任务
+            currentBitmapLoadingJob = null
+            if (oldBitmapsBeingReplaced != null) SharedWallpaperRenderer.recycleBitmaps(oldBitmapsBeingReplaced)
+            wallpaperBitmaps = null // 清除，准备显示加载占位符
+            invalidate()
+        }
+        // 如果是 keepOldBitmapWhileLoading 且 oldBitmapsBeingReplaced 存在，则 onDraw 会继续用它
+
+        currentBitmapLoadingJob?.cancel() // 确保取消任何可能仍在运行的旧任务
+        currentBitmapLoadingJob = viewScope.launch {
+            Log.d(TAG, "Starting bitmap preparation job. URI: $currentUriToLoad, KeepOld: $keepOldBitmapWhileLoading, Ratio: $page1ImageHeightRatio")
+            var newBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
+            var exceptionOccurred = false
             try {
-                val preparedBitmaps = withContext(Dispatchers.IO) {
+                ensureActive() // 在开始IO操作前检查协程是否已被取消
+                newBitmaps = withContext(Dispatchers.IO) {
+                    ensureActive() // 在实际的耗时操作前再次检查
                     SharedWallpaperRenderer.prepareAllBitmaps(
-                        context,
-                        currentUri,
-                        viewWidth,
-                        viewHeight,
-                        page1ImageHeightRatio,
-                        numVirtualPages,
-                        0f // 预览时不模糊以提高性能
+                        context, currentUriToLoad, viewWidth, viewHeight,
+                        page1ImageHeightRatio, numVirtualPages, 0f
                     )
                 }
-                if (imageUri == currentUri) { // 确保在加载过程中URI没变
-                    wallpaperBitmaps = preparedBitmaps
+                ensureActive() // IO操作完成后再次检查
+
+                // 只有当外部 imageUri 仍然是这次加载的 URI 时，才应用结果
+                if (imageUri == currentUriToLoad) {
+                    // 如果是保留旧位图模式，并且旧位图与新位图不同，则回收旧位图
+                    if (keepOldBitmapWhileLoading && oldBitmapsBeingReplaced != null && oldBitmapsBeingReplaced != newBitmaps) {
+                        SharedWallpaperRenderer.recycleBitmaps(oldBitmapsBeingReplaced)
+                    } else if (!keepOldBitmapWhileLoading && oldBitmapsBeingReplaced != null && oldBitmapsBeingReplaced != newBitmaps){
+                        // 如果不是保留模式，之前的旧位图（即使主引用已为null）也应被回收
+                        SharedWallpaperRenderer.recycleBitmaps(oldBitmapsBeingReplaced)
+                    }
+                    wallpaperBitmaps = newBitmaps // 应用新位图
+                    Log.d(TAG, "Bitmaps prepared successfully for $currentUriToLoad.")
                 } else {
-                    SharedWallpaperRenderer.recycleBitmaps(preparedBitmaps) // URI变了，丢弃结果
+                    Log.d(TAG, "Image URI changed during prep. Discarding bitmaps for $currentUriToLoad.")
+                    SharedWallpaperRenderer.recycleBitmaps(newBitmaps) // 回收为旧URI加载的位图
+                    // 如果当前最新的 imageUri 是 null，确保 wallpaperBitmaps 也反映这一点
+                    if (imageUri == null && wallpaperBitmaps != null) {
+                        SharedWallpaperRenderer.recycleBitmaps(wallpaperBitmaps)
+                        wallpaperBitmaps = null
+                    }
+                }
+            } catch (e: CancellationException) {
+                exceptionOccurred = true
+                Log.d(TAG, "Bitmap loading job for $currentUriToLoad was cancelled.", e)
+                SharedWallpaperRenderer.recycleBitmaps(newBitmaps) // 如果中途取消，回收可能已创建的
+                // 如果是保留模式且旧位图存在，并且当前 wallpaperBitmaps 指向的不是旧位图了（比如被置null），则恢复
+                if (keepOldBitmapWhileLoading && oldBitmapsBeingReplaced != null && wallpaperBitmaps != oldBitmapsBeingReplaced) {
+                    wallpaperBitmaps = oldBitmapsBeingReplaced
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error preparing bitmaps", e)
-                wallpaperBitmaps = null // 确保异常时为null
+                exceptionOccurred = true
+                Log.e(TAG, "Error preparing bitmaps for $currentUriToLoad", e)
+                SharedWallpaperRenderer.recycleBitmaps(newBitmaps) // 回收可能创建的
+                // 出错时，如果之前是保留旧位图，则尝试恢复；否则清除
+                wallpaperBitmaps = if (keepOldBitmapWhileLoading && oldBitmapsBeingReplaced != null) oldBitmapsBeingReplaced else null
             } finally {
-                if (imageUri == currentUri) invalidate() // 无论成功失败都尝试重绘
+                // 只有当此协程是当前最新的（未被后续调用取消）并且完成了（无论成功、失败或取消）才进行处理
+                val amITheCurrentJob = coroutineContext[Job] == currentBitmapLoadingJob
+                val isStillActiveOrJustCompleted = isActive || exceptionOccurred || coroutineContext[Job]?.isCompleted == true
+
+
+                if (amITheCurrentJob && isStillActiveOrJustCompleted) {
+                    currentBitmapLoadingJob = null // 清理 job 引用
+                }
+
+
+                // 最终的重绘，确保UI反映最新状态
+                // 如果URI在加载过程中改变了，就不应该用旧URI的结果来重绘
+                if (imageUri == currentUriToLoad || (imageUri == null && currentUriToLoad != null)) {
+                    invalidate()
+                }
+                Log.d(TAG, "Bitmap loading job finished. Current job ref: $currentBitmapLoadingJob. URI for this job: $currentUriToLoad. Active URI: $imageUri")
+
             }
         }
     }
 
+    // onTouchEvent 和其他滑动相关方法 (performClick, flingPage, snapToNearestPage, animateToOffset, computeScroll, getScrollRange, recycleVelocityTracker)
+    // 与上一个版本（您满意的那个版本）保持一致，这里不再重复列出，请确保使用那些已经调整好的版本。
+    // 为了代码的完整性，我还是把它们粘贴过来：
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (velocityTracker == null) velocityTracker = VelocityTracker.obtain()
         velocityTracker!!.addMovement(event)
@@ -198,7 +277,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 val pointerIndex = event.findPointerIndex(activePointerId)
                 if (pointerIndex < 0) return false
                 val currentX = event.getX(pointerIndex)
-                val deltaX = lastTouchX - currentX // 手指向左，内容向右，offset增加
+                val deltaX = lastTouchX - currentX
 
                 if (!isBeingDragged && abs(currentX - downTouchX) > touchSlop) {
                     isBeingDragged = true
@@ -207,13 +286,11 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
                 if (isBeingDragged) {
                     if (viewWidth > 0 && numVirtualPages > 1) {
-                        // 手指滑动一个 viewWidth 的距离，currentPreviewXOffset 应该变化 1.0f / (numVirtualPages - 1)
-                        // 这样滑动 (numVirtualPages - 1) 个 viewWidth 的距离，offset 从 0 到 1
                         val offsetPerViewWidthScroll = 1.0f / (numVirtualPages - 1).toFloat()
                         val scrollDeltaRatio = (deltaX / viewWidth.toFloat()) * offsetPerViewWidthScroll
                         currentPreviewXOffset = (currentPreviewXOffset + scrollDeltaRatio).coerceIn(0f, 1f)
                     } else {
-                        currentPreviewXOffset = 0f // 只有一页或视图宽度为0，不滚动
+                        currentPreviewXOffset = 0f
                     }
                     lastTouchX = currentX
                     invalidate()
@@ -236,7 +313,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
                     if (abs(x - downTouchX) < touchSlop) {
                         performClick()
                     } else {
-                        snapToNearestPage(currentPreviewXOffset) // 轻微滑动也吸附
+                        snapToNearestPage(currentPreviewXOffset)
                     }
                 }
                 recycleVelocityTracker()
@@ -258,7 +335,6 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
     override fun performClick(): Boolean {
         super.performClick()
-        // Log.d(TAG, "performClick called on WallpaperPreviewView")
         return true
     }
 
@@ -267,34 +343,25 @@ class WallpaperPreviewView @JvmOverloads constructor(
             animateToOffset(0f)
             return
         }
-
-        // 当前逻辑页面索引 (0, 1, ..., numVirtualPages-1)
-        // currentPreviewXOffset (0-1) 对应 (numVirtualPages-1) 个可滚动页面宽度
-        // 因此，每个逻辑页面的起始 offset 是 pageIndex / (numVirtualPages-1)
         val currentEffectivePageIndex = currentPreviewXOffset * (numVirtualPages - 1)
         var targetPageIndex: Int
 
-        if (velocityX < -minFlingVelocity) { // 向左快速滑动 (手指向左，内容右移，看下一页)
+        if (velocityX < -minFlingVelocity) {
             targetPageIndex = ceil(currentEffectivePageIndex).toInt()
-            // 如果当前已经非常接近或超过了 ceil 的结果 (意味着已经在向右移动或刚过那个点)，
-            // 并且不是最后一页，那么目标应该是下一个页面
-            if (targetPageIndex <= currentEffectivePageIndex + 0.05f && targetPageIndex < numVirtualPages - 1) { // 加一点容差
+            if (targetPageIndex <= currentEffectivePageIndex + 0.05f && targetPageIndex < numVirtualPages - 1) {
                 targetPageIndex++
             }
-        } else if (velocityX > minFlingVelocity) { // 向右快速滑动 (手指向右，内容左移，看上一页)
+        } else if (velocityX > minFlingVelocity) {
             targetPageIndex = floor(currentEffectivePageIndex).toInt()
-            // 如果当前非常接近或小于 floor 的结果 (意味着已经在向左移动或刚过那个点)，
-            // 并且不是第一页，那么目标应该是上一个页面
-            if (targetPageIndex >= currentEffectivePageIndex - 0.05f && targetPageIndex > 0) { // 加一点容差
+            if (targetPageIndex >= currentEffectivePageIndex - 0.05f && targetPageIndex > 0) {
                 targetPageIndex--
             }
         } else {
             snapToNearestPage(currentPreviewXOffset)
             return
         }
-
         targetPageIndex = targetPageIndex.coerceIn(0, numVirtualPages - 1)
-        val targetXOffset = targetPageIndex.toFloat() / (numVirtualPages - 1).toFloat()
+        val targetXOffset = if (numVirtualPages > 1) targetPageIndex.toFloat() / (numVirtualPages - 1).toFloat() else 0f
         animateToOffset(targetXOffset)
     }
 
@@ -303,13 +370,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
             animateToOffset(0f)
             return
         }
-
-        // 将 currentOffset (0-1) 映射到页面索引 (0 to N-1)
-        // 每个逻辑页面的理想起始 xOffset: 0, 1/(N-1), 2/(N-1), ..., (N-1)/(N-1)=1
         val pageIndexFloat = currentOffset * (numVirtualPages - 1)
         val targetPageIndex = pageIndexFloat.roundToInt().coerceIn(0, numVirtualPages - 1)
-
-        val targetXOffset = targetPageIndex.toFloat() / (numVirtualPages - 1).toFloat()
+        val targetXOffset = if (numVirtualPages > 1) targetPageIndex.toFloat() / (numVirtualPages - 1).toFloat() else 0f
         animateToOffset(targetXOffset)
     }
 
@@ -319,12 +382,11 @@ class WallpaperPreviewView @JvmOverloads constructor(
         val dx = targetPixelOffset - currentPixelOffset
 
         if (dx != 0) {
-            scroller.startScroll(currentPixelOffset, 0, dx, 0, SNAP_ANIMATION_DURATION_MS ) // 动画时长
+            scroller.startScroll(currentPixelOffset, 0, dx, 0, SNAP_ANIMATION_DURATION_MS)
             postInvalidateOnAnimation()
         } else {
-            // 确保如果已经在目标位置，currentPreviewXOffset 是精确的
-            this.currentPreviewXOffset = targetXOffset.coerceIn(0f,1f) // 再次确保范围
-            invalidate() // 以防万一需要重绘（比如之前由于浮点数不精确导致没完全对齐）
+            this.currentPreviewXOffset = targetXOffset.coerceIn(0f, 1f)
+            invalidate()
         }
     }
 
@@ -337,13 +399,12 @@ class WallpaperPreviewView @JvmOverloads constructor(
             } else {
                 currentPreviewXOffset = 0f
             }
-            invalidate() // 这里用 invalidate() 也可以，因为 computeScroll 内部会处理动画的连续性
-            // postInvalidateOnAnimation() // 也可以用这个
+            invalidate()
         }
     }
 
     private fun getScrollRange(): Int {
-        return 10000 // 虚拟滚动范围，用于 OverScroller 的整数计算
+        return 10000
     }
 
     private fun recycleVelocityTracker() {
