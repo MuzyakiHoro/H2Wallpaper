@@ -156,7 +156,7 @@ class MainActivity : AppCompatActivity() {
         btnSelectImage.setOnClickListener { checkAndRequestReadMediaImagesPermission() }
         btnSetWallpaper.setOnClickListener {
             if (selectedImageUri != null) {
-                savePreferences()
+                savePreferences() // <--- 确保在应用前保存当前所有设置
                 promptToSetWallpaper()
             } else {
                 Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
