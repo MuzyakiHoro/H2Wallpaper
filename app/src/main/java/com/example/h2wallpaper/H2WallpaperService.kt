@@ -386,7 +386,8 @@ class H2WallpaperService : WallpaperService() {
                         val config = SharedWallpaperRenderer.WallpaperConfig(
                             screenWidth, screenHeight, page1BackgroundColor, page1ImageHeightRatio,
                             currentPageOffset, pagesForConfig,
-                            p1OverlayFadeTransitionRatio = 0.2f,
+                            //p1OverlayFadeTransitionRatio = 0.5f, // P1 在前 50% 滑动距离内淡出
+                            //p2BackgroundFadeInRatio = 0.5f,    // P2 在前 50% 滑动距离内淡入
                             scrollSensitivityFactor = this.currentScrollSensitivity
                         )
                         SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps)
