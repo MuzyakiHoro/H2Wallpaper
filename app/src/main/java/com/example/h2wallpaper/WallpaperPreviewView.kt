@@ -1,6 +1,7 @@
 package com.example.h2wallpaper
 
 import android.content.Context
+import android.graphics.Bitmap // 需要导入 Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.net.Uri
@@ -12,7 +13,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.widget.OverScroller
 import kotlinx.coroutines.*
-import kotlin.coroutines.coroutineContext // 需要导入这个来访问 coroutineContext[Job]
+import kotlin.coroutines.coroutineContext
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -30,6 +31,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
     private var imageUri: Uri? = null
     private var selectedBackgroundColor: Int = Color.LTGRAY
     private var page1ImageHeightRatio: Float = 1f / 3f
+
+    // 持有 WallpaperBitmaps 对象，其内部成员是可变的 (var)
     private var wallpaperBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
 
     // --- 内部状态 ---
@@ -52,10 +55,12 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
     // --- 协程 ---
     private val viewScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private var currentBitmapLoadingJob: Job? = null // 用于跟踪当前加载任务
+    private var fullBitmapLoadingJob: Job? = null // 用于加载全套位图的任务 (setImageUri)
+    private var topBitmapUpdateJob: Job? = null   // 用于仅更新顶部位图的任务 (setPage1ImageHeightRatio)
+
 
     companion object {
-        private const val SNAP_ANIMATION_DURATION_MS = 400 // 吸附动画时长
+        private const val SNAP_ANIMATION_DURATION_MS = 400
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -64,14 +69,25 @@ class WallpaperPreviewView @JvmOverloads constructor(
         val oldViewHeight = viewHeight
         viewWidth = w
         viewHeight = h
-        Log.d(TAG, "onSizeChanged: $viewWidth x $viewHeight")
+        Log.d(TAG, "onSizeChanged: New $viewWidth x $viewHeight, Old $oldViewWidth x $oldViewHeight")
 
-        // 只有当尺寸实际发生变化，或者首次获取到有效尺寸时才重新加载
-        if (w > 0 && h > 0 && (w != oldViewWidth || h != oldViewHeight || wallpaperBitmaps == null)) {
-            if (imageUri != null) {
-                loadAndPrepareBitmaps(keepOldBitmapWhileLoading = wallpaperBitmaps != null && (w == oldViewWidth && h == oldViewHeight) )
+        if (w > 0 && h > 0) {
+            if (imageUri != null && (w != oldViewWidth || h != oldViewHeight || wallpaperBitmaps == null || wallpaperBitmaps?.sourceSampledBitmap == null)) {
+                Log.d(TAG, "onSizeChanged: Triggering full bitmap reload due to size change or missing bitmaps.")
+                loadFullBitmapsFromUri(this.imageUri)
+            } else if (imageUri != null && wallpaperBitmaps?.page1TopCroppedBitmap == null) {
+                // wallpaperBitmaps 肯定不为 null (来自上一个if的else分支)
+                // 并且 sourceSampledBitmap 也应该不为 null (同样来自上一个if的else分支)
+                wallpaperBitmaps!!.sourceSampledBitmap?.let { srcBitmap -> // 使用安全调用和 let
+                    Log.d(TAG, "onSizeChanged: Source bitmap exists, but top cropped is missing. Updating top cropped.")
+                    updateOnlyPage1TopCroppedBitmap(this.page1ImageHeightRatio, srcBitmap) // srcBitmap 在这里是 Bitmap (非空)
+                } ?: run {
+                    // 如果 sourceSampledBitmap 意外为 null，记录警告并可能触发完整加载
+                    Log.w(TAG, "onSizeChanged: Source bitmap was null when trying to update top cropped. Forcing full reload.")
+                    if (this.imageUri != null) loadFullBitmapsFromUri(this.imageUri)
+                }
             } else {
-                invalidate() // 如果没有图片，仅重绘占位符
+                invalidate()
             }
         }
     }
@@ -80,26 +96,22 @@ class WallpaperPreviewView @JvmOverloads constructor(
         super.onDraw(canvas)
         if (viewWidth <= 0 || viewHeight <= 0) return
 
-        val currentBitmaps = wallpaperBitmaps
-        // 确保至少有一个有效位图才尝试绘制，否则显示占位符
-        if (currentBitmaps != null && (currentBitmaps.scrollingBackgroundBitmap != null || currentBitmaps.page1TopCroppedBitmap != null)) {
+        val currentWpBitmaps = wallpaperBitmaps
+        // 只要 wallpaperBitmaps 对象存在，就尝试用它绘制，让 SharedWallpaperRenderer.drawFrame 内部处理其成员可能为null的情况
+        if (currentWpBitmaps != null) {
             SharedWallpaperRenderer.drawFrame(
                 canvas,
                 SharedWallpaperRenderer.WallpaperConfig(
-                    screenWidth = viewWidth,
-                    screenHeight = viewHeight,
-                    page1BackgroundColor = selectedBackgroundColor,
-                    page1ImageHeightRatio = page1ImageHeightRatio,
-                    currentXOffset = currentPreviewXOffset,
-                    numVirtualPages = numVirtualPages,
+                    screenWidth = viewWidth, screenHeight = viewHeight,
+                    page1BackgroundColor = selectedBackgroundColor, page1ImageHeightRatio = page1ImageHeightRatio,
+                    currentXOffset = currentPreviewXOffset, numVirtualPages = numVirtualPages,
                     p1OverlayFadeTransitionRatio = p1OverlayFadeTransitionRatio
                 ),
-                currentBitmaps
+                currentWpBitmaps
             )
         } else {
             SharedWallpaperRenderer.drawPlaceholder(canvas, viewWidth, viewHeight,
-                if (imageUri != null && currentBitmapLoadingJob?.isActive == true) "图片加载中..."
-                else if (imageUri != null && wallpaperBitmaps == null) "加载失败或无图片" // 可以更具体
+                if (imageUri != null && (fullBitmapLoadingJob?.isActive == true || topBitmapUpdateJob?.isActive == true) ) "图片加载中..."
                 else "请选择图片"
             )
         }
@@ -107,35 +119,103 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        currentBitmapLoadingJob?.cancel() // 取消正在进行的加载
-        currentBitmapLoadingJob = null
-        viewScope.cancel() // 取消整个作用域
-        SharedWallpaperRenderer.recycleBitmaps(wallpaperBitmaps)
+        fullBitmapLoadingJob?.cancel(); fullBitmapLoadingJob = null
+        topBitmapUpdateJob?.cancel(); topBitmapUpdateJob = null
+        viewScope.cancel()
+        wallpaperBitmaps?.recycleInternals() // 使用新的回收方法
         wallpaperBitmaps = null
         Log.d(TAG, "onDetachedFromWindow: Cleaned up resources.")
     }
 
     fun setImageUri(uri: Uri?) {
-        if (this.imageUri == uri && uri != null && wallpaperBitmaps != null) {
+        if (this.imageUri == uri && uri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
+            Log.d(TAG, "setImageUri: URI unchanged and source bitmap exists. Invalidating.")
             invalidate()
             return
         }
-        // URI 变化或从 null 变为非 null，或从非 null 变为 null
-        currentBitmapLoadingJob?.cancel() // 取消任何正在进行的加载
-        currentBitmapLoadingJob = null
 
-        val oldBitmaps = wallpaperBitmaps // 保存旧位图引用
-        wallpaperBitmaps = null        // 先置空以显示加载状态
+        Log.d(TAG, "setImageUri called with new URI: $uri. Previous URI: ${this.imageUri}")
+        // 取消所有正在进行的位图操作
+        fullBitmapLoadingJob?.cancel(); fullBitmapLoadingJob = null
+        topBitmapUpdateJob?.cancel(); topBitmapUpdateJob = null
+
+        // 回收旧的 wallpaperBitmaps 对象及其内部所有位图
+        wallpaperBitmaps?.recycleInternals()
+        wallpaperBitmaps = null // 先置空，以便显示加载状态
+
         this.imageUri = uri
-        currentPreviewXOffset = 0f     // 新图片重置到第一页
+        currentPreviewXOffset = 0f
         if (!scroller.isFinished) scroller.abortAnimation()
 
         if (uri != null) {
-            invalidate() // 立即重绘，显示占位符
-            loadAndPrepareBitmaps(keepOldBitmapWhileLoading = false) // 强制重新加载
+            invalidate() // 立即重绘以显示占位符
+            loadFullBitmapsFromUri(uri)
         } else {
-            SharedWallpaperRenderer.recycleBitmaps(oldBitmaps) // 新URI为null，回收旧的
-            invalidate() // 显示“请选择图片”
+            invalidate() // 新 URI 为 null，重绘以显示“请选择图片”
+        }
+    }
+
+    private fun loadFullBitmapsFromUri(uriToLoad: Uri?) {
+        if (uriToLoad == null || viewWidth <= 0 || viewHeight <= 0) {
+            Log.w(TAG, "loadFullBitmapsFromUri: Invalid URI or view dimensions.")
+            wallpaperBitmaps?.recycleInternals()
+            wallpaperBitmaps = null
+            invalidate()
+            return
+        }
+
+        fullBitmapLoadingJob?.cancel() // 取消之前的完整加载任务
+        topBitmapUpdateJob?.cancel()   // 也取消可能在进行的顶图更新任务
+
+        Log.d(TAG, "loadFullBitmapsFromUri: Starting full bitmap load for URI: $uriToLoad")
+        // 在启动新任务前，确保旧的 wallpaperBitmaps (如果从其他地方来) 被正确处理或已为null
+        if (wallpaperBitmaps != null) { // 可能由 setPage1ImageHeightRatio 等调用后未完成的任务遗留
+            wallpaperBitmaps?.recycleInternals()
+            wallpaperBitmaps = null
+        }
+        invalidate() // 显示加载中
+
+        fullBitmapLoadingJob = viewScope.launch {
+            var newFullBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
+            try {
+                ensureActive()
+                newFullBitmaps = withContext(Dispatchers.IO) {
+                    ensureActive()
+                    SharedWallpaperRenderer.loadAndProcessInitialBitmaps(
+                        context, uriToLoad, viewWidth, viewHeight,
+                        page1ImageHeightRatio, numVirtualPages, 0f // 预览时不模糊
+                    )
+                }
+                ensureActive()
+
+                if (imageUri == uriToLoad) { // 确保URI在加载期间未变
+                    wallpaperBitmaps?.recycleInternals() // 回收旧的（理论上此时应为null）
+                    wallpaperBitmaps = newFullBitmaps
+                    Log.d(TAG, "Full bitmaps successfully loaded and applied for $uriToLoad.")
+                } else {
+                    Log.d(TAG, "URI changed during full bitmap load for $uriToLoad. Discarding.")
+                    newFullBitmaps?.recycleInternals()
+                    if(imageUri == null) { // 如果当前URI已变为null
+                        wallpaperBitmaps?.recycleInternals()
+                        wallpaperBitmaps = null
+                    }
+                }
+            } catch (e: CancellationException) {
+                Log.d(TAG, "Full bitmap loading for $uriToLoad CANCELLED.")
+                newFullBitmaps?.recycleInternals() // 回收部分加载的
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in loadFullBitmapsFromUri for $uriToLoad", e)
+                newFullBitmaps?.recycleInternals()
+                wallpaperBitmaps?.recycleInternals() // 确保清除
+                wallpaperBitmaps = null
+            } finally {
+                if (coroutineContext[Job] == fullBitmapLoadingJob) { // 清理自身job引用
+                    fullBitmapLoadingJob = null
+                }
+                if (imageUri == uriToLoad || imageUri == null) {
+                    invalidate() // 最终重绘
+                }
+            }
         }
     }
 
@@ -149,111 +229,77 @@ class WallpaperPreviewView @JvmOverloads constructor(
     fun setPage1ImageHeightRatio(ratio: Float) {
         val clampedRatio = ratio.coerceIn(0.1f, 0.9f)
         if (this.page1ImageHeightRatio != clampedRatio) {
+            val oldRatio = this.page1ImageHeightRatio
             this.page1ImageHeightRatio = clampedRatio
-            if (imageUri != null) {
-                loadAndPrepareBitmaps(keepOldBitmapWhileLoading = true)
+            Log.d(TAG, "setPage1ImageHeightRatio: Ratio changed from $oldRatio to $clampedRatio.")
+
+            // 如果 wallpaperBitmaps 或其 sourceSampledBitmap 为空，说明需要完整加载
+            if (imageUri != null && (wallpaperBitmaps == null || wallpaperBitmaps?.sourceSampledBitmap == null)) {
+                Log.d(TAG, "Source bitmap missing, triggering full reload for height change.")
+                loadFullBitmapsFromUri(this.imageUri) // 触发完整重新加载
+            } else if (imageUri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
+                // 有源图，只更新顶图
+                updateOnlyPage1TopCroppedBitmap(clampedRatio, wallpaperBitmaps!!.sourceSampledBitmap!!)
             } else {
-                invalidate()
+                invalidate() // 无图，仅重绘
             }
         }
     }
 
-    private fun loadAndPrepareBitmaps(keepOldBitmapWhileLoading: Boolean = false) {
-        val currentUriToLoad = imageUri
-        if (currentUriToLoad == null || viewWidth <= 0 || viewHeight <= 0) {
-            currentBitmapLoadingJob?.cancel()
-            currentBitmapLoadingJob = null
-            SharedWallpaperRenderer.recycleBitmaps(wallpaperBitmaps)
-            wallpaperBitmaps = null
-            invalidate()
-            return
-        }
+    private fun updateOnlyPage1TopCroppedBitmap(newRatio: Float, sourceBitmap: Bitmap) {
+        topBitmapUpdateJob?.cancel() // 取消之前的顶图更新任务
+        fullBitmapLoadingJob?.cancel() // 也取消可能的完整加载任务，因为我们只更新顶图
 
-        val oldBitmapsBeingReplaced = wallpaperBitmaps // 当前正在显示的位图
-
-        if (!keepOldBitmapWhileLoading || oldBitmapsBeingReplaced == null) {
-            currentBitmapLoadingJob?.cancel() // 取消之前的任务
-            currentBitmapLoadingJob = null
-            if (oldBitmapsBeingReplaced != null) SharedWallpaperRenderer.recycleBitmaps(oldBitmapsBeingReplaced)
-            wallpaperBitmaps = null // 清除，准备显示加载占位符
-            invalidate()
-        }
-        // 如果是 keepOldBitmapWhileLoading 且 oldBitmapsBeingReplaced 存在，则 onDraw 会继续用它
-
-        currentBitmapLoadingJob?.cancel() // 确保取消任何可能仍在运行的旧任务
-        currentBitmapLoadingJob = viewScope.launch {
-            Log.d(TAG, "Starting bitmap preparation job. URI: $currentUriToLoad, KeepOld: $keepOldBitmapWhileLoading, Ratio: $page1ImageHeightRatio")
-            var newBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
+        Log.d(TAG, "updateOnlyPage1TopCroppedBitmap: Updating top cropped for ratio: $newRatio")
+        // 这个操作理论上应该很快，但为了避免任何可能的ANR，仍然使用协程
+        // 并且，如果用户快速连续点击，这也提供了一个取消点
+        topBitmapUpdateJob = viewScope.launch {
+            var newTopCroppedBitmap: Bitmap? = null
             var exceptionOccurred = false
             try {
-                ensureActive() // 在开始IO操作前检查协程是否已被取消
-                newBitmaps = withContext(Dispatchers.IO) {
-                    ensureActive() // 在实际的耗时操作前再次检查
-                    SharedWallpaperRenderer.prepareAllBitmaps(
-                        context, currentUriToLoad, viewWidth, viewHeight,
-                        page1ImageHeightRatio, numVirtualPages, 0f
+                ensureActive()
+                // preparePage1TopCroppedBitmap 相对较快，可以在 Dispatchers.Default 或 Main (如果极快)
+                // 为了安全和一致性，如果涉及到Bitmap.createBitmap，放到IO或Default
+                newTopCroppedBitmap = withContext(Dispatchers.Default) { // 使用Default进行CPU密集型操作
+                    ensureActive()
+                    SharedWallpaperRenderer.preparePage1TopCroppedBitmap(
+                        sourceBitmap, viewWidth, viewHeight, newRatio
                     )
                 }
-                ensureActive() // IO操作完成后再次检查
+                ensureActive()
 
-                // 只有当外部 imageUri 仍然是这次加载的 URI 时，才应用结果
-                if (imageUri == currentUriToLoad) {
-                    // 如果是保留旧位图模式，并且旧位图与新位图不同，则回收旧位图
-                    if (keepOldBitmapWhileLoading && oldBitmapsBeingReplaced != null && oldBitmapsBeingReplaced != newBitmaps) {
-                        SharedWallpaperRenderer.recycleBitmaps(oldBitmapsBeingReplaced)
-                    } else if (!keepOldBitmapWhileLoading && oldBitmapsBeingReplaced != null && oldBitmapsBeingReplaced != newBitmaps){
-                        // 如果不是保留模式，之前的旧位图（即使主引用已为null）也应被回收
-                        SharedWallpaperRenderer.recycleBitmaps(oldBitmapsBeingReplaced)
-                    }
-                    wallpaperBitmaps = newBitmaps // 应用新位图
-                    Log.d(TAG, "Bitmaps prepared successfully for $currentUriToLoad.")
+                if (imageUri != null && wallpaperBitmaps != null) { // 确保在操作期间 imageUri 和主 bitmap 对象没变
+                    wallpaperBitmaps?.page1TopCroppedBitmap?.recycle() // 回收旧的顶图
+                    wallpaperBitmaps?.page1TopCroppedBitmap = newTopCroppedBitmap
+                    Log.d(TAG, "Top cropped bitmap updated successfully.")
                 } else {
-                    Log.d(TAG, "Image URI changed during prep. Discarding bitmaps for $currentUriToLoad.")
-                    SharedWallpaperRenderer.recycleBitmaps(newBitmaps) // 回收为旧URI加载的位图
-                    // 如果当前最新的 imageUri 是 null，确保 wallpaperBitmaps 也反映这一点
-                    if (imageUri == null && wallpaperBitmaps != null) {
-                        SharedWallpaperRenderer.recycleBitmaps(wallpaperBitmaps)
-                        wallpaperBitmaps = null
-                    }
+                    Log.d(TAG, "State changed during top bitmap update. Discarding new top bitmap.")
+                    newTopCroppedBitmap?.recycle() // 状态变了，丢弃
                 }
             } catch (e: CancellationException) {
                 exceptionOccurred = true
-                Log.d(TAG, "Bitmap loading job for $currentUriToLoad was cancelled.", e)
-                SharedWallpaperRenderer.recycleBitmaps(newBitmaps) // 如果中途取消，回收可能已创建的
-                // 如果是保留模式且旧位图存在，并且当前 wallpaperBitmaps 指向的不是旧位图了（比如被置null），则恢复
-                if (keepOldBitmapWhileLoading && oldBitmapsBeingReplaced != null && wallpaperBitmaps != oldBitmapsBeingReplaced) {
-                    wallpaperBitmaps = oldBitmapsBeingReplaced
-                }
+                Log.d(TAG, "Top bitmap update CANCELLED.")
+                newTopCroppedBitmap?.recycle()
             } catch (e: Exception) {
                 exceptionOccurred = true
-                Log.e(TAG, "Error preparing bitmaps for $currentUriToLoad", e)
-                SharedWallpaperRenderer.recycleBitmaps(newBitmaps) // 回收可能创建的
-                // 出错时，如果之前是保留旧位图，则尝试恢复；否则清除
-                wallpaperBitmaps = if (keepOldBitmapWhileLoading && oldBitmapsBeingReplaced != null) oldBitmapsBeingReplaced else null
+                Log.e(TAG, "Error updating top cropped bitmap", e)
+                newTopCroppedBitmap?.recycle()
+                // 出错时，可以考虑将 wallpaperBitmaps.page1TopCroppedBitmap 置为 null
+                // wallpaperBitmaps?.page1TopCroppedBitmap = null
             } finally {
-                // 只有当此协程是当前最新的（未被后续调用取消）并且完成了（无论成功、失败或取消）才进行处理
-                val amITheCurrentJob = coroutineContext[Job] == currentBitmapLoadingJob
-                val isStillActiveOrJustCompleted = isActive || exceptionOccurred || coroutineContext[Job]?.isCompleted == true
-
-
-                if (amITheCurrentJob && isStillActiveOrJustCompleted) {
-                    currentBitmapLoadingJob = null // 清理 job 引用
+                if (coroutineContext[Job] == topBitmapUpdateJob) {
+                    topBitmapUpdateJob = null
                 }
-
-
-                // 最终的重绘，确保UI反映最新状态
-                // 如果URI在加载过程中改变了，就不应该用旧URI的结果来重绘
-                if (imageUri == currentUriToLoad || (imageUri == null && currentUriToLoad != null)) {
+                if (imageUri != null) { // 只有在还有图片的情况下才重绘
                     invalidate()
                 }
-                Log.d(TAG, "Bitmap loading job finished. Current job ref: $currentBitmapLoadingJob. URI for this job: $currentUriToLoad. Active URI: $imageUri")
-
+                Log.d(TAG, "Top bitmap update job finished. Exception: $exceptionOccurred")
             }
         }
     }
 
-    // onTouchEvent 和其他滑动相关方法 (performClick, flingPage, snapToNearestPage, animateToOffset, computeScroll, getScrollRange, recycleVelocityTracker)
-    // 与上一个版本（您满意的那个版本）保持一致，这里不再重复列出，请确保使用那些已经调整好的版本。
+    // --- 滑动逻辑 (onTouchEvent, performClick, flingPage, snapToNearestPage, animateToOffset, computeScroll, getScrollRange, recycleVelocityTracker) ---
+    // 这些方法与您满意的上一版本保持一致，这里不再重复，请确保从之前的版本复制过来。
     // 为了代码的完整性，我还是把它们粘贴过来：
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (velocityTracker == null) velocityTracker = VelocityTracker.obtain()
@@ -403,12 +449,6 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
-    private fun getScrollRange(): Int {
-        return 10000
-    }
-
-    private fun recycleVelocityTracker() {
-        velocityTracker?.recycle()
-        velocityTracker = null
-    }
+    private fun getScrollRange(): Int { return 10000 }
+    private fun recycleVelocityTracker() { velocityTracker?.recycle(); velocityTracker = null }
 }
