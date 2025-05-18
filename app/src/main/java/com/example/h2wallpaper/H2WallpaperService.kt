@@ -43,6 +43,8 @@ class H2WallpaperService : WallpaperService() {
         private var page1ImageHeightRatio: Float = 1f / 3f
         private val defaultHeightRatioEngine = 1f / 3f
         private var currentScrollSensitivity: Float = MainActivity.DEFAULT_SCROLL_SENSITIVITY
+        private var currentP1FocusX: Float = 0.5f
+        private var currentP1FocusY: Float = 0.5f
 
         // Launcher 报告的页面信息
         private var numPagesReportedByLauncher = 1
@@ -223,12 +225,19 @@ class H2WallpaperService : WallpaperService() {
                     }
                     Log.i(DEBUG_TAG, "loadFullBitmapsAsync (coroutine): Using $pagesForBackground pages for background. Sensitivity: $currentScrollSensitivity")
 
+                    // 使用命名参数的调用方式 (更安全)
                     newBitmaps = withContext(Dispatchers.IO) {
                         ensureActive()
                         SharedWallpaperRenderer.loadAndProcessInitialBitmaps(
-                            applicationContext, uri, screenWidth, screenHeight,
-                            page1ImageHeightRatio, pagesForBackground,
-                            SharedWallpaperRenderer.DEFAULT_BACKGROUND_BLUR_RADIUS
+                            context = applicationContext,
+                            imageUri = uri,
+                            targetScreenWidth = screenWidth,
+                            targetScreenHeight = screenHeight,
+                            page1ImageHeightRatio = page1ImageHeightRatio,
+                            normalizedFocusX = currentP1FocusX,
+                            normalizedFocusY = currentP1FocusY,
+                            numVirtualPagesForScrolling = pagesForBackground,
+                            blurRadiusForBackground = SharedWallpaperRenderer.DEFAULT_BACKGROUND_BLUR_RADIUS
                         )
                     }
                     ensureActive()
