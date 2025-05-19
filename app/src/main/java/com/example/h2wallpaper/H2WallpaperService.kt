@@ -25,7 +25,7 @@ class H2WallpaperService : WallpaperService() {
         return H2WallpaperEngine()
     }
 
-    private inner class H2WallpaperEngine : Engine(), SharedPreferences.OnSharedPreferenceChangeListener { // 实现接口
+    private inner class H2WallpaperEngine : Engine(), SharedPreferences.OnSharedPreferenceChangeListener {
 
         private var surfaceHolder: SurfaceHolder? = null
         private var isVisible: Boolean = false
@@ -34,15 +34,18 @@ class H2WallpaperService : WallpaperService() {
 
         private var engineWallpaperBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
         private val engineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-        private var currentBitmapLoadJob: Job? = null // 可以考虑分离成 p1TopBitmapLoadJob 和 fullBitmapLoadJob
+        private var currentBitmapLoadJob: Job? = null
 
+        // --- Configuration members, loaded from SharedPreferences or MainActivity defaults ---
         private var imageUriString: String? = null
         private var page1BackgroundColor: Int = Color.LTGRAY
-        private var page1ImageHeightRatio: Float = 1f / 3f
-        private val defaultHeightRatioEngine = 1f / 3f
+        private var page1ImageHeightRatio: Float = MainActivity.DEFAULT_HEIGHT_RATIO
         private var currentScrollSensitivity: Float = MainActivity.DEFAULT_SCROLL_SENSITIVITY
         private var currentP1FocusX: Float = 0.5f
         private var currentP1FocusY: Float = 0.5f
+        private var currentP1OverlayFadeRatio: Float = MainActivity.DEFAULT_P1_OVERLAY_FADE_RATIO
+        private var currentBackgroundBlurRadius: Float = MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS
+        // --- End Configuration members ---
 
         private var numPagesReportedByLauncher = 1
         private var currentPageOffset = 0f
@@ -56,36 +59,38 @@ class H2WallpaperService : WallpaperService() {
             this.surfaceHolder = surfaceHolder
             Log.i(TAG, "H2WallpaperEngine Created. IsPreview: ${isPreview}")
 
-            prefs.registerOnSharedPreferenceChangeListener(this) // 注册监听器
-            loadPreferencesFromStorage() // 初始加载
+            prefs.registerOnSharedPreferenceChangeListener(this)
+            loadPreferencesFromStorage() // Initial load
 
             if (screenWidth > 0 && screenHeight > 0 && imageUriString != null) {
                 Log.i(DEBUG_TAG, "onCreate: Triggering initial bitmap load if needed.")
                 loadFullBitmapsAsyncIfNeeded()
             } else {
-                Log.i(DEBUG_TAG, "onCreate: Conditions for initial load not met.")
+                Log.i(DEBUG_TAG, "onCreate: Conditions for initial load not met (no URI or screen size yet).")
             }
         }
 
-        // 当SharedPreferences改变时回调
         override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
-            Log.i(DEBUG_TAG, "onSharedPreferenceChanged: key=$key")
+            Log.i(DEBUG_TAG, "onSharedPreferenceChanged: key=$key received.")
             var needsFullReload = false
             var needsP1TopUpdate = false
-            var needsScrollingBgUpdate = false // 虽然目前没有单独更新它的逻辑，但可以预留
+            var needsRedrawOnly = false
 
-            // 先加载所有可能变化的参数到成员变量
+            // Store old values to compare after reloading all preferences
             val oldImageUri = imageUriString
             val oldP1FocusX = currentP1FocusX
             val oldP1FocusY = currentP1FocusY
             val oldPage1ImageHeightRatio = page1ImageHeightRatio
-            // ... 其他可能变化的参数
+            val oldScrollSensitivity = currentScrollSensitivity
+            val oldP1OverlayFadeRatio = currentP1OverlayFadeRatio
+            val oldBackgroundBlurRadius = currentBackgroundBlurRadius
+            val oldPage1BackgroundColor = page1BackgroundColor
 
-            loadPreferencesFromStorage() // 加载最新的所有参数
+            loadPreferencesFromStorage() // Load all preferences to get the new values
 
             when (key) {
                 MainActivity.KEY_IMAGE_URI -> {
-                    if (oldImageUri != imageUriString) { // 比较新旧值，确认是否真的变了
+                    if (oldImageUri != imageUriString) {
                         Log.i(DEBUG_TAG, "Preference changed: Image URI. Triggering full reload.")
                         needsFullReload = true
                     }
@@ -102,46 +107,71 @@ class H2WallpaperService : WallpaperService() {
                         needsP1TopUpdate = true
                     }
                 }
-                MainActivity.KEY_BACKGROUND_COLOR, MainActivity.KEY_SCROLL_SENSITIVITY -> {
-                    // 这些参数的改变只需要重绘，不需要重新加载位图
-                    Log.i(DEBUG_TAG, "Preference changed: $key. Triggering redraw.")
-                    if (isVisible) drawCurrentFrame()
+                MainActivity.KEY_SCROLL_SENSITIVITY -> {
+                    if (oldScrollSensitivity != currentScrollSensitivity) {
+                        Log.i(DEBUG_TAG, "Preference changed: Scroll Sensitivity. Triggering redraw.")
+                        needsRedrawOnly = true
+                    }
                 }
-                // 可以为其他参数添加case
+                MainActivity.KEY_P1_OVERLAY_FADE_RATIO -> {
+                    if (oldP1OverlayFadeRatio != currentP1OverlayFadeRatio) {
+                        Log.i(DEBUG_TAG, "Preference changed: P1 Overlay Fade Ratio. Triggering redraw.")
+                        needsRedrawOnly = true
+                    }
+                }
+                MainActivity.KEY_BACKGROUND_BLUR_RADIUS -> {
+                    if (oldBackgroundBlurRadius != currentBackgroundBlurRadius) {
+                        Log.i(DEBUG_TAG, "Preference changed: Background Blur Radius. Triggering full reload.")
+                        needsFullReload = true // Blur change requires regenerating scrolling background
+                    }
+                }
+                MainActivity.KEY_BACKGROUND_COLOR -> {
+                    if (oldPage1BackgroundColor != page1BackgroundColor) {
+                        Log.i(DEBUG_TAG, "Preference changed: Background Color. Triggering redraw.")
+                        needsRedrawOnly = true
+                    }
+                }
             }
 
             if (needsFullReload) {
-                loadFullBitmapsAsyncIfNeeded() // 会处理URI为null的情况
+                loadFullBitmapsAsyncIfNeeded()
             } else if (needsP1TopUpdate) {
-                // 确保 updateTopCroppedBitmapAsync 使用的是最新的焦点和高度比例
                 if (engineWallpaperBitmaps?.sourceSampledBitmap != null && imageUriString != null) {
                     updateTopCroppedBitmapAsync()
-                } else if (imageUriString != null) { // 如果有URI但没有源图，则需要完整加载
+                } else if (imageUriString != null) { // If source bitmap is missing, but we have URI, do full reload
                     Log.w(DEBUG_TAG, "P1 top update requested, but sourceSampledBitmap is null. Forcing full reload.")
                     loadFullBitmapsAsyncIfNeeded()
                 }
+            } else if (needsRedrawOnly) {
+                if (isVisible) drawCurrentFrame()
             }
         }
 
 
         private fun loadPreferencesFromStorage() {
             imageUriString = prefs.getString(MainActivity.KEY_IMAGE_URI, null)
-            page1BackgroundColor = prefs.getInt(MainActivity.KEY_BACKGROUND_COLOR, Color.LTGRAY)
-            page1ImageHeightRatio = prefs.getFloat(MainActivity.KEY_IMAGE_HEIGHT_RATIO, defaultHeightRatioEngine)
+            page1BackgroundColor = prefs.getInt(MainActivity.KEY_BACKGROUND_COLOR, Color.LTGRAY) // Default color if not set
+            page1ImageHeightRatio = prefs.getFloat(MainActivity.KEY_IMAGE_HEIGHT_RATIO, MainActivity.DEFAULT_HEIGHT_RATIO)
             currentScrollSensitivity = prefs.getFloat(MainActivity.KEY_SCROLL_SENSITIVITY, MainActivity.DEFAULT_SCROLL_SENSITIVITY)
             currentP1FocusX = prefs.getFloat(MainActivity.KEY_P1_FOCUS_X, 0.5f)
             currentP1FocusY = prefs.getFloat(MainActivity.KEY_P1_FOCUS_Y, 0.5f)
-            Log.i(DEBUG_TAG, "Preferences loaded/reloaded from storage: URI=$imageUriString, Color=$page1BackgroundColor, Ratio=$page1ImageHeightRatio, Sensitivity=$currentScrollSensitivity, Focus=($currentP1FocusX, $currentP1FocusY)")
+
+            // Load new preferences with MainActivity defaults as fallbacks
+            currentP1OverlayFadeRatio = prefs.getFloat(MainActivity.KEY_P1_OVERLAY_FADE_RATIO, MainActivity.DEFAULT_P1_OVERLAY_FADE_RATIO)
+            currentBackgroundBlurRadius = prefs.getFloat(MainActivity.KEY_BACKGROUND_BLUR_RADIUS, MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS)
+
+            Log.i(DEBUG_TAG, "Preferences loaded/reloaded (Service): URI=$imageUriString, Color=$page1BackgroundColor, Ratio=$page1ImageHeightRatio, Sensitivity=$currentScrollSensitivity, Focus=($currentP1FocusX, $currentP1FocusY), P1FadeRatio=$currentP1OverlayFadeRatio, BlurRadius=$currentBackgroundBlurRadius")
         }
 
         private fun loadFullBitmapsAsyncIfNeeded() {
             if (imageUriString != null && screenWidth > 0 && screenHeight > 0) {
+                // Always reload if source is null, or job is not active.
+                // This handles cases where URI is same, but other params (like blur) that affect full bitmap set might have changed.
                 if (currentBitmapLoadJob == null || !currentBitmapLoadJob!!.isActive || engineWallpaperBitmaps?.sourceSampledBitmap == null) {
                     Log.i(DEBUG_TAG, "loadFullBitmapsAsyncIfNeeded: Conditions met, calling loadFullBitmapsAsync.")
                     loadFullBitmapsAsync()
                 } else {
-                    Log.i(DEBUG_TAG, "loadFullBitmapsAsyncIfNeeded: Bitmaps seem to be loaded or loading for current URI, might need redraw or specific update.")
-                    // 如果只是参数变化，比如颜色，可能只需要重绘
+                    Log.i(DEBUG_TAG, "loadFullBitmapsAsyncIfNeeded: Bitmaps seem to be loaded or loading. Redrawing if visible.")
                     if (isVisible) drawCurrentFrame()
                 }
             } else if (imageUriString == null) {
@@ -153,7 +183,6 @@ class H2WallpaperService : WallpaperService() {
             }
         }
 
-
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
             super.onSurfaceChanged(holder, format, width, height)
             val oldScreenWidth = screenWidth
@@ -163,34 +192,36 @@ class H2WallpaperService : WallpaperService() {
             Log.i(TAG, "Surface changed: New $width x $height. Old: ${oldScreenWidth}x${oldScreenHeight}. IsPreview: ${isPreview}")
 
             if (screenWidth > 0 && screenHeight > 0) {
-                Log.i(DEBUG_TAG, "SurfaceChanged: Dimensions valid. Reloading preferences and ensuring bitmaps are loaded.")
-                // loadPreferencesFromStorage() // onSharedPreferenceChanged 会处理参数更新，但这里可以保留以防万一
-                loadFullBitmapsAsyncIfNeeded()
+                Log.i(DEBUG_TAG, "SurfaceChanged: Dimensions valid. Ensuring bitmaps are loaded for new dimensions.")
+                // Parameters like blur radius, focus, height ratio etc. might affect how bitmaps are scaled/cropped for new screen size.
+                // So, a full reload is generally appropriate here if an image URI is set.
+                if (imageUriString != null) {
+                    loadFullBitmapsAsyncIfNeeded()
+                } else {
+                    if (isVisible) drawCurrentFrame() // Draw placeholder if no image
+                }
             } else {
                 currentBitmapLoadJob?.cancel(); currentBitmapLoadJob = null
-                engineWallpaperBitmaps?.recycleInternals()
-                engineWallpaperBitmaps = null
+                engineWallpaperBitmaps?.recycleInternals(); engineWallpaperBitmaps = null
             }
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
             super.onSurfaceDestroyed(holder)
             isVisible = false
-            // currentBitmapLoadJob?.cancel(); currentBitmapLoadJob = null // engineScope.cancel() 会处理
-            // engineScope.cancel() // 移到 onDestroy
-            // engineWallpaperBitmaps?.recycleInternals(); engineWallpaperBitmaps = null // 移到 onDestroy
             Log.i(TAG, "H2WallpaperEngine Surface destroyed.")
+            // Resources are cleaned up in onDestroy
         }
 
         override fun onVisibilityChanged(visible: Boolean) {
             this.isVisible = visible
             Log.i(TAG, "Visibility changed: $visible. IsPreview: ${isPreview}")
             if (visible) {
-                // 当变为可见时，确保配置是最新的，并且位图已加载
-                // loadPreferencesFromStorage() // 确保参数最新（尽管listener应该处理了）
-                // 检查当前位图是否有效，如果无效（例如服务在后台被回收后重启），则重新加载
+                // When becoming visible, ensure everything is up-to-date
+                // Preferences should be fresh due to listener, but a check won't hurt
+                // loadPreferencesFromStorage() // Usually not needed if listener works
                 if (engineWallpaperBitmaps?.sourceSampledBitmap == null && imageUriString != null && screenWidth > 0 && screenHeight > 0) {
-                    Log.i(DEBUG_TAG, "VisibilityChanged (visible=true): Source bitmap missing. Trying to load based on current engine URI: $imageUriString")
+                    Log.i(DEBUG_TAG, "VisibilityChanged (visible=true): Source bitmap missing. Triggering full load.")
                     loadFullBitmapsAsyncIfNeeded()
                 } else {
                     Log.i(DEBUG_TAG, "VisibilityChanged (visible=true): Bitmaps seem okay or no URI. Redrawing.")
@@ -214,11 +245,10 @@ class H2WallpaperService : WallpaperService() {
             val oldNumPages = numPagesReportedByLauncher
             this.numPagesReportedByLauncher = reportedPages
 
-
             if (!isPreview && oldNumPages != this.numPagesReportedByLauncher && this.numPagesReportedByLauncher > 0 && imageUriString != null) {
                 if (engineWallpaperBitmaps?.sourceSampledBitmap != null) {
                     Log.i(DEBUG_TAG, "Number of reported pages changed from $oldNumPages to ${this.numPagesReportedByLauncher}. Updating scrolling background.")
-                    updateScrollingBackgroundAsync() // 这个方法也需要确保使用最新的参数
+                    updateScrollingBackgroundAsync()
                 } else {
                     Log.i(DEBUG_TAG, "Number of reported pages changed, but no source bitmap. Triggering full reload.")
                     loadFullBitmapsAsyncIfNeeded()
@@ -230,24 +260,22 @@ class H2WallpaperService : WallpaperService() {
             }
         }
 
-
         private fun loadFullBitmapsAsync() {
-            currentBitmapLoadJob?.cancel(); // 取消任何正在进行的加载
-            // 重置为null，确保即使URI相同但内容可能由于其他参数变化（如焦点）而需要重新加载时，也会执行
-            engineWallpaperBitmaps?.recycleInternals()
+            currentBitmapLoadJob?.cancel()
+            engineWallpaperBitmaps?.recycleInternals() // Always recycle before new load attempt
             engineWallpaperBitmaps = null
 
             val uriStringToLoad = imageUriString
             if (uriStringToLoad == null || screenWidth <= 0 || screenHeight <= 0) {
                 Log.w(DEBUG_TAG, "loadFullBitmapsAsync: Preconditions not met. URI: $uriStringToLoad, Screen: ${screenWidth}x$screenHeight")
-                if (isVisible) drawCurrentFrame() // 绘制占位符
+                if (isVisible) drawCurrentFrame() // Draw placeholder
                 return
             }
             val uri = Uri.parse(uriStringToLoad)
-            Log.i(DEBUG_TAG, "loadFullBitmapsAsync: Starting for URI: $uri. Focus:($currentP1FocusX, $currentP1FocusY)")
+            Log.i(DEBUG_TAG, "loadFullBitmapsAsync: Starting for URI: $uri. Focus:($currentP1FocusX, $currentP1FocusY), Blur:$currentBackgroundBlurRadius")
 
-            if (isVisible) { // 如果可见，立即画一次占位符，因为旧位图已清除
-                drawCurrentFrame()
+            if (isVisible) {
+                drawCurrentFrame() // Draw placeholder immediately
             }
 
             currentBitmapLoadJob = engineScope.launch {
@@ -259,7 +287,7 @@ class H2WallpaperService : WallpaperService() {
                     } else {
                         numPagesReportedByLauncher.coerceAtLeast(1)
                     }
-                    Log.i(DEBUG_TAG, "loadFullBitmapsAsync (coroutine): Using $pagesForBackground pages for background. Sensitivity: $currentScrollSensitivity")
+                    Log.i(DEBUG_TAG, "loadFullBitmapsAsync (coroutine): Using $pagesForBackground pages for background. Sensitivity: $currentScrollSensitivity, Blur: $currentBackgroundBlurRadius")
 
                     newBitmapsHolder = withContext(Dispatchers.IO) {
                         ensureActive()
@@ -268,34 +296,30 @@ class H2WallpaperService : WallpaperService() {
                             imageUri = uri,
                             targetScreenWidth = screenWidth,
                             targetScreenHeight = screenHeight,
-                            page1ImageHeightRatio = page1ImageHeightRatio, // 使用当前最新的值
-                            normalizedFocusX = currentP1FocusX,       // 使用当前最新的值
-                            normalizedFocusY = currentP1FocusY,       // 使用当前最新的值
+                            page1ImageHeightRatio = page1ImageHeightRatio,
+                            normalizedFocusX = currentP1FocusX,
+                            normalizedFocusY = currentP1FocusY,
                             numVirtualPagesForScrolling = pagesForBackground,
-                            blurRadiusForBackground = SharedWallpaperRenderer.DEFAULT_BACKGROUND_BLUR_RADIUS
+                            blurRadiusForBackground = currentBackgroundBlurRadius // Pass current blur radius
                         )
                     }
                     ensureActive()
 
-                    if (this@H2WallpaperEngine.imageUriString == uriStringToLoad) { // 检查URI在加载期间是否改变
-                        engineWallpaperBitmaps = newBitmapsHolder // 直接赋值，旧的已在开始时回收
+                    if (this@H2WallpaperEngine.imageUriString == uriStringToLoad) {
+                        engineWallpaperBitmaps = newBitmapsHolder
                         Log.i(DEBUG_TAG, "Full bitmaps loaded successfully for $uri.")
                     } else {
-                        Log.w(DEBUG_TAG, "URI changed during full load for $uri. Current engine URI: ${this@H2WallpaperEngine.imageUriString}. Discarding newly loaded bitmaps.")
+                        Log.w(DEBUG_TAG, "URI changed during full load for $uri. Current engine URI: ${this@H2WallpaperEngine.imageUriString}. Discarding.")
                         newBitmapsHolder?.recycleInternals()
-                        // 如果当前URI已变为null，也确保 engineWallpaperBitmaps 为 null
-                        if (this@H2WallpaperEngine.imageUriString == null) {
-                            engineWallpaperBitmaps = null
-                        }
+                        if (this@H2WallpaperEngine.imageUriString == null) engineWallpaperBitmaps = null
                     }
                 } catch (e: CancellationException) {
                     Log.d(DEBUG_TAG, "Full bitmap loading CANCELLED for $uri.")
                     newBitmapsHolder?.recycleInternals()
-                    // 如果取消，并且 engineWallpaperBitmaps 为 null (因为开始时被清除了)，保持为 null
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in loadFullBitmapsAsync for $uri", e)
                     newBitmapsHolder?.recycleInternals()
-                    engineWallpaperBitmaps = null // 出错则清除
+                    engineWallpaperBitmaps = null
                 } finally {
                     if (coroutineContext[Job] == currentBitmapLoadJob) currentBitmapLoadJob = null
                     if (isVisible && (this@H2WallpaperEngine.imageUriString == uriStringToLoad || this@H2WallpaperEngine.imageUriString == null)) {
@@ -306,22 +330,19 @@ class H2WallpaperService : WallpaperService() {
         }
 
         private fun updateTopCroppedBitmapAsync() {
-            // 如果已有全图加载任务，可能需要取消或等待它完成，或者用单独的job
-            // currentBitmapLoadJob?.cancel(); // 谨慎取消，可能正在加载源图
-
             val currentSourceBitmap = engineWallpaperBitmaps?.sourceSampledBitmap
             if (currentSourceBitmap == null || screenWidth <= 0 || screenHeight <= 0 || imageUriString == null) {
-                Log.w(DEBUG_TAG, "updateTopCroppedBitmapAsync: Source bitmap is null or screen dimensions invalid or no URI. Triggering full reload if URI exists.")
+                Log.w(DEBUG_TAG, "updateTopCroppedBitmapAsync: Preconditions not met. Triggering full reload if URI exists.")
                 if (imageUriString != null) loadFullBitmapsAsyncIfNeeded()
-                else if(isVisible) drawCurrentFrame() // 画占位符
+                else if(isVisible) drawCurrentFrame()
                 return
             }
             Log.i(DEBUG_TAG, "updateTopCroppedBitmapAsync: Starting for ratio $page1ImageHeightRatio, Focus($currentP1FocusX, $currentP1FocusY)")
 
-            // 可以为此操作使用一个单独的 Job，以避免与 fullBitmapLoadJob 冲突
-            val p1TopUpdateJob = engineScope.launch { // 使用新的 Job 或确保 currentBitmapLoadJob 已完成/被取消
+            // Use a separate job for this to avoid interfering with fullBitmapLoadJob if it's for source
+            val p1TopUpdateJob = engineScope.launch {
                 var newTopCropped: Bitmap? = null
-                val oldTopCropped = engineWallpaperBitmaps?.page1TopCroppedBitmap
+                val oldTopCropped = engineWallpaperBitmaps?.page1TopCroppedBitmap // Cache to recycle if different
                 try {
                     ensureActive()
                     newTopCropped = withContext(Dispatchers.Default) {
@@ -330,15 +351,14 @@ class H2WallpaperService : WallpaperService() {
                             currentSourceBitmap,
                             screenWidth,
                             screenHeight,
-                            page1ImageHeightRatio, // 使用最新的高度比例
-                            currentP1FocusX,       // 使用最新的焦点X
-                            currentP1FocusY        // 使用最新的焦点Y
+                            page1ImageHeightRatio,
+                            currentP1FocusX,
+                            currentP1FocusY
                         )
                     }
                     ensureActive()
-                    // 再次检查状态，确保在异步操作期间源图和URI没有改变
                     if (this@H2WallpaperEngine.imageUriString != null && engineWallpaperBitmaps?.sourceSampledBitmap == currentSourceBitmap) {
-                        if (oldTopCropped != newTopCropped) oldTopCropped?.recycle()
+                        if (oldTopCropped != newTopCropped) oldTopCropped?.recycle() // Recycle old only if new one is different
                         engineWallpaperBitmaps?.page1TopCroppedBitmap = newTopCropped
                         Log.i(DEBUG_TAG, "Top cropped bitmap updated successfully.")
                     } else {
@@ -352,23 +372,18 @@ class H2WallpaperService : WallpaperService() {
                     Log.e(TAG, "Error updating top cropped bitmap", e)
                     newTopCropped?.recycle()
                     if (this@H2WallpaperEngine.imageUriString != null && engineWallpaperBitmaps?.sourceSampledBitmap == currentSourceBitmap) {
-                        engineWallpaperBitmaps?.page1TopCroppedBitmap = null // 出错时清除，以便重绘时显示占位
+                        engineWallpaperBitmaps?.page1TopCroppedBitmap = null
                     }
                 } finally {
-                    // 不需要管理 currentBitmapLoadJob，因为这是个独立的 p1TopUpdateJob
                     if (isVisible && this@H2WallpaperEngine.imageUriString != null) drawCurrentFrame()
                 }
             }
         }
 
-        // updateScrollingBackgroundAsync 也应该使用最新的参数，但它目前只在 numPagesReportedByLauncher 变化时调用
         private fun updateScrollingBackgroundAsync() {
-            // ... (类似 updateTopCroppedBitmapAsync, 确保它使用最新的 numPagesReportedByLauncher 等) ...
-            // currentBitmapLoadJob?.cancel() // 同样，谨慎处理
-
             val currentSource = engineWallpaperBitmaps?.sourceSampledBitmap
             if (currentSource == null || imageUriString == null || screenWidth <= 0 || screenHeight <= 0) {
-                Log.w(DEBUG_TAG, "updateScrollingBackgroundAsync: Cannot update, source bitmap is null or preconditions not met.")
+                Log.w(DEBUG_TAG, "updateScrollingBackgroundAsync: Preconditions not met. Triggering full reload if URI exists.")
                 if (imageUriString != null) loadFullBitmapsAsyncIfNeeded()
                 else if(isVisible) drawCurrentFrame()
                 return
@@ -378,7 +393,7 @@ class H2WallpaperService : WallpaperService() {
             } else {
                 numPagesReportedByLauncher.coerceAtLeast(1)
             }
-            Log.i(DEBUG_TAG, "updateScrollingBackgroundAsync: Starting for numPages $pagesForBg")
+            Log.i(DEBUG_TAG, "updateScrollingBackgroundAsync: Starting for numPages $pagesForBg, Blur: $currentBackgroundBlurRadius")
 
             val scrollingUpdateJob = engineScope.launch {
                 var newScrollingPair: Pair<Bitmap?, Bitmap?>? = null
@@ -390,7 +405,7 @@ class H2WallpaperService : WallpaperService() {
                         ensureActive()
                         SharedWallpaperRenderer.prepareScrollingAndBlurredBitmaps(
                             applicationContext, currentSource, screenWidth, screenHeight,
-                            pagesForBg, SharedWallpaperRenderer.DEFAULT_BACKGROUND_BLUR_RADIUS
+                            pagesForBg, currentBackgroundBlurRadius // Use current blur radius
                         )
                     }
                     ensureActive()
@@ -399,23 +414,25 @@ class H2WallpaperService : WallpaperService() {
                         if (oldBlurredBitmap != newScrollingPair?.second) oldBlurredBitmap?.recycle()
                         engineWallpaperBitmaps?.scrollingBackgroundBitmap = newScrollingPair?.first
                         engineWallpaperBitmaps?.blurredScrollingBackgroundBitmap = newScrollingPair?.second
-                        Log.i(DEBUG_TAG, "Scrolling background updated successfully. New width: ${newScrollingPair?.first?.width}")
+                        Log.i(DEBUG_TAG, "Scrolling background updated. New width: ${newScrollingPair?.first?.width}")
                     } else {
                         Log.w(DEBUG_TAG, "State changed during scrolling background update. Discarding.")
                         newScrollingPair?.first?.recycle(); newScrollingPair?.second?.recycle()
                     }
-                } catch (e: CancellationException) { Log.d(DEBUG_TAG, "Scrolling background update CANCELLED."); newScrollingPair?.first?.recycle(); newScrollingPair?.second?.recycle()
-                } catch (e: Exception) { Log.e(TAG, "Error updating scrolling background", e); newScrollingPair?.first?.recycle(); newScrollingPair?.second?.recycle()
+                } catch (e: CancellationException) {
+                    Log.d(DEBUG_TAG, "Scrolling background update CANCELLED.")
+                    newScrollingPair?.first?.recycle(); newScrollingPair?.second?.recycle()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error updating scrolling background", e)
+                    newScrollingPair?.first?.recycle(); newScrollingPair?.second?.recycle()
                 } finally {
                     if (isVisible && this@H2WallpaperEngine.imageUriString != null) drawCurrentFrame()
                 }
             }
         }
 
-
         private fun drawCurrentFrame() {
             if (!isVisible || surfaceHolder?.surface?.isValid != true || screenWidth == 0 || screenHeight == 0) {
-                // Log.d(DEBUG_TAG, "drawCurrentFrame: Skipped. Visible:$isVisible, SurfaceValid:${surfaceHolder?.surface?.isValid}, SW:$screenWidth, SH:$screenHeight")
                 return
             }
             var canvas: Canvas? = null
@@ -427,9 +444,7 @@ class H2WallpaperService : WallpaperService() {
                 }
                 if (canvas != null) {
                     val currentWpBitmaps = engineWallpaperBitmaps
-                    // 确保 currentP1FocusX, currentP1FocusY, page1ImageHeightRatio是最新的
-                    // WallpaperConfig 将使用这些最新的成员变量
-                    if (currentWpBitmaps?.sourceSampledBitmap != null && currentWpBitmaps.page1TopCroppedBitmap != null) { // 增加对page1TopCroppedBitmap的检查
+                    if (currentWpBitmaps?.sourceSampledBitmap != null && currentWpBitmaps.page1TopCroppedBitmap != null) {
                         val pagesForConfig = if (!isPreview && numPagesReportedByLauncher <= 1) {
                             DEFAULT_VIRTUAL_PAGES_FOR_SCROLLING
                         } else {
@@ -438,18 +453,20 @@ class H2WallpaperService : WallpaperService() {
                         val config = SharedWallpaperRenderer.WallpaperConfig(
                             screenWidth, screenHeight, page1BackgroundColor, page1ImageHeightRatio,
                             currentPageOffset, pagesForConfig,
-                            scrollSensitivityFactor = this.currentScrollSensitivity
+                            p1OverlayFadeTransitionRatio = currentP1OverlayFadeRatio, // Use member variable
+                            scrollSensitivityFactor = this.currentScrollSensitivity    // Use member variable
                         )
                         SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps)
                     } else {
                         SharedWallpaperRenderer.drawPlaceholder(canvas, screenWidth, screenHeight,
-                            if (imageUriString != null && (currentBitmapLoadJob?.isActive == true /* || p1TopUpdateJob?.isActive == true */)) "壁纸加载中..." // 需要考虑多个job
+                            if (imageUriString != null && (currentBitmapLoadJob?.isActive == true)) "壁纸加载中..."
                             else if (imageUriString == null) "请选择图片"
-                            else "图片资源准备中..." // 如果有URI但位图不完整
+                            else "图片资源准备中..."
                         )
                     }
                 }
-            } catch (e: Exception) { Log.e(TAG, "Error during drawFrame", e)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during drawFrame", e)
             } finally {
                 if (canvas != null) {
                     try { surfaceHolder!!.unlockCanvasAndPost(canvas) }
@@ -460,8 +477,8 @@ class H2WallpaperService : WallpaperService() {
 
         override fun onDestroy() {
             super.onDestroy()
-            prefs.unregisterOnSharedPreferenceChangeListener(this) // 注销监听器
-            engineScope.cancel() // 取消所有协程
+            prefs.unregisterOnSharedPreferenceChangeListener(this)
+            engineScope.cancel() // Cancel all coroutines
             engineWallpaperBitmaps?.recycleInternals()
             engineWallpaperBitmaps = null
             Log.i(TAG, "H2WallpaperEngine destroyed.")

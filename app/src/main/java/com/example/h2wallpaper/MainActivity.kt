@@ -19,18 +19,18 @@ import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.ProgressBar // 新增：用于显示复制进度
+import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider // 新增：如果需要通过FileProvider共享内部URI
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.lifecycle.lifecycleScope // 新增：用于启动协程
+import androidx.lifecycle.lifecycleScope
 import androidx.palette.graphics.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -55,20 +55,22 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnHeightIncrease: Button
     private lateinit var btnHeightDecrease: Button
     private lateinit var btnCustomizeForeground: Button
-    private lateinit var imageLoadingProgressBar: ProgressBar // 新增
+    private lateinit var imageLoadingProgressBar: ProgressBar
 
     // 状态变量
-    // selectedImageUri 现在将存储指向应用内部副本的 File URI 或 Content URI (通过FileProvider)
     private var selectedImageUri: Uri? = null
     private var selectedBackgroundColor: Int = Color.LTGRAY
     private var originalBitmapForColorExtraction: Bitmap? = null
-    var page1ImageHeightRatio: Float = DEFAULT_HEIGHT_RATIO
-    private var currentScrollSensitivityFactor: Float = DEFAULT_SCROLL_SENSITIVITY
-
+    var page1ImageHeightRatio: Float = DEFAULT_HEIGHT_RATIO // 直接使用 companion object 的值初始化
     private var currentP1FocusX: Float = 0.5f
     private var currentP1FocusY: Float = 0.5f
 
-    // 新增：用于存储内部图片的文件名
+    // 新增/修改的配置参数变量
+    private var currentScrollSensitivity: Float = DEFAULT_SCROLL_SENSITIVITY
+    private var currentP1OverlayFadeRatio: Float = DEFAULT_P1_OVERLAY_FADE_RATIO
+    private var currentBackgroundBlurRadius: Float = DEFAULT_BACKGROUND_BLUR_RADIUS
+
+
     private val INTERNAL_IMAGE_FILENAME = "h2_wallpaper_internal_image.jpg"
     private val INTERNAL_IMAGE_FOLDER = "wallpaper_images"
 
@@ -78,7 +80,6 @@ class MainActivity : AppCompatActivity() {
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.data?.let { externalUri ->
                     Log.i(TAG, "Image selected from picker: $externalUri")
-                    // 启动协程复制图片到内部存储
                     copyImageToInternalStorage(externalUri)
                 } ?: run {
                     btnCustomizeForeground.isEnabled = (this.selectedImageUri != null)
@@ -96,7 +97,7 @@ class MainActivity : AppCompatActivity() {
                 currentP1FocusX = data?.getFloatExtra(FocusParams.RESULT_FOCUS_X, 0.5f) ?: 0.5f
                 currentP1FocusY = data?.getFloatExtra(FocusParams.RESULT_FOCUS_Y, 0.5f) ?: 0.5f
 
-                savePreferences() // 保存新的焦点参数
+                savePreferences()
                 wallpaperPreviewView.setNormalizedFocus(currentP1FocusX, currentP1FocusY)
 
                 Toast.makeText(
@@ -112,16 +113,24 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         const val PREFS_NAME = "H2WallpaperPrefs"
-        // KEY_IMAGE_URI 现在存储的是内部文件的URI字符串
-        const val KEY_IMAGE_URI = "internalImageUri" // 修改Key的名称以反映其含义
+        const val KEY_IMAGE_URI = "internalImageUri"
         const val KEY_BACKGROUND_COLOR = "backgroundColor"
         const val KEY_IMAGE_HEIGHT_RATIO = "imageHeightRatio"
-        const val KEY_SCROLL_SENSITIVITY = "scrollSensitivity"
         const val KEY_P1_FOCUS_X = "p1FocusX"
         const val KEY_P1_FOCUS_Y = "p1FocusY"
 
-        const val DEFAULT_SCROLL_SENSITIVITY = 1.0f
+        // --- 新增/修改的参数定义 ---
+        const val KEY_SCROLL_SENSITIVITY = "scrollSensitivity"
+        const val KEY_P1_OVERLAY_FADE_RATIO = "p1OverlayFadeRatio"
+        const val KEY_BACKGROUND_BLUR_RADIUS = "backgroundBlurRadius"
+
+        // 默认值 - 在这里修改以进行测试！
         const val DEFAULT_HEIGHT_RATIO = 1f / 3f
+        const val DEFAULT_SCROLL_SENSITIVITY = 0.2f       // 滚动视差的灵敏度/范围 例如: 1.0f, 0.75f, 1.25f
+        const val DEFAULT_P1_OVERLAY_FADE_RATIO = 0.38f   // P1 叠加层淡出过渡比例例如: 0.2f, 0.3f, 0.5f
+        const val DEFAULT_BACKGROUND_BLUR_RADIUS = 25f    // 背景模糊半径例如: 0f (无模糊), 10f, 25f
+        const val DEFAULT_PREVIEW_SNAP_DURATION_MS: Long = 700L // 预览吸附动画时长例如: 300L, 500L, 700L
+
         private const val PERMISSION_REQUEST_READ_MEDIA_IMAGES = 1001
         private const val TAG = "H2WallpaperMain"
 
@@ -135,7 +144,6 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "onCreate: Activity starting")
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        // ... (状态栏和导航栏透明化代码保持不变) ...
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             window.statusBarColor = Color.TRANSPARENT
             window.navigationBarColor = Color.TRANSPARENT
@@ -147,10 +155,8 @@ class MainActivity : AppCompatActivity() {
             window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
 
-
         setContentView(R.layout.activity_main)
 
-        // 初始化UI控件
         btnSelectImage = findViewById(R.id.btnSelectImage)
         colorPaletteContainer = findViewById(R.id.colorPaletteContainer)
         btnSetWallpaper = findViewById(R.id.btnSetWallpaper)
@@ -161,12 +167,11 @@ class MainActivity : AppCompatActivity() {
         btnHeightIncrease = findViewById(R.id.btnHeightIncrease)
         btnHeightDecrease = findViewById(R.id.btnHeightDecrease)
         btnCustomizeForeground = findViewById(R.id.btnCustomizeForeground)
-        imageLoadingProgressBar = findViewById(R.id.imageLoadingProgressBar) // 在你的activity_main.xml中添加一个ProgressBar
+        imageLoadingProgressBar = findViewById(R.id.imageLoadingProgressBar)
 
-        loadAndApplyPreferencesAndInitState()
+        loadAndApplyPreferencesAndInitState() // 这会加载或设置默认配置，并应用到预览
 
-        // ... (处理窗口边衬区代码保持不变) ...
-        val rootLayoutForInsets: View = findViewById(android.R.id.content) // 或者你的根布局ID
+        val rootLayoutForInsets: View = findViewById(android.R.id.content)
         ViewCompat.setOnApplyWindowInsetsListener(rootLayoutForInsets) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             (btnSetWallpaper.layoutParams as? ConstraintLayout.LayoutParams)?.apply {
@@ -176,8 +181,6 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-
-        // 设置按钮点击监听 (大部分保持不变)
         btnSelectImage.setOnClickListener { checkAndRequestReadMediaImagesPermission() }
 
         btnSetWallpaper.setOnClickListener {
@@ -188,7 +191,6 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
             }
         }
-        // ... (高度调节按钮监听保持不变) ...
         btnHeightReset.setOnClickListener { updatePage1ImageHeightRatio(DEFAULT_HEIGHT_RATIO) }
         btnHeightIncrease.setOnClickListener { updatePage1ImageHeightRatio((page1ImageHeightRatio + HEIGHT_RATIO_STEP)) }
         btnHeightDecrease.setOnClickListener { updatePage1ImageHeightRatio((page1ImageHeightRatio - HEIGHT_RATIO_STEP)) }
@@ -196,16 +198,13 @@ class MainActivity : AppCompatActivity() {
 
         btnCustomizeForeground.setOnClickListener {
             Log.d("MainActivityFocus", "btnCustomizeForeground clicked")
-            // selectedImageUri 现在是内部文件的 URI
             if (selectedImageUri != null) {
                 Log.d("MainActivityFocus", "selectedImageUri is: ${selectedImageUri.toString()}")
-                // ... (启动 FocusActivity 的逻辑基本不变, 因为 selectedImageUri 仍然是一个有效的Uri) ...
                 val intent = Intent(this, FocusActivity::class.java).apply {
-                    putExtra(FocusParams.EXTRA_IMAGE_URI, selectedImageUri) // FocusActivity 现在会收到内部文件的URI
+                    putExtra(FocusParams.EXTRA_IMAGE_URI, selectedImageUri)
 
                     val previewWidth = wallpaperPreviewView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
                     val previewHeight = wallpaperPreviewView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
-
                     val currentP1Height = (previewHeight * page1ImageHeightRatio)
                     val currentP1AspectRatio = if (previewWidth > 0 && currentP1Height > 0) {
                         previewWidth.toFloat() / currentP1Height.toFloat()
@@ -213,21 +212,16 @@ class MainActivity : AppCompatActivity() {
                         Log.w("MainActivityFocus", "PreviewView not measured or p1Height is 0, using default aspect ratio 16/9")
                         16f / 9f
                     }
-                    Log.d("MainActivityFocus", "Calculated P1 AspectRatio: $currentP1AspectRatio for FocusActivity")
                     putExtra(FocusParams.EXTRA_ASPECT_RATIO, currentP1AspectRatio)
-
-                    Log.d("MainActivityFocus", "Passing Initial Focus X: $currentP1FocusX, Y: $currentP1FocusY to FocusActivity")
                     putExtra(FocusParams.EXTRA_INITIAL_FOCUS_X, currentP1FocusX)
                     putExtra(FocusParams.EXTRA_INITIAL_FOCUS_Y, currentP1FocusY)
                 }
-                Log.d("MainActivityFocus", "Intent extras before launch: Bundle[${intent.extras?.let { bundle -> bundle.keySet().joinToString { key -> "$key=${bundle.get(key)}" } } ?: "null"}]")
                 focusActivityLauncher.launch(intent)
             } else {
                 Log.w("MainActivityFocus", "selectedImageUri is NULL, cannot start FocusActivity")
                 Toast.makeText(this, "请先选择一张图片", Toast.LENGTH_SHORT).show()
             }
         }
-        // ... (预览区域点击监听保持不变) ...
         var controlsAreVisible = true
         wallpaperPreviewView.setOnClickListener {
             controlsAreVisible = !controlsAreVisible
@@ -245,14 +239,105 @@ class MainActivity : AppCompatActivity() {
                 btnCustomizeForeground.alpha = 0f
             }
         }
-
         Log.d(TAG, "onCreate: Activity setup complete")
     }
 
-    // --- 文件复制相关逻辑 ---
+    private fun loadAndApplyPreferencesAndInitState() {
+        val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        selectedBackgroundColor = prefs.getInt(KEY_BACKGROUND_COLOR, Color.LTGRAY)
+        page1ImageHeightRatio = prefs.getFloat(KEY_IMAGE_HEIGHT_RATIO, DEFAULT_HEIGHT_RATIO)
+        currentP1FocusX = prefs.getFloat(KEY_P1_FOCUS_X, 0.5f)
+        currentP1FocusY = prefs.getFloat(KEY_P1_FOCUS_Y, 0.5f)
+
+        // 加载新的配置参数，如果SharedPreferences中没有，则使用 companion object 中的默认值
+        currentScrollSensitivity = prefs.getFloat(KEY_SCROLL_SENSITIVITY, DEFAULT_SCROLL_SENSITIVITY)
+        currentP1OverlayFadeRatio = prefs.getFloat(KEY_P1_OVERLAY_FADE_RATIO, DEFAULT_P1_OVERLAY_FADE_RATIO)
+        currentBackgroundBlurRadius = prefs.getFloat(KEY_BACKGROUND_BLUR_RADIUS, DEFAULT_BACKGROUND_BLUR_RADIUS)
+
+        val internalImageUriString = prefs.getString(KEY_IMAGE_URI, null)
+
+        Log.i(TAG, "Loaded preferences: InternalURI=$internalImageUriString, Color=$selectedBackgroundColor, Ratio=$page1ImageHeightRatio, Sensitivity=$currentScrollSensitivity, Focus=($currentP1FocusX, $currentP1FocusY), P1FadeRatio=$currentP1OverlayFadeRatio, BlurRadius=$currentBackgroundBlurRadius")
+
+        // 将所有相关的配置值一次性应用到 WallpaperPreviewView
+        // 注意: WallpaperPreviewView 需要有一个 setConfigValues 方法来接收这些
+        wallpaperPreviewView.setConfigValues(
+            scrollSensitivity = currentScrollSensitivity,
+            p1OverlayFadeRatio = currentP1OverlayFadeRatio,
+            backgroundBlurRadius = currentBackgroundBlurRadius,
+            snapAnimationDurationMs = DEFAULT_PREVIEW_SNAP_DURATION_MS // 这个直接用MainActivity的默认值
+        )
+        // 单独设置那些不由 setConfigValues 控制的，或者在 setConfigValues 之后需要特定更新的
+        wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio) // 假设高度比例仍单独设置
+        wallpaperPreviewView.setNormalizedFocus(currentP1FocusX, currentP1FocusY) // 焦点单独设置
+
+        // selectedBackgroundColor 是 WallpaperPreviewView 的内部状态，
+        // 它通过 WallpaperConfig 传递给 SharedWallpaperRenderer。
+        // 如果 WallpaperPreviewView 有 setSelectedBackgroundColor 方法，则调用它。
+        // 目前的 WallpaperPreviewView.kt (原始文件) 是直接使用成员变量 selectedBackgroundColor
+        // 并在 onDraw 中传递。MainActivity 中修改 selectedBackgroundColor 后，
+        // 需要调用 wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
+        // 然后 invalidate。 如果 setConfigValues 也能处理这个就更好了。
+        // 为简单起见，我们假设 WallpaperPreviewView 会在其内部使用 MainActivity 修改的 selectedBackgroundColor
+        // 或者 MainActivity 在修改颜色后调用 preview.invalidate()。
+        // 最好的做法是 WallpaperPreviewView 有一个 setSelectedBackgroundColor 方法。
+        // 假设 wallpaperPreviewView.selectedBackgroundColor = selectedBackgroundColor (如果它是public)
+        // wallpaperPreviewView.invalidate() // 确保颜色变化后重绘
+
+        if (internalImageUriString != null) {
+            val internalUri = Uri.parse(internalImageUriString)
+            var fileExists = false
+            try {
+                if (internalUri.scheme == "content") {
+                    contentResolver.openInputStream(internalUri)?.use { fileExists = true }
+                } else if (internalUri.scheme == "file") {
+                    val path = internalUri.path
+                    if (path != null) fileExists = File(path).exists()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error checking existence of internal file $internalUri: ${e.message}")
+                fileExists = false
+            }
+
+            if (fileExists) {
+                selectedImageUri = internalUri
+                // setImageUri 会触发预览的位图加载，加载完成后会使用上面通过 setConfigValues 设置的参数
+                wallpaperPreviewView.setImageUri(selectedImageUri)
+                btnCustomizeForeground.isEnabled = true
+                extractColorsFromBitmapUri(selectedImageUri!!, false)
+            } else {
+                handleFailedImageAccess(internalUri, "之前选择的图片文件已丢失，请重新选择")
+            }
+        } else {
+            selectedImageUri = null
+            wallpaperPreviewView.setImageUri(null) // 清除预览
+            btnCustomizeForeground.isEnabled = false
+            setDefaultColorPaletteAndUpdatePreview()
+        }
+        Log.d(TAG, "Preferences loaded and initial state set for PreviewView.")
+    }
+
+    private fun savePreferences() {
+        val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        editor.putInt(KEY_BACKGROUND_COLOR, selectedBackgroundColor)
+        editor.putFloat(KEY_IMAGE_HEIGHT_RATIO, page1ImageHeightRatio)
+        editor.putFloat(KEY_P1_FOCUS_X, currentP1FocusX)
+        editor.putFloat(KEY_P1_FOCUS_Y, currentP1FocusY)
+
+        // 保存新的配置参数
+        editor.putFloat(KEY_SCROLL_SENSITIVITY, currentScrollSensitivity)
+        editor.putFloat(KEY_P1_OVERLAY_FADE_RATIO, currentP1OverlayFadeRatio)
+        editor.putFloat(KEY_BACKGROUND_BLUR_RADIUS, currentBackgroundBlurRadius)
+        // DEFAULT_PREVIEW_SNAP_DURATION_MS 是预览特性，通常不保存
+
+        selectedImageUri?.let { editor.putString(KEY_IMAGE_URI, it.toString()) } ?: editor.remove(KEY_IMAGE_URI)
+        editor.apply()
+        Log.d(TAG, "Preferences saved: Uri=${selectedImageUri?.toString()}, Color=$selectedBackgroundColor, HeightRatio=$page1ImageHeightRatio, Focus=($currentP1FocusX, $currentP1FocusY), Sensitivity=$currentScrollSensitivity, P1FadeRatio=$currentP1OverlayFadeRatio, BlurRadius=$currentBackgroundBlurRadius")
+    }
+
     private fun copyImageToInternalStorage(sourceUri: Uri) {
-        imageLoadingProgressBar.visibility = View.VISIBLE // 显示加载指示
-        btnSelectImage.isEnabled = false // 复制期间禁用选择按钮
+        imageLoadingProgressBar.visibility = View.VISIBLE
+        btnSelectImage.isEnabled = false
 
         lifecycleScope.launch {
             val internalFileUri = saveImageToInternalAppStorage(sourceUri)
@@ -261,26 +346,23 @@ class MainActivity : AppCompatActivity() {
 
             if (internalFileUri != null) {
                 Log.i(TAG, "Image copied successfully to internal URI: $internalFileUri")
-                // 清理旧的内部图片（如果存在且与新选择的不同）
-                // selectedImageUri 此刻可能还是旧的内部图片URI
                 if (selectedImageUri != null && selectedImageUri != internalFileUri) {
-                    deleteInternalImage(selectedImageUri!!) // 删除旧的副本
+                    deleteInternalImage(selectedImageUri!!)
                 }
-
-                selectedImageUri = internalFileUri // 更新为新的内部文件URI
-                currentP1FocusX = 0.5f // 新图片，重置焦点
+                selectedImageUri = internalFileUri
+                currentP1FocusX = 0.5f
                 currentP1FocusY = 0.5f
-                savePreferences() // 保存新的内部URI和重置后的焦点
+                savePreferences() // 保存新的URI和重置后的焦点及其他当前设置
 
+                // 确保预览使用最新的配置，包括焦点和刚刚加载的图片
                 wallpaperPreviewView.setNormalizedFocus(currentP1FocusX, currentP1FocusY)
-                wallpaperPreviewView.setImageUri(selectedImageUri,true) // 使用内部URI设置预览
+                wallpaperPreviewView.setImageUri(selectedImageUri, true) // 使用内部URI设置预览, forceReload
 
                 btnCustomizeForeground.isEnabled = true
-                extractColorsFromBitmapUri(selectedImageUri!!, true) // 从内部URI提取颜色
+                extractColorsFromBitmapUri(selectedImageUri!!, true)
             } else {
                 Log.e(TAG, "Failed to copy image to internal storage.")
                 Toast.makeText(applicationContext, "图片复制失败", Toast.LENGTH_SHORT).show()
-                // 保留之前的 selectedImageUri (如果有的话)
                 btnCustomizeForeground.isEnabled = (this@MainActivity.selectedImageUri != null)
             }
         }
@@ -295,31 +377,23 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "Failed to open input stream from source URI: $sourceUri")
                 return@withContext null
             }
-
             val imageDir = File(filesDir, INTERNAL_IMAGE_FOLDER)
             if (!imageDir.exists()) {
                 imageDir.mkdirs()
             }
             val internalFile = File(imageDir, INTERNAL_IMAGE_FILENAME)
-
-            // 如果文件已存在，先删除旧文件，确保是新的复制
             if (internalFile.exists()) {
                 internalFile.delete()
             }
-
             outputStream = FileOutputStream(internalFile)
-            val buffer = ByteArray(4 * 1024) // 4k buffer
+            val buffer = ByteArray(4 * 1024)
             var read: Int
             while (inputStream.read(buffer).also { read = it } != -1) {
                 outputStream.write(buffer, 0, read)
             }
             outputStream.flush()
-
             Log.i(TAG, "Image saved to internal file: ${internalFile.absolutePath}")
-            // return Uri.fromFile(internalFile) // File URI
-            // 或者使用 FileProvider (更推荐，如果需要与其他应用安全共享，但对于内部使用File URI也行)
             return@withContext FileProvider.getUriForFile(applicationContext, "${applicationContext.packageName}.provider", internalFile)
-
         } catch (e: Exception) {
             Log.e(TAG, "Error saving image to internal storage", e)
             return@withContext null
@@ -336,27 +410,19 @@ class MainActivity : AppCompatActivity() {
     private fun deleteInternalImage(internalFileUri: Uri?) {
         internalFileUri ?: return
         if (internalFileUri.scheme == "content" && internalFileUri.authority == "${applicationContext.packageName}.provider") {
-            // 如果是 FileProvider URI, 需要转换为 File Path 来删除
-            // (这需要 FileProvider 的 path-mapping 逆向逻辑，或者直接删除文件名)
             val imageDir = File(filesDir, INTERNAL_IMAGE_FOLDER)
             val internalFile = File(imageDir, INTERNAL_IMAGE_FILENAME)
             if (internalFile.exists()) {
-                if (internalFile.delete()) {
-                    Log.i(TAG, "Deleted old internal image file: ${internalFile.path}")
-                } else {
-                    Log.w(TAG, "Failed to delete old internal image file: ${internalFile.path}")
-                }
+                if (internalFile.delete()) Log.i(TAG, "Deleted old internal image file: ${internalFile.path}")
+                else Log.w(TAG, "Failed to delete old internal image file: ${internalFile.path}")
             }
         } else if (internalFileUri.scheme == "file") {
             val filePath = internalFileUri.path
             if (filePath != null) {
                 val file = File(filePath)
                 if (file.exists() && file.isFile && file.parentFile?.name == INTERNAL_IMAGE_FOLDER && file.parentFile?.parentFile == filesDir) {
-                    if (file.delete()) {
-                        Log.i(TAG, "Deleted old internal image file: $filePath")
-                    } else {
-                        Log.w(TAG, "Failed to delete old internal image file: $filePath")
-                    }
+                    if (file.delete()) Log.i(TAG, "Deleted old internal image file: $filePath")
+                    else Log.w(TAG, "Failed to delete old internal image file: $filePath")
                 } else {
                     Log.w(TAG, "Old internal image file path is not as expected or does not exist: $filePath")
                 }
@@ -364,8 +430,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
-    // animateViewVisibility, updatePage1ImageHeightRatio, permission checks, openGallery 保持不变
     private fun animateViewVisibility(view: View, targetAlpha: Float, targetVisibilityIfGone: Int) {
         if (targetAlpha == 1f && view.visibility != View.VISIBLE) {
             view.alpha = 0f
@@ -388,8 +452,8 @@ class MainActivity : AppCompatActivity() {
 
         page1ImageHeightRatio = clampedRatio
         Log.d(TAG, "updatePage1ImageHeightRatio: New ratio $page1ImageHeightRatio")
-        wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio)
-        savePreferences()
+        wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio) // 更新预览
+        savePreferences() // 保存新的高度比例和其他当前设置
     }
 
     private fun checkAndRequestReadMediaImagesPermission() {
@@ -398,12 +462,9 @@ class MainActivity : AppCompatActivity() {
         } else {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
-
         if (ContextCompat.checkSelfPermission(this, permissionToRequest) != PackageManager.PERMISSION_GRANTED) {
-            Log.d(TAG, "Requesting permission: $permissionToRequest")
             ActivityCompat.requestPermissions(this, arrayOf(permissionToRequest), PERMISSION_REQUEST_READ_MEDIA_IMAGES)
         } else {
-            Log.d(TAG, "Permission already granted: $permissionToRequest. Opening gallery.")
             openGallery()
         }
     }
@@ -412,10 +473,8 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_READ_MEDIA_IMAGES) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                Log.d(TAG, "Permission granted by user. Opening gallery.")
                 openGallery()
             } else {
-                Log.w(TAG, "Permission denied by user.")
                 Toast.makeText(this, getString(R.string.permission_needed_toast), Toast.LENGTH_LONG).show()
             }
         }
@@ -423,8 +482,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun openGallery() {
         val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-        // 不再需要 FLAG_GRANT_READ_URI_PERMISSION, 因为我们会立即复制
-        // intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         try {
             pickImageLauncher.launch(intent)
         } catch (e: Exception) {
@@ -433,16 +490,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
-    // handleFailedImageAccess 现在处理的是内部文件访问失败的情况 (理论上不应发生权限问题)
     private fun handleFailedImageAccess(uriFailed: Uri?, message: String = "图片访问失败") {
         Log.e(TAG, "Failed to access internal URI: $uriFailed. Clearing it. Message: $message")
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-
         selectedImageUri = null
         val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().remove(KEY_IMAGE_URI).apply() // 使用更新后的KEY_IMAGE_URI
-
+        prefs.edit().remove(KEY_IMAGE_URI).apply()
         wallpaperPreviewView.setImageUri(null)
         btnCustomizeForeground.isEnabled = false
         originalBitmapForColorExtraction?.recycle()
@@ -450,16 +503,11 @@ class MainActivity : AppCompatActivity() {
         setDefaultColorPaletteAndUpdatePreview()
     }
 
-    // extractColorsFromBitmapUri 现在总是接收内部 URI
     private fun extractColorsFromBitmapUri(internalUri: Uri, isNewImage: Boolean) {
         try {
-            // 内部URI可以直接用 contentResolver 打开 (如果是 FileProvider URI)
-            // 或者如果是 File URI, 可以直接创建 FileInputStream
             val inputStream = contentResolver.openInputStream(internalUri)
-            // val inputStream = FileInputStream(File(internalUri.path!!)) // 如果 internalUri 是 File URI
-
             val options = BitmapFactory.Options()
-            options.inSampleSize = 2
+            options.inSampleSize = 2 // 提取颜色时使用采样，减少内存
             originalBitmapForColorExtraction?.recycle()
             originalBitmapForColorExtraction = BitmapFactory.decodeStream(inputStream, null, options)
             inputStream?.close()
@@ -470,15 +518,12 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "Failed to decode bitmap for color extraction from internal URI: $internalUri")
                 handleFailedImageAccess(internalUri, getString(R.string.image_load_failed_toast) + " (内部图片解码失败)")
             }
-        }
-        // 对于内部文件，SecurityException 理论上不应发生，主要是 IOException (FileNotFound)
-        catch (e: Exception) { // 捕获更通用的异常，以防万一
+        } catch (e: Exception) {
             Log.e(TAG, "Exception loading image for color extraction from internal URI: $internalUri", e)
             handleFailedImageAccess(internalUri, getString(R.string.image_load_failed_toast) + " (内部图片加载异常)")
         }
     }
 
-    // extractColorsFromLoadedBitmap, setDefaultColorPaletteAndUpdatePreview, setDefaultColorPalette, populateColorPaletteView 保持不变
     private fun extractColorsFromLoadedBitmap(bitmap: Bitmap, isNewImage: Boolean) {
         Palette.from(bitmap).generate { palette ->
             val swatches = listOfNotNull(
@@ -499,13 +544,16 @@ class MainActivity : AppCompatActivity() {
                     selectedBackgroundColor = colors[0]
                 }
             } else {
-                setDefaultColorPalette()
+                setDefaultColorPalette() // 使用默认调色板
             }
 
+            // 如果颜色改变，或者这是一张新图片，则更新预览并保存
             if (oldSelectedColor != selectedBackgroundColor || isNewImage) {
-                wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
+                // 假设 WallpaperPreviewView 有一个方法来设置背景色，或者它会通过 config 更新
+                wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor) // 你需要在 WallpaperPreviewView 中实现这个
                 savePreferences()
             } else if (selectedBackgroundColor != Color.LTGRAY && colors.contains(selectedBackgroundColor)) {
+                // 确保即使颜色没变，预览也使用当前选中的颜色
                 wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
             }
         }
@@ -513,7 +561,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setDefaultColorPaletteAndUpdatePreview() {
         setDefaultColorPalette()
-        wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
+        wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor) // 你需要在 WallpaperPreviewView 中实现这个
     }
 
     private fun setDefaultColorPalette() {
@@ -523,7 +571,6 @@ class MainActivity : AppCompatActivity() {
             selectedBackgroundColor = Color.LTGRAY
         }
     }
-
 
     private fun populateColorPaletteView(colors: List<Int>) {
         colorPaletteContainer.removeAllViews()
@@ -538,8 +585,8 @@ class MainActivity : AppCompatActivity() {
             colorView.setBackgroundColor(color)
             colorView.setOnClickListener {
                 selectedBackgroundColor = color
-                wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
-                savePreferences()
+                wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor) // 更新预览
+                savePreferences() // 保存
             }
             colorPaletteContainer.addView(colorView)
         }
@@ -547,90 +594,16 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        // 可以考虑在这里回收 originalBitmapForColorExtraction，以减少内存占用
-        // 但要注意如果 Activity 只是 stop 而不是 destroy，下次 resume 可能还需要它
-        // originalBitmapForColorExtraction?.recycle()
+        // originalBitmapForColorExtraction?.recycle() // Consider lifecycle
         // originalBitmapForColorExtraction = null
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        // 确保回收位图
         originalBitmapForColorExtraction?.recycle()
         originalBitmapForColorExtraction = null
-        // wallpaperPreviewView 内部的 onDetachedFromWindow 会处理其自身的位图回收
     }
 
-
-    private fun savePreferences() {
-        val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val editor = prefs.edit()
-        editor.putInt(KEY_BACKGROUND_COLOR, selectedBackgroundColor)
-        editor.putFloat(KEY_IMAGE_HEIGHT_RATIO, page1ImageHeightRatio)
-        editor.putFloat(KEY_SCROLL_SENSITIVITY, currentScrollSensitivityFactor)
-        editor.putFloat(KEY_P1_FOCUS_X, currentP1FocusX)
-        editor.putFloat(KEY_P1_FOCUS_Y, currentP1FocusY)
-
-        // 保存内部图片的URI字符串
-        selectedImageUri?.let { editor.putString(KEY_IMAGE_URI, it.toString()) } ?: editor.remove(KEY_IMAGE_URI)
-        editor.apply()
-        Log.d(TAG, "Preferences saved: InternalURI=${selectedImageUri?.toString()}, Color=$selectedBackgroundColor, HeightRatio=$page1ImageHeightRatio, Sensitivity=$currentScrollSensitivityFactor, Focus=($currentP1FocusX, $currentP1FocusY)")
-    }
-
-    private fun loadAndApplyPreferencesAndInitState() {
-        val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        selectedBackgroundColor = prefs.getInt(KEY_BACKGROUND_COLOR, Color.LTGRAY)
-        page1ImageHeightRatio = prefs.getFloat(KEY_IMAGE_HEIGHT_RATIO, DEFAULT_HEIGHT_RATIO)
-        currentScrollSensitivityFactor = prefs.getFloat(KEY_SCROLL_SENSITIVITY, DEFAULT_SCROLL_SENSITIVITY)
-        currentP1FocusX = prefs.getFloat(KEY_P1_FOCUS_X, 0.5f)
-        currentP1FocusY = prefs.getFloat(KEY_P1_FOCUS_Y, 0.5f)
-        val internalImageUriString = prefs.getString(KEY_IMAGE_URI, null) // 使用更新后的Key
-
-        Log.i(TAG, "Loaded preferences: InternalURI=$internalImageUriString, Color=$selectedBackgroundColor, Ratio=$page1ImageHeightRatio, Sensitivity=$currentScrollSensitivityFactor, Focus=($currentP1FocusX, $currentP1FocusY)")
-
-        wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
-        wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio)
-        wallpaperPreviewView.setNormalizedFocus(currentP1FocusX, currentP1FocusY)
-
-        if (internalImageUriString != null) {
-            val internalUri = Uri.parse(internalImageUriString)
-            // 检查内部文件是否存在
-            var fileExists = false
-            try {
-                // 对于FileProvider URI，需要尝试打开流来检查；对于File URI，可以直接检查File.exists()
-                if (internalUri.scheme == "content") {
-                    contentResolver.openInputStream(internalUri)?.use {
-                        fileExists = true // 如果能打开，说明文件（在某种程度上）是可访问的
-                    }
-                } else if (internalUri.scheme == "file") {
-                    val path = internalUri.path
-                    if (path != null) fileExists = File(path).exists()
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Error checking existence of internal file $internalUri: ${e.message}")
-                fileExists = false // 无法确认，视为不存在或不可访问
-            }
-
-
-            if (fileExists) {
-                selectedImageUri = internalUri
-                wallpaperPreviewView.setImageUri(selectedImageUri) // 这会触发加载
-                btnCustomizeForeground.isEnabled = true
-                extractColorsFromBitmapUri(selectedImageUri!!, false) // isNewImage = false
-            } else {
-                Log.w(TAG, "Internal image file URI loaded from prefs but file not found/accessible: $internalImageUriString")
-                handleFailedImageAccess(internalUri, "之前选择的图片文件已丢失，请重新选择")
-            }
-        } else {
-            selectedImageUri = null
-            wallpaperPreviewView.setImageUri(null)
-            btnCustomizeForeground.isEnabled = false
-            setDefaultColorPaletteAndUpdatePreview()
-        }
-        Log.d(TAG, "Preferences loaded and initial state set for PreviewView.")
-    }
-
-    // promptToSetWallpaper 保持不变
     private fun promptToSetWallpaper() {
         try {
             val componentName = ComponentName(packageName, H2WallpaperService::class.java.name)
