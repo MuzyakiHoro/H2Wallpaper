@@ -131,34 +131,34 @@ class WallpaperPreviewView @JvmOverloads constructor(
         wallpaperBitmaps = null
     }
 
-    fun setImageUri(uri: Uri?) {
-        Log.d(TAG, "setImageUri called with new URI: $uri. Previous URI: ${this.imageUri}")
+    // WallpaperPreviewView.kt
+    fun setImageUri(uri: Uri?, forceReload: Boolean = false) { // 添加 forceReload 参数
+        Log.d(TAG, "setImageUri called with new URI: $uri. Previous URI: ${this.imageUri}. ForceReload: $forceReload")
 
-        // 如果 URI 相同且图片已加载，可能不需要做太多事，除非希望强制刷新
-        if (this.imageUri == uri && uri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
-            Log.d(TAG, "setImageUri: URI unchanged and source bitmap exists. Re-applying current focus and invalidating.")
-            // 确保当前焦点被应用到P1图的生成上
-            // MainActivity 在调用 setImageUri 前会先调用 setNormalizedFocus
-            // 所以这里的 loadFullBitmapsFromUri (如果被调用) 或 updateOnlyPage1TopCroppedBitmap 会使用新焦点
+        // 如果 URI 相同且图片已加载，并且不是强制刷新，则可能走轻量级更新
+        if (!forceReload && this.imageUri == uri && uri != null && wallpaperBitmaps?.sourceSampledBitmap != null) { // <--- 添加 !forceReload
+            Log.d(TAG, "setImageUri: URI unchanged and source bitmap exists (not forcing reload). Re-applying current focus and invalidating.")
             if (wallpaperBitmaps?.sourceSampledBitmap != null) {
-                // 再次确认，如果仅URI相同，通常由外部通过setNormalizedFocus和setPage1ImageHeightRatio来触发更新
-                // 这里主要是为了应对外部直接调用setImageUri(相同URI)的情况，确保刷新
                 updateOnlyPage1TopCroppedBitmap(page1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!)
             } else {
-                invalidate()
+                invalidate() // Should not happen if sourceSampledBitmap exists
             }
             return
         }
 
-        // URI 变了，或之前无图
+        // URI 变了，或者需要强制刷新，或者之前无图/源图加载不完整
+        Log.d(TAG, "setImageUri: Proceeding with full bitmap update logic. ForceReload: $forceReload, URI changed: ${this.imageUri != uri}")
         fullBitmapLoadingJob?.cancel(); fullBitmapLoadingJob = null
         topBitmapUpdateJob?.cancel(); topBitmapUpdateJob = null
 
-        wallpaperBitmaps?.recycleInternals() // 回收旧的位图
-        wallpaperBitmaps = null // 先置空，以便显示加载状态
+        // 即使URI相同，如果forceReload为true，也应该回收旧位图并重新加载
+        if (forceReload || this.imageUri != uri) {
+            wallpaperBitmaps?.recycleInternals() // 回收旧的位图
+            wallpaperBitmaps = null // 先置空，以便显示加载状态
+        }
 
-        this.imageUri = uri
-        currentPreviewXOffset = 0f // 新图片，重置预览偏移
+        this.imageUri = uri // 更新当前URI
+        currentPreviewXOffset = 0f // 新图片或强制刷新，重置预览偏移
         if (!scroller.isFinished) scroller.abortAnimation()
 
         if (uri != null) {
@@ -166,6 +166,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
             loadFullBitmapsFromUri(uri) // loadFullBitmapsFromUri 内部会使用 this.currentNormalizedFocusX/Y
         } else {
             // URI 为 null，清除所有图片相关的状态
+            wallpaperBitmaps?.recycleInternals() // 确保回收
+            wallpaperBitmaps = null
             Log.d(TAG, "setImageUri: URI is null. Clearing bitmaps and invalidating.")
             invalidate() // 重绘以显示“请选择图片”
         }
