@@ -36,7 +36,7 @@ class FocusSelectionView @JvmOverloads constructor(
 
     // 缩放限制是相对于“基础填充缩放比例”的倍数
     private var minUserScaleFactor = 1.0f // 最小就是刚好填满预览框
-    private var maxUserScaleFactor = 4.0f // 最大允许放大4倍
+    private var maxUserScaleFactor = 1.0f // 最大允许放大4倍
 
     private val viewScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var bitmapLoadingJob: Job? = null
@@ -52,7 +52,7 @@ class FocusSelectionView @JvmOverloads constructor(
     private val previewBoxGridPaint = Paint().apply { // 用于预览框内部网格线
         color = Color.WHITE
         style = Paint.Style.STROKE
-        strokeWidth = 1f // 网格线宽度
+        strokeWidth = 3f // 网格线宽度
         alpha = 100
     }
     private val overlayPaint = Paint().apply { // 预览框外部的半透明遮罩
