@@ -237,7 +237,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
                         page1ImageHeightRatio,
                         currentNormalizedFocusX,
                         currentNormalizedFocusY,
-                        numVirtualPages,
+                        //numVirtualPages,
                         currentBackgroundBlurRadius // Use the member variable
                     )
                 }

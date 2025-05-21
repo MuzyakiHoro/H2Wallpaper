@@ -232,77 +232,76 @@ object SharedWallpaperRenderer {
         return page1TopCropped
     }
 
+    // In SharedWallpaperRenderer.kt
     fun prepareScrollingAndBlurredBitmaps(
         context: Context,
         sourceBitmap: Bitmap?,
         targetScreenWidth: Int,
         targetScreenHeight: Int,
-        numVirtualPages: Int,
+        // numVirtualPages: Int, // 这个参数对于确定背景位图本身的宽度不再需要
         blurRadius: Float
     ): Pair<Bitmap?, Bitmap?> {
         if (sourceBitmap == null || sourceBitmap.isRecycled) {
             Log.w(TAG, "prepareScrollingAndBlurredBitmaps: Source bitmap is null or recycled.")
             return Pair(null, null)
         }
-        if (targetScreenWidth <= 0 || targetScreenHeight <= 0 || numVirtualPages <= 0) {
-            Log.w(TAG, "prepareScrollingAndBlurredBitmaps: Invalid target dimensions or page count.")
+        if (targetScreenWidth <= 0 || targetScreenHeight <= 0) {
+            Log.w(TAG, "prepareScrollingAndBlurredBitmaps: Invalid target dimensions.")
             return Pair(null, null)
         }
 
-        var scrollingBackground: Bitmap? = null
-        var blurredScrollingBackground: Bitmap? = null
-        val bgTargetHeight = targetScreenHeight
+        var finalScrollingBackground: Bitmap? = null
+        var finalBlurredScrollingBackground: Bitmap? = null
+
         val obW = sourceBitmap.width.toFloat()
         val obH = sourceBitmap.height.toFloat()
 
         if (obW > 0 && obH > 0) {
-            val scaleToFitScreenHeight = bgTargetHeight / obH
+            val scaleToFitScreenHeight = targetScreenHeight / obH
             val scaledOriginalWidth = (obW * scaleToFitScreenHeight).roundToInt()
 
-            if (scaledOriginalWidth > 0) {
-                var tempScaledBitmap: Bitmap? = null
-                try {
-                    tempScaledBitmap = Bitmap.createScaledBitmap(sourceBitmap, scaledOriginalWidth, bgTargetHeight, true)
-
-                    val actualNumVirtualPages = numVirtualPages.coerceAtLeast(1)
-                    val bgFinalTargetWidth = (targetScreenWidth * actualNumVirtualPages)
-                        .coerceAtLeast(scaledOriginalWidth)
-                        .coerceAtLeast(targetScreenWidth)
-
-                    scrollingBackground = Bitmap.createBitmap(bgFinalTargetWidth, bgTargetHeight, Bitmap.Config.ARGB_8888)
-                    val canvasForScrollingBg = Canvas(scrollingBackground)
-                    var currentX = 0
-
-                    if (scaledOriginalWidth >= bgFinalTargetWidth) {
-                        val offsetX = (scaledOriginalWidth - bgFinalTargetWidth) / 2
-                        val srcRect = Rect(offsetX, 0, offsetX + bgFinalTargetWidth, bgTargetHeight)
-                        val dstRect = Rect(0, 0, bgFinalTargetWidth, bgTargetHeight)
-                        canvasForScrollingBg.drawBitmap(tempScaledBitmap, srcRect, dstRect, null)
-                    } else {
-                        while (currentX < bgFinalTargetWidth) {
-                            canvasForScrollingBg.drawBitmap(tempScaledBitmap, currentX.toFloat(), 0f, null)
-                            currentX += tempScaledBitmap.width
-                            if (tempScaledBitmap.width <= 0) break
-                        }
-                    }
-
-                    if (blurRadius > 0f && scrollingBackground?.isRecycled == false) {
-                        blurredScrollingBackground = blurBitmapUsingRenderScript(context, scrollingBackground, blurRadius)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error creating scrolling or blurred background", e)
-                    scrollingBackground?.recycle(); scrollingBackground = null
-                    blurredScrollingBackground?.recycle(); blurredScrollingBackground = null
-                } finally {
-                    if (tempScaledBitmap != null && tempScaledBitmap != sourceBitmap && !tempScaledBitmap.isRecycled) {
-                        tempScaledBitmap.recycle()
-                    }
-                }
-            } else {
+            if (scaledOriginalWidth <= 0) {
                 Log.w(TAG, "prepareScrollingAndBlurredBitmaps: Scaled original width is zero or less.")
+                return Pair(null, null)
+            }
+
+            var tempScaledBitmap: Bitmap? = null
+            try {
+                // tempScaledBitmap 是源图片按屏幕高度缩放后的结果，宽度为 scaledOriginalWidth
+                tempScaledBitmap = Bitmap.createScaledBitmap(sourceBitmap, scaledOriginalWidth, targetScreenHeight, true)
+
+                // 直接使用这个缩放后的位图作为可滚动的背景
+                finalScrollingBackground = tempScaledBitmap
+
+                if (blurRadius > 0f && finalScrollingBackground != null && !finalScrollingBackground.isRecycled) {
+                    // 确保 blurBitmapUsingRenderScript 返回的是一个新的位图，或者如果它修改了传入的位图，
+                    // 我们需要先复制一份 finalScrollingBackground。
+                    // 假设 blurBitmapUsingRenderScript 设计良好，会返回新位图或处理好引用。
+                    finalBlurredScrollingBackground = blurBitmapUsingRenderScript(context, finalScrollingBackground, blurRadius)
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error creating scaled or blurred background", e)
+                // 如果 tempScaledBitmap 被赋值给了 finalScrollingBackground，则它的生命周期由外部管理
+                // 这里主要回收在异常情况下可能产生的中间位图（如果还有的话）
+                // 由于 finalScrollingBackground 可能就是 tempScaledBitmap，所以只回收 finalBlurredScrollingBackground
+                finalBlurredScrollingBackground?.recycle()
+                finalBlurredScrollingBackground = null
+                // 如果 tempScaledBitmap 创建成功但后续出错，finalScrollingBackground 可能是它。
+                // 若 finalScrollingBackground 未成功赋值或创建，它自己会是 null。
+                // 若 tempScaledBitmap 赋值给了 finalScrollingBackground，则不能在这里回收 tempScaledBitmap。
+                // 最好的做法是让 WallpaperBitmaps 类负责回收。
+                if (finalScrollingBackground == tempScaledBitmap) {
+                    // 如果异常发生在模糊之后，但 tempScaledBitmap 已赋给 finalScrollingBackground
+                    // 我们只将 finalScrollingBackground 置空，其回收由调用者（WallpaperBitmaps）处理
+                    finalScrollingBackground = null;
+                } else {
+                    // 如果 tempScaledBitmap 未赋值给 finalScrollingBackground (例如在createScaledBitmap处就失败)
+                    tempScaledBitmap?.recycle()
+                }
             }
         }
-        return Pair(scrollingBackground, blurredScrollingBackground)
+        return Pair(finalScrollingBackground, finalBlurredScrollingBackground)
     }
 
     fun loadAndProcessInitialBitmaps(
@@ -313,7 +312,7 @@ object SharedWallpaperRenderer {
         page1ImageHeightRatio: Float,
         normalizedFocusX: Float,
         normalizedFocusY: Float,
-        numVirtualPagesForScrolling: Int,
+        //numVirtualPagesForScrolling: Int,
         blurRadiusForBackground: Float
     ): WallpaperBitmaps {
         if (imageUri == null) {
@@ -364,7 +363,7 @@ object SharedWallpaperRenderer {
                 sourceSampled,
                 targetScreenWidth,
                 targetScreenHeight,
-                numVirtualPagesForScrolling,
+              //  numVirtualPagesForScrolling,
                 blurRadiusForBackground
             )
 

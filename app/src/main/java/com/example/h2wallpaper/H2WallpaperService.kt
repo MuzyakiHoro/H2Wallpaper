@@ -313,7 +313,7 @@ class H2WallpaperService : WallpaperService() {
                             page1ImageHeightRatio = page1ImageHeightRatio,
                             normalizedFocusX = currentP1FocusX,
                             normalizedFocusY = currentP1FocusY,
-                            numVirtualPagesForScrolling = pagesForBackground,
+                            //numVirtualPagesForScrolling = pagesForBackground,
                             blurRadiusForBackground = currentBackgroundBlurRadius // Pass current blur radius
                         )
                     }
@@ -419,7 +419,8 @@ class H2WallpaperService : WallpaperService() {
                         ensureActive()
                         SharedWallpaperRenderer.prepareScrollingAndBlurredBitmaps(
                             applicationContext, currentSource, screenWidth, screenHeight,
-                            pagesForBg, currentBackgroundBlurRadius // Use current blur radius
+                            //pagesForBg,
+                            currentBackgroundBlurRadius // Use current blur radius
                         )
                     }
                     ensureActive()
