@@ -132,7 +132,7 @@ class MainActivity : AppCompatActivity() {
         const val DEFAULT_P1_OVERLAY_FADE_RATIO = 0.38f   // P1 叠加层淡出过渡比例例如: 0.2f, 0.3f, 0.5f
         const val DEFAULT_BACKGROUND_BLUR_RADIUS = 0f    // 背景模糊半径例如: 0f (无模糊), 10f, 25f
         const val DEFAULT_PREVIEW_SNAP_DURATION_MS: Long = 700L // 预览吸附动画时长例如: 300L, 500L, 700L
-        const val DEFAULT_BACKGROUND_INITIAL_OFFSET = 0.5f // 默认从最左侧开始
+        const val DEFAULT_BACKGROUND_INITIAL_OFFSET = 1f/3f // 默认从最左侧开始
 
         private const val PERMISSION_REQUEST_READ_MEDIA_IMAGES = 1001
         private const val TAG = "H2WallpaperMain"

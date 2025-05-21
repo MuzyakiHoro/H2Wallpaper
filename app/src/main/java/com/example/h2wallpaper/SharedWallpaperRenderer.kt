@@ -76,15 +76,14 @@ object SharedWallpaperRenderer {
             return
         }
 
-        canvas.drawColor(Color.BLACK)
+        canvas.drawColor(Color.BLACK) // 清除画布
 
+        // P1 图层透明度计算 (这部分逻辑保持不变)
         var p1OverlayAlpha = 255
         val safeNumVirtualPages = config.numVirtualPages.coerceAtLeast(1)
-
         if (safeNumVirtualPages > 1 && config.p1OverlayFadeTransitionRatio > 0) {
             val singlePageXOffsetRange = 1.0f / safeNumVirtualPages.toFloat()
             val p1FadeOutEndXOffset = singlePageXOffsetRange * config.p1OverlayFadeTransitionRatio.coerceIn(0.01f, 1f)
-
             if (config.currentXOffset < p1FadeOutEndXOffset) {
                 val transitionProgress = config.currentXOffset / p1FadeOutEndXOffset
                 p1OverlayAlpha = (255 * (1.0f - transitionProgress.toDouble().pow(2.0))).toInt().coerceIn(0, 255)
@@ -97,25 +96,63 @@ object SharedWallpaperRenderer {
             p1OverlayAlpha = if (config.currentXOffset == 0f) 255 else 0
         }
 
+        // 背景图绘制逻辑 (使用新的滚动计算)
         val backgroundToDraw = bitmaps.blurredScrollingBackgroundBitmap ?: bitmaps.scrollingBackgroundBitmap
         backgroundToDraw?.let { bgBmp ->
             if (!bgBmp.isRecycled && bgBmp.width > 0 && bgBmp.height > 0) {
-                val baseTotalScrollableWidth = (bgBmp.width - config.screenWidth).coerceAtLeast(0)
-                val effectiveTotalScrollableWidth = (baseTotalScrollableWidth * config.scrollSensitivityFactor)
-                var currentScrollPx = (config.currentXOffset * effectiveTotalScrollableWidth).toInt()
-                currentScrollPx = currentScrollPx.coerceIn(0, baseTotalScrollableWidth)
+                val imageActualWidth = bgBmp.width.toFloat()
+                val screenActualWidth = config.screenWidth.toFloat()
+
+                // 1. 计算图片在最左侧页面 (currentXOffset = 0.0) 时的初始向左平移量（像素）
+                val maxInitialPixelOffset = (imageActualWidth - screenActualWidth).coerceAtLeast(0f)
+                val safeInitialPixelOffset = (imageActualWidth * config.normalizedInitialBgScrollOffset).coerceIn(0f, maxInitialPixelOffset)
+
+                // 2. 计算图片在最右侧页面 (currentXOffset = 1.0) 时，为了使图片右边缘与屏幕右边缘对齐，
+                //    图片总共需要向左平移的像素量。
+                val totalScrollToAlignRightEdge = (imageActualWidth - screenActualWidth).coerceAtLeast(0f)
+
+                // 3. 计算从初始偏移状态到最终右边缘对齐状态之间，可以用于动态滚动的范围。
+                //    重要：为了精确的右边缘对齐，config.scrollSensitivityFactor 在此模式下应该为 1.0f。
+                //    如果它不是1.0f，这里的对齐逻辑会受影响。
+                //    我们假设当 normalizedInitialBgScrollOffset > 0 时，用户期望的是精确对齐，
+                //    所以动态滚动范围应该基于 totalScrollToAlignRightEdge。
+                val dynamicScrollableRange = (totalScrollToAlignRightEdge - safeInitialPixelOffset).coerceAtLeast(0f)
+
+                // 4. 根据当前的 currentXOffset 计算动态滚动的部分。
+                //    乘以 config.scrollSensitivityFactor 使得用户仍然可以调整滚动的“灵敏度”
+                //    但如果目标是严格的右边缘对齐，此因子应为1.0。
+                val currentDynamicScroll = config.currentXOffset * (dynamicScrollableRange * config.scrollSensitivityFactor)
+
+                // 5. 最终的图片向左平移量 = 初始偏移量 + 当前动态滚动量。
+                var currentScrollPxFloat = safeInitialPixelOffset + currentDynamicScroll
+
+                // 6. 对最终的 currentScrollPxFloat 进行最后约束，确保它在 [safeInitialPixelOffset, totalScrollToAlignRightEdge] 范围内
+                //    （如果 dynamicScrollableRange 为0，则它将保持为 safeInitialPixelOffset）
+                //    更准确的约束是基于总的可滚动范围和初始偏移：
+                currentScrollPxFloat = currentScrollPxFloat.coerceIn(safeInitialPixelOffset, totalScrollToAlignRightEdge)
+                // 如果图片比屏幕窄 (totalScrollToAlignRightEdge = 0)，那么 currentScrollPxFloat 会是 safeInitialPixelOffset (也为0)。
+                // 如果 safeInitialPixelOffset 导致 dynamicScrollableRange 为0，currentScrollPxFloat 会保持 safeInitialPixelOffset。
+
+                // 还需要确保 currentScrollPxFloat 不小于0 (虽然上面的计算应该能保证)
+                currentScrollPxFloat = currentScrollPxFloat.coerceAtLeast(0f)
+
 
                 val bgTopOffset = ((config.screenHeight - bgBmp.height) / 2f)
                 canvas.save()
-                canvas.translate(-currentScrollPx.toFloat(), bgTopOffset)
+                canvas.translate(-currentScrollPxFloat, bgTopOffset) // 使用浮点数平移
                 scrollingBgPaint.alpha = 255
                 canvas.drawBitmap(bgBmp, 0f, 0f, scrollingBgPaint)
                 canvas.restore()
-            } else {
-                Log.w(TAG, "drawFrame: P2 background bitmap is invalid or recycled.")
-            }
-        } ?: Log.d(TAG, "drawFrame: No P2 background bitmap available to draw.")
 
+                // 添加日志方便调试
+                Log.d(DEBUG_TAG_RENDERER, "drawFrame: initialOffsetNorm=${config.normalizedInitialBgScrollOffset}, initialPx=$safeInitialPixelOffset, dynamicRange=$dynamicScrollableRange, currentXOffset=${config.currentXOffset}, dynamicScroll=$currentDynamicScroll, finalScrollPx=$currentScrollPxFloat, totalAlignRight=$totalScrollToAlignRightEdge")
+
+            } else {
+                Log.w(TAG, "drawFrame: Background bitmap is invalid or recycled.")
+            }
+        } ?: Log.d(TAG, "drawFrame: No background bitmap available to draw.")
+
+        // P1 前景图和背景色绘制逻辑 (这部分逻辑保持不变)
         val topImageActualHeight = (config.screenHeight * config.page1ImageHeightRatio).toInt()
         if (p1OverlayAlpha > 0 && topImageActualHeight > 0) {
             p1OverlayBgPaint.color = config.page1BackgroundColor
