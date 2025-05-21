@@ -40,6 +40,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
     private var currentP1OverlayFadeRatio: Float = 0.2f // 初始值可以与之前硬编码一致
     private var currentBackgroundBlurRadius: Float = 25f // 初始值可以与之前硬编码一致
     private var currentSnapAnimationDurationMs: Long = 700L
+    private var currentNormalizedInitialBgScrollOffset: Float = 0.0f // 新增
+
 
     private var wallpaperBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
 
@@ -104,7 +106,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 currentXOffset = currentPreviewXOffset,
                 numVirtualPages = numVirtualPages,
                 p1OverlayFadeTransitionRatio = currentP1OverlayFadeRatio,   // 使用成员变量
-                scrollSensitivityFactor = currentScrollSensitivity        // 使用成员变量
+                scrollSensitivityFactor = currentScrollSensitivity,        // 使用成员变量
+                normalizedInitialBgScrollOffset = currentNormalizedInitialBgScrollOffset // 传递新参数
             )
             SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps)
         } else {
@@ -133,7 +136,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
         scrollSensitivity: Float,
         p1OverlayFadeRatio: Float,
         backgroundBlurRadius: Float,
-        snapAnimationDurationMs: Long
+        snapAnimationDurationMs: Long,
+        normalizedInitialBgScrollOffset: Float // 新增参数
     ) {
         val sensitivityChanged = this.currentScrollSensitivity != scrollSensitivity
         val fadeRatioChanged = this.currentP1OverlayFadeRatio != p1OverlayFadeRatio
@@ -144,6 +148,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         this.currentP1OverlayFadeRatio = p1OverlayFadeRatio.coerceIn(0.01f, 1.0f)
         this.currentBackgroundBlurRadius = backgroundBlurRadius.coerceIn(0f, 25f) // Max 25f for RenderScript
         this.currentSnapAnimationDurationMs = snapAnimationDurationMs
+        val initialBgOffsetChanged = this.currentNormalizedInitialBgScrollOffset != normalizedInitialBgScrollOffset
+        this.currentNormalizedInitialBgScrollOffset = normalizedInitialBgScrollOffset.coerceIn(0f, 1f)
+
 
         Log.d(TAG, "Preview Configs Updated: Sensitivity=$currentScrollSensitivity, FadeRatio=$currentP1OverlayFadeRatio, Blur=$currentBackgroundBlurRadius, SnapMs=$currentSnapAnimationDurationMs")
 

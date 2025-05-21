@@ -69,6 +69,7 @@ class MainActivity : AppCompatActivity() {
     private var currentScrollSensitivity: Float = DEFAULT_SCROLL_SENSITIVITY
     private var currentP1OverlayFadeRatio: Float = DEFAULT_P1_OVERLAY_FADE_RATIO
     private var currentBackgroundBlurRadius: Float = DEFAULT_BACKGROUND_BLUR_RADIUS
+    private var currentBackgroundInitialOffset: Float = DEFAULT_BACKGROUND_INITIAL_OFFSET // 新变量
 
 
     private val INTERNAL_IMAGE_FILENAME = "h2_wallpaper_internal_image.jpg"
@@ -123,13 +124,15 @@ class MainActivity : AppCompatActivity() {
         const val KEY_SCROLL_SENSITIVITY = "scrollSensitivity"
         const val KEY_P1_OVERLAY_FADE_RATIO = "p1OverlayFadeRatio"
         const val KEY_BACKGROUND_BLUR_RADIUS = "backgroundBlurRadius"
+        const val KEY_BACKGROUND_INITIAL_OFFSET = "backgroundInitialOffset" // 新增的Key
 
         // 默认值 - 在这里修改以进行测试！
         const val DEFAULT_HEIGHT_RATIO = 1f / 3f
         const val DEFAULT_SCROLL_SENSITIVITY = 1f       // 滚动视差的灵敏度/范围 例如: 1.0f, 0.75f, 1.25f
-        const val DEFAULT_P1_OVERLAY_FADE_RATIO = 0f   // P1 叠加层淡出过渡比例例如: 0.2f, 0.3f, 0.5f
+        const val DEFAULT_P1_OVERLAY_FADE_RATIO = 0.38f   // P1 叠加层淡出过渡比例例如: 0.2f, 0.3f, 0.5f
         const val DEFAULT_BACKGROUND_BLUR_RADIUS = 0f    // 背景模糊半径例如: 0f (无模糊), 10f, 25f
         const val DEFAULT_PREVIEW_SNAP_DURATION_MS: Long = 700L // 预览吸附动画时长例如: 300L, 500L, 700L
+        const val DEFAULT_BACKGROUND_INITIAL_OFFSET = 0.5f // 默认从最左侧开始
 
         private const val PERMISSION_REQUEST_READ_MEDIA_IMAGES = 1001
         private const val TAG = "H2WallpaperMain"
@@ -253,6 +256,8 @@ class MainActivity : AppCompatActivity() {
         currentScrollSensitivity = prefs.getFloat(KEY_SCROLL_SENSITIVITY, DEFAULT_SCROLL_SENSITIVITY)
         currentP1OverlayFadeRatio = prefs.getFloat(KEY_P1_OVERLAY_FADE_RATIO, DEFAULT_P1_OVERLAY_FADE_RATIO)
         currentBackgroundBlurRadius = prefs.getFloat(KEY_BACKGROUND_BLUR_RADIUS, DEFAULT_BACKGROUND_BLUR_RADIUS)
+        currentBackgroundInitialOffset = prefs.getFloat(KEY_BACKGROUND_INITIAL_OFFSET, DEFAULT_BACKGROUND_INITIAL_OFFSET) // 新增
+
 
         val internalImageUriString = prefs.getString(KEY_IMAGE_URI, null)
 
@@ -264,7 +269,8 @@ class MainActivity : AppCompatActivity() {
             scrollSensitivity = currentScrollSensitivity,
             p1OverlayFadeRatio = currentP1OverlayFadeRatio,
             backgroundBlurRadius = currentBackgroundBlurRadius,
-            snapAnimationDurationMs = DEFAULT_PREVIEW_SNAP_DURATION_MS // 这个直接用MainActivity的默认值
+            snapAnimationDurationMs = DEFAULT_PREVIEW_SNAP_DURATION_MS, // 这个直接用MainActivity的默认值
+            normalizedInitialBgScrollOffset = currentBackgroundInitialOffset // 新增传递
         )
         // 单独设置那些不由 setConfigValues 控制的，或者在 setConfigValues 之后需要特定更新的
         wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio) // 假设高度比例仍单独设置
@@ -328,6 +334,7 @@ class MainActivity : AppCompatActivity() {
         editor.putFloat(KEY_SCROLL_SENSITIVITY, currentScrollSensitivity)
         editor.putFloat(KEY_P1_OVERLAY_FADE_RATIO, currentP1OverlayFadeRatio)
         editor.putFloat(KEY_BACKGROUND_BLUR_RADIUS, currentBackgroundBlurRadius)
+        editor.putFloat(KEY_BACKGROUND_INITIAL_OFFSET, currentBackgroundInitialOffset) // 新增
         // DEFAULT_PREVIEW_SNAP_DURATION_MS 是预览特性，通常不保存
 
         selectedImageUri?.let { editor.putString(KEY_IMAGE_URI, it.toString()) } ?: editor.remove(KEY_IMAGE_URI)

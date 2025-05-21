@@ -49,7 +49,8 @@ object SharedWallpaperRenderer {
         val currentXOffset: Float,
         val numVirtualPages: Int = 3,
         val p1OverlayFadeTransitionRatio: Float = 0.5f,
-        val scrollSensitivityFactor: Float = 1.0f
+        val scrollSensitivityFactor: Float = 1.0f,
+        val normalizedInitialBgScrollOffset: Float = 0.0f // <-- 新增的参数
     )
 
     private val scrollingBgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }

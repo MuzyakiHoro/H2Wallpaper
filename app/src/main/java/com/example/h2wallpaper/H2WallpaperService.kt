@@ -45,6 +45,8 @@ class H2WallpaperService : WallpaperService() {
         private var currentP1FocusY: Float = 0.5f
         private var currentP1OverlayFadeRatio: Float = MainActivity.DEFAULT_P1_OVERLAY_FADE_RATIO
         private var currentBackgroundBlurRadius: Float = MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS
+        private var currentNormalizedInitialBgScrollOffset: Float = MainActivity.DEFAULT_BACKGROUND_INITIAL_OFFSET // 新变量
+
         // --- End Configuration members ---
 
         private var numPagesReportedByLauncher = 1
@@ -85,6 +87,7 @@ class H2WallpaperService : WallpaperService() {
             val oldP1OverlayFadeRatio = currentP1OverlayFadeRatio
             val oldBackgroundBlurRadius = currentBackgroundBlurRadius
             val oldPage1BackgroundColor = page1BackgroundColor
+            val oldInitialBgOffset = currentNormalizedInitialBgScrollOffset // 记录旧值
 
             loadPreferencesFromStorage() // Load all preferences to get the new values
 
@@ -131,6 +134,12 @@ class H2WallpaperService : WallpaperService() {
                         needsRedrawOnly = true
                     }
                 }
+                MainActivity.KEY_BACKGROUND_INITIAL_OFFSET -> {
+                    if (oldInitialBgOffset != currentNormalizedInitialBgScrollOffset) {
+                        Log.i(DEBUG_TAG, "Preference changed: Background Initial Offset. Triggering redraw.")
+                        needsRedrawOnly = true
+                    }
+                }
             }
 
             if (needsFullReload) {
@@ -159,6 +168,9 @@ class H2WallpaperService : WallpaperService() {
             // Load new preferences with MainActivity defaults as fallbacks
             currentP1OverlayFadeRatio = prefs.getFloat(MainActivity.KEY_P1_OVERLAY_FADE_RATIO, MainActivity.DEFAULT_P1_OVERLAY_FADE_RATIO)
             currentBackgroundBlurRadius = prefs.getFloat(MainActivity.KEY_BACKGROUND_BLUR_RADIUS, MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS)
+            currentNormalizedInitialBgScrollOffset = prefs.getFloat(MainActivity.KEY_BACKGROUND_INITIAL_OFFSET, MainActivity.DEFAULT_BACKGROUND_INITIAL_OFFSET) // 新增
+
+
 
             Log.i(DEBUG_TAG, "Preferences loaded/reloaded (Service): URI=$imageUriString, Color=$page1BackgroundColor, Ratio=$page1ImageHeightRatio, Sensitivity=$currentScrollSensitivity, Focus=($currentP1FocusX, $currentP1FocusY), P1FadeRatio=$currentP1OverlayFadeRatio, BlurRadius=$currentBackgroundBlurRadius")
         }
@@ -469,7 +481,8 @@ class H2WallpaperService : WallpaperService() {
                             screenWidth, screenHeight, page1BackgroundColor, page1ImageHeightRatio,
                             currentPageOffset, pagesForConfig,
                             p1OverlayFadeTransitionRatio = currentP1OverlayFadeRatio, // Use member variable
-                            scrollSensitivityFactor = this.currentScrollSensitivity    // Use member variable
+                            scrollSensitivityFactor = this.currentScrollSensitivity,    // Use member variable
+                            normalizedInitialBgScrollOffset = this.currentNormalizedInitialBgScrollOffset // 传递新参数
                         )
                         SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps)
                     } else {
