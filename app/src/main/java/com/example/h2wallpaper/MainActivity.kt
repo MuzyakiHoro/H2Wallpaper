@@ -64,12 +64,16 @@ class MainActivity : AppCompatActivity() {
     var page1ImageHeightRatio: Float = DEFAULT_HEIGHT_RATIO // 直接使用 companion object 的值初始化
     private var currentP1FocusX: Float = 0.5f
     private var currentP1FocusY: Float = 0.5f
+    // 新增 P2 背景淡入比例的变量
+
 
     // 新增/修改的配置参数变量
     private var currentScrollSensitivity: Float = DEFAULT_SCROLL_SENSITIVITY
     private var currentP1OverlayFadeRatio: Float = DEFAULT_P1_OVERLAY_FADE_RATIO
     private var currentBackgroundBlurRadius: Float = DEFAULT_BACKGROUND_BLUR_RADIUS
     private var currentBackgroundInitialOffset: Float = DEFAULT_BACKGROUND_INITIAL_OFFSET // 新变量
+    private var currentP2BackgroundFadeInRatio: Float = DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
+
 
 
     private val INTERNAL_IMAGE_FILENAME = "h2_wallpaper_internal_image.jpg"
@@ -125,14 +129,17 @@ class MainActivity : AppCompatActivity() {
         const val KEY_P1_OVERLAY_FADE_RATIO = "p1OverlayFadeRatio"
         const val KEY_BACKGROUND_BLUR_RADIUS = "backgroundBlurRadius"
         const val KEY_BACKGROUND_INITIAL_OFFSET = "backgroundInitialOffset" // 新增的Key
+        const val KEY_P2_BACKGROUND_FADE_IN_RATIO = "p2BackgroundFadeInRatio"
 
         // 默认值 - 在这里修改以进行测试！
         const val DEFAULT_HEIGHT_RATIO = 1f / 3f
         const val DEFAULT_SCROLL_SENSITIVITY = 1f       // 滚动视差的灵敏度/范围 例如: 1.0f, 0.75f, 1.25f
-        const val DEFAULT_P1_OVERLAY_FADE_RATIO = 0.38f   // P1 叠加层淡出过渡比例例如: 0.2f, 0.3f, 0.5f
-        const val DEFAULT_BACKGROUND_BLUR_RADIUS = 0f    // 背景模糊半径例如: 0f (无模糊), 10f, 25f
+        const val DEFAULT_P1_OVERLAY_FADE_RATIO = 0.5f   //P1淡出比例 0.2f, 0.3f, 0.5f
+        const val DEFAULT_P2_BACKGROUND_FADE_IN_RATIO = 0.7f // P2淡入比例 例如: 0.2f, 0.3f, 0.5f
+        const val DEFAULT_BACKGROUND_BLUR_RADIUS = 50f    // 背景模糊半径例如: 0f (无模糊), 10f, 25f
         const val DEFAULT_PREVIEW_SNAP_DURATION_MS: Long = 700L // 预览吸附动画时长例如: 300L, 500L, 700L
-        const val DEFAULT_BACKGROUND_INITIAL_OFFSET = 1f/3f // 默认从最左侧开始
+        const val DEFAULT_BACKGROUND_INITIAL_OFFSET = 1f/5f // 默认从最左侧开始
+
 
         private const val PERMISSION_REQUEST_READ_MEDIA_IMAGES = 1001
         private const val TAG = "H2WallpaperMain"
@@ -257,6 +264,8 @@ class MainActivity : AppCompatActivity() {
         currentP1OverlayFadeRatio = prefs.getFloat(KEY_P1_OVERLAY_FADE_RATIO, DEFAULT_P1_OVERLAY_FADE_RATIO)
         currentBackgroundBlurRadius = prefs.getFloat(KEY_BACKGROUND_BLUR_RADIUS, DEFAULT_BACKGROUND_BLUR_RADIUS)
         currentBackgroundInitialOffset = prefs.getFloat(KEY_BACKGROUND_INITIAL_OFFSET, DEFAULT_BACKGROUND_INITIAL_OFFSET) // 新增
+        // 新增：加载 P2 背景淡入比例
+        currentP2BackgroundFadeInRatio = prefs.getFloat(KEY_P2_BACKGROUND_FADE_IN_RATIO, DEFAULT_P2_BACKGROUND_FADE_IN_RATIO)
 
 
         val internalImageUriString = prefs.getString(KEY_IMAGE_URI, null)
@@ -270,7 +279,8 @@ class MainActivity : AppCompatActivity() {
             p1OverlayFadeRatio = currentP1OverlayFadeRatio,
             backgroundBlurRadius = currentBackgroundBlurRadius,
             snapAnimationDurationMs = DEFAULT_PREVIEW_SNAP_DURATION_MS, // 这个直接用MainActivity的默认值
-            normalizedInitialBgScrollOffset = currentBackgroundInitialOffset // 新增传递
+            normalizedInitialBgScrollOffset = currentBackgroundInitialOffset, // 新增传递
+            p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio// 新增：传递 P2 淡入比例给预览视图
         )
         // 单独设置那些不由 setConfigValues 控制的，或者在 setConfigValues 之后需要特定更新的
         wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio) // 假设高度比例仍单独设置
@@ -334,7 +344,9 @@ class MainActivity : AppCompatActivity() {
         editor.putFloat(KEY_SCROLL_SENSITIVITY, currentScrollSensitivity)
         editor.putFloat(KEY_P1_OVERLAY_FADE_RATIO, currentP1OverlayFadeRatio)
         editor.putFloat(KEY_BACKGROUND_BLUR_RADIUS, currentBackgroundBlurRadius)
-        editor.putFloat(KEY_BACKGROUND_INITIAL_OFFSET, currentBackgroundInitialOffset) // 新增
+        editor.putFloat(KEY_BACKGROUND_INITIAL_OFFSET, currentBackgroundInitialOffset) //
+        editor.putFloat(KEY_P2_BACKGROUND_FADE_IN_RATIO, currentP2BackgroundFadeInRatio) // ：保存 P2 背景淡入比例
+
         // DEFAULT_PREVIEW_SNAP_DURATION_MS 是预览特性，通常不保存
 
         selectedImageUri?.let { editor.putString(KEY_IMAGE_URI, it.toString()) } ?: editor.remove(KEY_IMAGE_URI)

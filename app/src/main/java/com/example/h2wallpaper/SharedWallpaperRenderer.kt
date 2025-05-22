@@ -50,7 +50,8 @@ object SharedWallpaperRenderer {
         val numVirtualPages: Int = 3,
         val p1OverlayFadeTransitionRatio: Float = 0.5f,
         val scrollSensitivityFactor: Float = 1.0f,
-        val normalizedInitialBgScrollOffset: Float = 0.0f // <-- 新增的参数
+        val normalizedInitialBgScrollOffset: Float = 0.0f, // <-- 新增的参数
+        val p2BackgroundFadeInRatio: Float
     )
 
     private val scrollingBgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
@@ -76,103 +77,122 @@ object SharedWallpaperRenderer {
             return
         }
 
-        canvas.drawColor(Color.BLACK) // 清除画布
+        canvas.drawColor(config.page1BackgroundColor) // 清除画布，作为最底层背景
 
-        // P1 图层透明度计算 (这部分逻辑保持不变)
-        var p1OverlayAlpha = 255
         val safeNumVirtualPages = config.numVirtualPages.coerceAtLeast(1)
-        if (safeNumVirtualPages > 1 && config.p1OverlayFadeTransitionRatio > 0) {
-            val singlePageXOffsetRange = 1.0f / safeNumVirtualPages.toFloat()
-            val p1FadeOutEndXOffset = singlePageXOffsetRange * config.p1OverlayFadeTransitionRatio.coerceIn(0.01f, 1f)
-            if (config.currentXOffset < p1FadeOutEndXOffset) {
-                val transitionProgress = config.currentXOffset / p1FadeOutEndXOffset
-                p1OverlayAlpha = (255 * (1.0f - transitionProgress.toDouble().pow(2.0))).toInt().coerceIn(0, 255)
-            } else {
-                p1OverlayAlpha = 0
+        var p1OverlayAlpha = 255
+        var p2BackgroundAlpha = 255
+
+        // --- P1 图层透明度计算 ---
+        // P1的淡出效果由 config.p1OverlayFadeTransitionRatio 控制
+        if (safeNumVirtualPages > 1) {
+            if (config.p1OverlayFadeTransitionRatio > 0.01f) { // 仅当ratio大于一个小阈值时才应用过渡
+                // 基准区间计算方式保持与之前一致，这决定了过渡效果发生的XOffset范围
+                // 例如，如果 numVirtualPages = 3, ratio = 0.5, 则淡出效果发生在 XOffset 从 0 到 (1/3 * 0.5) = 1/6 的区间内。
+                val p1SinglePageXOffsetRange = 1.0f / safeNumVirtualPages.toFloat()
+                val p1FadeEffectMaxXOffset = p1SinglePageXOffsetRange * config.p1OverlayFadeTransitionRatio.coerceIn(0.01f, 1f)
+
+                if (config.currentXOffset < p1FadeEffectMaxXOffset) {
+                    val p1TransitionProgress = config.currentXOffset / p1FadeEffectMaxXOffset
+                    // P1 淡出曲线: (1 - progress^2)
+                    p1OverlayAlpha = (255 * (1.0f - p1TransitionProgress.toDouble().pow(2.0))).toInt().coerceIn(0, 255)
+                } else {
+                    p1OverlayAlpha = 0 // P1 完全淡出
+                }
+            } else { // p1OverlayFadeTransitionRatio 配置为0或非常小，P1采用瞬间切换
+                p1OverlayAlpha = if (config.currentXOffset == 0f) 255 else 0
             }
-        } else if (safeNumVirtualPages == 1) {
-            p1OverlayAlpha = 255
-        } else {
-            p1OverlayAlpha = if (config.currentXOffset == 0f) 255 else 0
+        } else { // safeNumVirtualPages == 1 (单页模式)
+            p1OverlayAlpha = 255 // P1 始终完全可见
         }
 
-        // 背景图绘制逻辑 (使用新的滚动计算)
+        // --- P2 背景图层透明度计算 ---
+        // P2的淡入效果由 config.p2BackgroundFadeInRatio 控制
+        if (safeNumVirtualPages > 1) {
+            if (config.p2BackgroundFadeInRatio > 0.01f) { // P2有独立的淡入过渡配置
+                // 使用与P1类似的逻辑计算P2的过渡区间
+                val p2SinglePageXOffsetRange = 1.0f / safeNumVirtualPages.toFloat()
+                val p2FadeEffectMaxXOffset = p2SinglePageXOffsetRange * config.p2BackgroundFadeInRatio.coerceIn(0.01f, 1f)
+
+                if (config.currentXOffset < p2FadeEffectMaxXOffset) {
+                    val p2TransitionProgress = config.currentXOffset / p2FadeEffectMaxXOffset
+                    // P2 淡入曲线: progress^2 (使其在形式上与P1的淡出曲线对称，可按需调整)
+                    p2BackgroundAlpha = (255 * p2TransitionProgress.toDouble().pow(2.0)).toInt().coerceIn(0, 255)
+                } else {
+                    p2BackgroundAlpha = 255 // P2 完全可见
+                }
+            } else { // P2 配置为不进行淡入过渡 (p2BackgroundFadeInRatio 约等于 0)
+                // 在这种情况下，P2 的行为需要考虑 P1 的配置：
+                // 1. 如果 P1 也配置为瞬间切换 (p1OverlayFadeTransitionRatio 约等于 0)
+                //    则 P2 也瞬间切换，与 P1 可见性相反 (P1可见时P2不可见，反之亦然)。
+                if (config.p1OverlayFadeTransitionRatio <= 0.01f) {
+                    p2BackgroundAlpha = if (config.currentXOffset == 0f) 0 else 255
+                } else {
+                    // 2. 如果 P1 有自己的淡出过渡，而 P2 配置为不淡入（或瞬间完成），
+                    //    那么 P2 应该始终保持完全可见，P1 在其上层进行淡出。
+                    p2BackgroundAlpha = 255
+                }
+            }
+        } else { // safeNumVirtualPages == 1 (单页模式)
+            p2BackgroundAlpha = 255 // P2 背景在单页模式下始终完全可见 (P1会绘制在它之上)
+        }
+
+        // 背景图绘制逻辑
         val backgroundToDraw = bitmaps.blurredScrollingBackgroundBitmap ?: bitmaps.scrollingBackgroundBitmap
         backgroundToDraw?.let { bgBmp ->
             if (!bgBmp.isRecycled && bgBmp.width > 0 && bgBmp.height > 0) {
-                val imageActualWidth = bgBmp.width.toFloat()
-                val screenActualWidth = config.screenWidth.toFloat()
+                val imageActualWidth = bgBmp.width.toFloat() //
+                val screenActualWidth = config.screenWidth.toFloat() //
 
-                // 1. 计算图片在最左侧页面 (currentXOffset = 0.0) 时的初始向左平移量（像素）
-                val maxInitialPixelOffset = (imageActualWidth - screenActualWidth).coerceAtLeast(0f)
-                val safeInitialPixelOffset = (imageActualWidth * config.normalizedInitialBgScrollOffset).coerceIn(0f, maxInitialPixelOffset)
-
-                // 2. 计算图片在最右侧页面 (currentXOffset = 1.0) 时，为了使图片右边缘与屏幕右边缘对齐，
-                //    图片总共需要向左平移的像素量。
-                val totalScrollToAlignRightEdge = (imageActualWidth - screenActualWidth).coerceAtLeast(0f)
-
-                // 3. 计算从初始偏移状态到最终右边缘对齐状态之间，可以用于动态滚动的范围。
-                //    重要：为了精确的右边缘对齐，config.scrollSensitivityFactor 在此模式下应该为 1.0f。
-                //    如果它不是1.0f，这里的对齐逻辑会受影响。
-                //    我们假设当 normalizedInitialBgScrollOffset > 0 时，用户期望的是精确对齐，
-                //    所以动态滚动范围应该基于 totalScrollToAlignRightEdge。
-                val dynamicScrollableRange = (totalScrollToAlignRightEdge - safeInitialPixelOffset).coerceAtLeast(0f)
-
-                // 4. 根据当前的 currentXOffset 计算动态滚动的部分。
-                //    乘以 config.scrollSensitivityFactor 使得用户仍然可以调整滚动的“灵敏度”
-                //    但如果目标是严格的右边缘对齐，此因子应为1.0。
-                val currentDynamicScroll = config.currentXOffset * (dynamicScrollableRange * config.scrollSensitivityFactor)
-
-                // 5. 最终的图片向左平移量 = 初始偏移量 + 当前动态滚动量。
-                var currentScrollPxFloat = safeInitialPixelOffset + currentDynamicScroll
-
-                // 6. 对最终的 currentScrollPxFloat 进行最后约束，确保它在 [safeInitialPixelOffset, totalScrollToAlignRightEdge] 范围内
-                //    （如果 dynamicScrollableRange 为0，则它将保持为 safeInitialPixelOffset）
-                //    更准确的约束是基于总的可滚动范围和初始偏移：
-                currentScrollPxFloat = currentScrollPxFloat.coerceIn(safeInitialPixelOffset, totalScrollToAlignRightEdge)
-                // 如果图片比屏幕窄 (totalScrollToAlignRightEdge = 0)，那么 currentScrollPxFloat 会是 safeInitialPixelOffset (也为0)。
-                // 如果 safeInitialPixelOffset 导致 dynamicScrollableRange 为0，currentScrollPxFloat 会保持 safeInitialPixelOffset。
-
-                // 还需要确保 currentScrollPxFloat 不小于0 (虽然上面的计算应该能保证)
-                currentScrollPxFloat = currentScrollPxFloat.coerceAtLeast(0f)
-
+                // 背景滚动计算逻辑 (保持不变)
+                val maxInitialPixelOffset = (imageActualWidth - screenActualWidth).coerceAtLeast(0f) //
+                val safeInitialPixelOffset = (imageActualWidth * config.normalizedInitialBgScrollOffset).coerceIn(0f, maxInitialPixelOffset) //
+                val totalScrollToAlignRightEdge = (imageActualWidth - screenActualWidth).coerceAtLeast(0f) //
+                val dynamicScrollableRange = (totalScrollToAlignRightEdge - safeInitialPixelOffset).coerceAtLeast(0f) //
+                val currentDynamicScroll = config.currentXOffset * (dynamicScrollableRange * config.scrollSensitivityFactor) //
+                var currentScrollPxFloat = safeInitialPixelOffset + currentDynamicScroll //
+                currentScrollPxFloat = currentScrollPxFloat.coerceIn(safeInitialPixelOffset, totalScrollToAlignRightEdge) //
+                currentScrollPxFloat = currentScrollPxFloat.coerceAtLeast(0f) //
 
                 val bgTopOffset = ((config.screenHeight - bgBmp.height) / 2f)
                 canvas.save()
-                canvas.translate(-currentScrollPxFloat, bgTopOffset) // 使用浮点数平移
-                scrollingBgPaint.alpha = 255
+                canvas.translate(-currentScrollPxFloat, bgTopOffset)
+
+                // 应用计算得到的 P2 背景透明度
+                scrollingBgPaint.alpha = p2BackgroundAlpha
                 canvas.drawBitmap(bgBmp, 0f, 0f, scrollingBgPaint)
                 canvas.restore()
 
-                // 添加日志方便调试
-                Log.d(DEBUG_TAG_RENDERER, "drawFrame: initialOffsetNorm=${config.normalizedInitialBgScrollOffset}, initialPx=$safeInitialPixelOffset, dynamicRange=$dynamicScrollableRange, currentXOffset=${config.currentXOffset}, dynamicScroll=$currentDynamicScroll, finalScrollPx=$currentScrollPxFloat, totalAlignRight=$totalScrollToAlignRightEdge")
+                Log.d(DEBUG_TAG_RENDERER, "drawFrame: P1 Alpha=$p1OverlayAlpha, P2 BG Alpha=$p2BackgroundAlpha, XOffset=${config.currentXOffset}, P1FadeRatio=${config.p1OverlayFadeTransitionRatio}, P2FadeInRatio=${config.p2BackgroundFadeInRatio}")
 
             } else {
                 Log.w(TAG, "drawFrame: Background bitmap is invalid or recycled.")
             }
         } ?: Log.d(TAG, "drawFrame: No background bitmap available to draw.")
 
-        // P1 前景图和背景色绘制逻辑 (这部分逻辑保持不变)
-        val topImageActualHeight = (config.screenHeight * config.page1ImageHeightRatio).toInt()
-        if (p1OverlayAlpha > 0 && topImageActualHeight > 0) {
-            p1OverlayBgPaint.color = config.page1BackgroundColor
-            p1OverlayBgPaint.alpha = p1OverlayAlpha
-            canvas.drawRect(
-                0f,
-                topImageActualHeight.toFloat(),
-                config.screenWidth.toFloat(),
-                config.screenHeight.toFloat(),
-                p1OverlayBgPaint
+        // P1 前景图和背景色绘制逻辑 (这部分逻辑保持不变, P1 使用 p1OverlayAlpha)
+        val topImageActualHeight = (config.screenHeight * config.page1ImageHeightRatio).toInt() //
+        if (p1OverlayAlpha > 0 && topImageActualHeight > 0) { //
+            // P1 自身的背景色 (绘制在P2图层之上，P1图片之下)
+            p1OverlayBgPaint.color = config.page1BackgroundColor //
+            p1OverlayBgPaint.alpha = p1OverlayAlpha // P1背景色使用P1的透明度
+            canvas.drawRect( //
+                0f, //
+                topImageActualHeight.toFloat(), //
+                config.screenWidth.toFloat(), //
+                config.screenHeight.toFloat(), //
+                p1OverlayBgPaint //
             )
 
-            bitmaps.page1TopCroppedBitmap?.let { topBmp ->
-                if (!topBmp.isRecycled && topBmp.width > 0 && topBmp.height > 0) {
-                    p1OverlayImagePaint.alpha = p1OverlayAlpha
-                    canvas.drawBitmap(topBmp, 0f, 0f, p1OverlayImagePaint)
+            // P1 前景图片
+            bitmaps.page1TopCroppedBitmap?.let { topBmp -> //
+                if (!topBmp.isRecycled && topBmp.width > 0 && topBmp.height > 0) { //
+                    p1OverlayImagePaint.alpha = p1OverlayAlpha // P1图片使用P1的透明度
+                    canvas.drawBitmap(topBmp, 0f, 0f, p1OverlayImagePaint) //
                 } else {
                     Log.w(TAG, "drawFrame: P1 top cropped bitmap is invalid or recycled.")
                 }
-            } ?: run {
+            } ?: run { //
                 Log.d(TAG, "drawFrame: No P1 top cropped bitmap available to draw.")
             }
         }

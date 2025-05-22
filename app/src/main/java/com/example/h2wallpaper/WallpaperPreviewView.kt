@@ -38,9 +38,11 @@ class WallpaperPreviewView @JvmOverloads constructor(
     // 新增: 由 MainActivity 通过 setConfigValues 设置的参数
     private var currentScrollSensitivity: Float = 1.0f
     private var currentP1OverlayFadeRatio: Float = 0.2f // 初始值可以与之前硬编码一致
+    private var currentP2BackgroundFadeInRatio: Float = MainActivity.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
     private var currentBackgroundBlurRadius: Float = 25f // 初始值可以与之前硬编码一致
     private var currentSnapAnimationDurationMs: Long = 700L
     private var currentNormalizedInitialBgScrollOffset: Float = 0.0f // 新增
+
 
 
     private var wallpaperBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
@@ -107,7 +109,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 numVirtualPages = numVirtualPages,
                 p1OverlayFadeTransitionRatio = currentP1OverlayFadeRatio,   // 使用成员变量
                 scrollSensitivityFactor = currentScrollSensitivity,        // 使用成员变量
-                normalizedInitialBgScrollOffset = currentNormalizedInitialBgScrollOffset // 传递新参数
+                normalizedInitialBgScrollOffset = currentNormalizedInitialBgScrollOffset, // 传递新参数
+                p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio
+
             )
             SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps)
         } else {
@@ -137,16 +141,20 @@ class WallpaperPreviewView @JvmOverloads constructor(
         p1OverlayFadeRatio: Float,
         backgroundBlurRadius: Float,
         snapAnimationDurationMs: Long,
-        normalizedInitialBgScrollOffset: Float // 新增参数
+        normalizedInitialBgScrollOffset: Float,
+        p2BackgroundFadeInRatio: Float// 新增参数
     ) {
         val sensitivityChanged = this.currentScrollSensitivity != scrollSensitivity
-        val fadeRatioChanged = this.currentP1OverlayFadeRatio != p1OverlayFadeRatio
+        val p1FadeRatioChanged = this.currentP1OverlayFadeRatio != p1OverlayFadeRatio
         val blurRadiusChanged = this.currentBackgroundBlurRadius != backgroundBlurRadius
+        val p2FadeRatioChanged = this.currentP2BackgroundFadeInRatio != p2BackgroundFadeInRatio
+
         // val snapDurationChanged = this.currentSnapAnimationDurationMs != snapAnimationDurationMs // snap duration change only affects new animations
 
         this.currentScrollSensitivity = scrollSensitivity.coerceIn(0.1f, 5.0f)
         this.currentP1OverlayFadeRatio = p1OverlayFadeRatio.coerceIn(0.01f, 1.0f)
-        this.currentBackgroundBlurRadius = backgroundBlurRadius.coerceIn(0f, 25f) // Max 25f for RenderScript
+        this.currentP2BackgroundFadeInRatio = p2BackgroundFadeInRatio.coerceIn(0.0f, 1.0f)
+        this.currentBackgroundBlurRadius = backgroundBlurRadius.coerceIn(0f, 50f) // Max 25f for RenderScript
         this.currentSnapAnimationDurationMs = snapAnimationDurationMs
         val initialBgOffsetChanged = this.currentNormalizedInitialBgScrollOffset != normalizedInitialBgScrollOffset
         this.currentNormalizedInitialBgScrollOffset = normalizedInitialBgScrollOffset.coerceIn(0f, 1f)
@@ -154,14 +162,13 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
         Log.d(TAG, "Preview Configs Updated: Sensitivity=$currentScrollSensitivity, FadeRatio=$currentP1OverlayFadeRatio, Blur=$currentBackgroundBlurRadius, SnapMs=$currentSnapAnimationDurationMs")
 
-        if (sensitivityChanged || fadeRatioChanged) {
-            invalidate() // These parameter changes only require a redraw
+        // 如果任一影响透明度或滚动的比例变化，则重绘
+        if (sensitivityChanged || p1FadeRatioChanged || p2FadeRatioChanged || initialBgOffsetChanged) {
+            invalidate()
         }
 
-        // If blur radius changed and an image is already loaded, force a full bitmap reload
         if (blurRadiusChanged && this.imageUri != null) {
             Log.d(TAG, "Blur radius changed for preview, forcing full bitmap reload.")
-            // Pass current imageUri to reload it with new blur settings
             loadFullBitmapsFromUri(this.imageUri, forceInternalReload = true)
         }
     }

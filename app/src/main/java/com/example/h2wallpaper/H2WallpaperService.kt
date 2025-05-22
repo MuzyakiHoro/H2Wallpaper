@@ -46,6 +46,7 @@ class H2WallpaperService : WallpaperService() {
         private var currentP1OverlayFadeRatio: Float = MainActivity.DEFAULT_P1_OVERLAY_FADE_RATIO
         private var currentBackgroundBlurRadius: Float = MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS
         private var currentNormalizedInitialBgScrollOffset: Float = MainActivity.DEFAULT_BACKGROUND_INITIAL_OFFSET // 新变量
+        private var currentP2BackgroundFadeInRatio: Float = MainActivity.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
 
         // --- End Configuration members ---
 
@@ -88,6 +89,7 @@ class H2WallpaperService : WallpaperService() {
             val oldBackgroundBlurRadius = currentBackgroundBlurRadius
             val oldPage1BackgroundColor = page1BackgroundColor
             val oldInitialBgOffset = currentNormalizedInitialBgScrollOffset // 记录旧值
+            val oldP2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio//记录旧的 P2 淡入比例
 
             loadPreferencesFromStorage() // Load all preferences to get the new values
 
@@ -140,6 +142,13 @@ class H2WallpaperService : WallpaperService() {
                         needsRedrawOnly = true
                     }
                 }
+                // 处理 P2 淡入比例变化
+                MainActivity.KEY_P2_BACKGROUND_FADE_IN_RATIO -> {
+                    if (oldP2BackgroundFadeInRatio != currentP2BackgroundFadeInRatio) {
+                        Log.i(DEBUG_TAG, "Preference changed: P2 Background FadeIn Ratio. Triggering redraw.")
+                        needsRedrawOnly = true
+                    }
+                }
             }
 
             if (needsFullReload) {
@@ -169,6 +178,7 @@ class H2WallpaperService : WallpaperService() {
             currentP1OverlayFadeRatio = prefs.getFloat(MainActivity.KEY_P1_OVERLAY_FADE_RATIO, MainActivity.DEFAULT_P1_OVERLAY_FADE_RATIO)
             currentBackgroundBlurRadius = prefs.getFloat(MainActivity.KEY_BACKGROUND_BLUR_RADIUS, MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS)
             currentNormalizedInitialBgScrollOffset = prefs.getFloat(MainActivity.KEY_BACKGROUND_INITIAL_OFFSET, MainActivity.DEFAULT_BACKGROUND_INITIAL_OFFSET) // 新增
+            currentP2BackgroundFadeInRatio = prefs.getFloat(MainActivity.KEY_P2_BACKGROUND_FADE_IN_RATIO, MainActivity.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO)
 
 
 
@@ -482,7 +492,8 @@ class H2WallpaperService : WallpaperService() {
                             currentPageOffset, pagesForConfig,
                             p1OverlayFadeTransitionRatio = currentP1OverlayFadeRatio, // Use member variable
                             scrollSensitivityFactor = this.currentScrollSensitivity,    // Use member variable
-                            normalizedInitialBgScrollOffset = this.currentNormalizedInitialBgScrollOffset // 传递新参数
+                            normalizedInitialBgScrollOffset = this.currentNormalizedInitialBgScrollOffset, // Use member variable
+                            p2BackgroundFadeInRatio = this.currentP2BackgroundFadeInRatio //传递 P2 淡入比例
                         )
                         SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps)
                     } else {
