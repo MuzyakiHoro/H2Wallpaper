@@ -52,6 +52,8 @@ object SharedWallpaperRenderer {
         val scrollSensitivityFactor: Float = 1.0f,
         val normalizedInitialBgScrollOffset: Float = 0.0f, // <-- 新增的参数
         val p2BackgroundFadeInRatio: Float
+
+
     )
 
     private val scrollingBgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
@@ -66,6 +68,9 @@ object SharedWallpaperRenderer {
     private val placeholderBgPaint = Paint().apply {
         color = Color.DKGRAY
     }
+
+    // 值越小，"糊"的程度越高，但也可能越失真
+    private const val MIN_DOWNSCALED_DIMENSION = 16 // 缩小后图像的最小宽度/高度，防止过小
 
     fun drawFrame(
         canvas: Canvas,
@@ -296,8 +301,10 @@ object SharedWallpaperRenderer {
         sourceBitmap: Bitmap?,
         targetScreenWidth: Int,
         targetScreenHeight: Int,
-        // numVirtualPages: Int, // 这个参数对于确定背景位图本身的宽度不再需要
-        blurRadius: Float
+        blurRadius: Float,
+        // --- 新增的参数，由高级设置控制 ---
+        blurDownscaleFactor: Float, // 例如 0.05f 到 1.0f (1.0f 表示不额外降采样)
+        blurIterations: Int         // 例如 1 到 3 次
     ): Pair<Bitmap?, Bitmap?> {
         if (sourceBitmap == null || sourceBitmap.isRecycled) {
             Log.w(TAG, "prepareScrollingAndBlurredBitmaps: Source bitmap is null or recycled.")
@@ -308,59 +315,105 @@ object SharedWallpaperRenderer {
             return Pair(null, null)
         }
 
-        var finalScrollingBackground: Bitmap? = null
-        var finalBlurredScrollingBackground: Bitmap? = null
+        var finalScrollingBackground: Bitmap? = null // 这是未模糊的、按屏幕高度缩放的滚动背景
+        var finalBlurredScrollingBackground: Bitmap? = null // 这是最终模糊处理后的滚动背景
 
-        val obW = sourceBitmap.width.toFloat()
-        val obH = sourceBitmap.height.toFloat()
+        val originalBitmapWidth = sourceBitmap.width.toFloat()
+        val originalBitmapHeight = sourceBitmap.height.toFloat()
 
-        if (obW > 0 && obH > 0) {
-            val scaleToFitScreenHeight = targetScreenHeight / obH
-            val scaledOriginalWidth = (obW * scaleToFitScreenHeight).roundToInt()
-
-            if (scaledOriginalWidth <= 0) {
-                Log.w(TAG, "prepareScrollingAndBlurredBitmaps: Scaled original width is zero or less.")
-                return Pair(null, null)
-            }
-
-            var tempScaledBitmap: Bitmap? = null
-            try {
-                // tempScaledBitmap 是源图片按屏幕高度缩放后的结果，宽度为 scaledOriginalWidth
-                tempScaledBitmap = Bitmap.createScaledBitmap(sourceBitmap, scaledOriginalWidth, targetScreenHeight, true)
-
-                // 直接使用这个缩放后的位图作为可滚动的背景
-                finalScrollingBackground = tempScaledBitmap
-
-                if (blurRadius > 0f && finalScrollingBackground != null && !finalScrollingBackground.isRecycled) {
-                    // 确保 blurBitmapUsingRenderScript 返回的是一个新的位图，或者如果它修改了传入的位图，
-                    // 我们需要先复制一份 finalScrollingBackground。
-                    // 假设 blurBitmapUsingRenderScript 设计良好，会返回新位图或处理好引用。
-                    finalBlurredScrollingBackground = blurBitmapUsingRenderScript(context, finalScrollingBackground, blurRadius)
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error creating scaled or blurred background", e)
-                // 如果 tempScaledBitmap 被赋值给了 finalScrollingBackground，则它的生命周期由外部管理
-                // 这里主要回收在异常情况下可能产生的中间位图（如果还有的话）
-                // 由于 finalScrollingBackground 可能就是 tempScaledBitmap，所以只回收 finalBlurredScrollingBackground
-                finalBlurredScrollingBackground?.recycle()
-                finalBlurredScrollingBackground = null
-                // 如果 tempScaledBitmap 创建成功但后续出错，finalScrollingBackground 可能是它。
-                // 若 finalScrollingBackground 未成功赋值或创建，它自己会是 null。
-                // 若 tempScaledBitmap 赋值给了 finalScrollingBackground，则不能在这里回收 tempScaledBitmap。
-                // 最好的做法是让 WallpaperBitmaps 类负责回收。
-                if (finalScrollingBackground == tempScaledBitmap) {
-                    // 如果异常发生在模糊之后，但 tempScaledBitmap 已赋给 finalScrollingBackground
-                    // 我们只将 finalScrollingBackground 置空，其回收由调用者（WallpaperBitmaps）处理
-                    finalScrollingBackground = null;
-                } else {
-                    // 如果 tempScaledBitmap 未赋值给 finalScrollingBackground (例如在createScaledBitmap处就失败)
-                    tempScaledBitmap?.recycle()
-                }
-            }
+        if (originalBitmapWidth <= 0 || originalBitmapHeight <= 0) {
+            Log.w(TAG, "prepareScrollingAndBlurredBitmaps: Source bitmap has invalid dimensions.")
+            return Pair(null, null)
         }
+
+        // 1. 计算按屏幕高度缩放后的滚动背景图尺寸
+        val scaleToFitScreenHeight = targetScreenHeight / originalBitmapHeight
+        val scaledWidthForScrollingBg = (originalBitmapWidth * scaleToFitScreenHeight).roundToInt()
+
+        if (scaledWidthForScrollingBg <= 0) {
+            Log.w(TAG, "prepareScrollingAndBlurredBitmaps: Calculated scaledOriginalWidth is zero or less.")
+            return Pair(null, null)
+        }
+
+        // 用于存储中间步骤的位图，确保它们在不再需要时被回收
+        var baseScrollingBitmap: Bitmap? = null // 即 tempScaledBitmap，按屏幕高度缩放后的图
+        var downscaledForBlur: Bitmap? = null
+        var blurredDownscaled: Bitmap? = null
+        var upscaledBlurredBitmap: Bitmap? = null // 最终由小图放大回来的模糊图
+
+        try {
+            // 2. 创建基础的滚动背景图 (按屏幕高度缩放)
+            baseScrollingBitmap = Bitmap.createScaledBitmap(sourceBitmap, scaledWidthForScrollingBg, targetScreenHeight, true)
+            finalScrollingBackground = baseScrollingBitmap // 未模糊的滚动背景图赋值
+
+            // 3. 如果需要模糊 (blurRadius > 0)，则进行模糊处理
+            if (blurRadius > 0.01f && baseScrollingBitmap != null && !baseScrollingBitmap.isRecycled) {
+                val sourceForActualBlur = baseScrollingBitmap // 将以此为基础进行模糊处理
+
+                // 应用降采样模糊策略
+                // actualDownscaleFactor 控制降采样的程度，值越小，图片越小，模糊感越强
+                val actualDownscaleFactor = blurDownscaleFactor.coerceIn(0.05f, 1.0f) // 限制在合理范围
+
+                val downscaledWidth = (sourceForActualBlur.width * actualDownscaleFactor)
+                    .roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
+                val downscaledHeight = (sourceForActualBlur.height * actualDownscaleFactor)
+                    .roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
+
+                // 条件：当降采样因子显著小于1 (表示希望降采样) 并且
+                // 计算出的降采样后尺寸确实小于原待模糊图像尺寸时，才执行降采样路径。
+                if (actualDownscaleFactor < 0.99f && (downscaledWidth < sourceForActualBlur.width || downscaledHeight < sourceForActualBlur.height)) {
+                    Log.d(TAG, "Applying enhanced blur: Downscale by x$actualDownscaleFactor, Iterations: $blurIterations")
+                    downscaledForBlur = Bitmap.createScaledBitmap(sourceForActualBlur, downscaledWidth, downscaledHeight, true)
+
+                    val radiusForDownscaledBitmap = blurRadius.coerceIn(0.1f, 25.0f)
+                    blurredDownscaled = blurBitmapUsingRenderScript(context, downscaledForBlur, radiusForDownscaledBitmap, blurIterations)
+
+                    if (blurredDownscaled != null) {
+                        upscaledBlurredBitmap = Bitmap.createScaledBitmap(
+                            blurredDownscaled,
+                            sourceForActualBlur.width, // 放大回 baseScrollingBitmap 的尺寸
+                            sourceForActualBlur.height,
+                            true // 使用双线性过滤
+                        )
+                        finalBlurredScrollingBackground = upscaledBlurredBitmap
+                    } else {
+                        Log.w(TAG, "Enhanced blur: Blurring on downscaled image failed. Falling back to standard blur on original-scale.")
+                        // 如果在缩小图上模糊失败，则在原始缩放尺寸的图上进行模糊作为后备
+                        finalBlurredScrollingBackground = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
+                    }
+                } else {
+                    // 如果不满足降采样条件 (例如因子接近1，或图片本身已经很小)
+                    // 直接在 baseScrollingBitmap 上进行标准模糊（但仍使用迭代次数）
+                    Log.d(TAG, "Applying standard blur (no effective downscale or factor too high). Iterations: $blurIterations")
+                    finalBlurredScrollingBackground = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
+                }
+            } else if (baseScrollingBitmap != null && !baseScrollingBitmap.isRecycled) {
+                // 不需要模糊 (blurRadius 为0或非常小)
+                // finalBlurredScrollingBackground 保持为 null，在 drawFrame 中会用 finalScrollingBackground
+                Log.d(TAG, "No blur applied as blurRadius ($blurRadius) is too small or zero.")
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during prepareScrollingAndBlurredBitmaps", e)
+            // 如果发生异常，确保最终返回的 blurredBackground 是 null
+            // 已经创建的 finalScrollingBackground (baseScrollingBitmap) 仍可能有效，其回收由WallpaperBitmaps管理
+            upscaledBlurredBitmap?.recycle() // 如果这个中间Bitmap已创建
+            finalBlurredScrollingBackground = null // 清空，表示模糊失败
+        } finally {
+            // 回收在此函数作用域内明确创建且未赋给最终返回对象的中间Bitmap
+            // baseScrollingBitmap 赋值给了 finalScrollingBackground，由外部管理
+            // upscaledBlurredBitmap 赋值给了 finalBlurredScrollingBackground，由外部管理
+            if (downscaledForBlur != blurredDownscaled) { // 避免重复回收（如果blurBitmapUsingRenderScript返回输入对象的情况，虽然我们改了）
+                downscaledForBlur?.recycle()
+            }
+            blurredDownscaled?.recycle()
+            Log.d(TAG, "Intermediate bitmaps for blur (downscaled, blurredDownscaled) recycled if they were created.")
+        }
+
         return Pair(finalScrollingBackground, finalBlurredScrollingBackground)
     }
+
+
 
     fun loadAndProcessInitialBitmaps(
         context: Context,
@@ -371,7 +424,9 @@ object SharedWallpaperRenderer {
         normalizedFocusX: Float,
         normalizedFocusY: Float,
         //numVirtualPagesForScrolling: Int,
-        blurRadiusForBackground: Float
+        blurRadiusForBackground: Float,
+        blurDownscaleFactor: Float,
+        blurIterations: Int
     ): WallpaperBitmaps {
         if (imageUri == null) {
             Log.w(TAG, "loadAndProcessInitialBitmaps: Image URI is null.")
@@ -422,7 +477,9 @@ object SharedWallpaperRenderer {
                 targetScreenWidth,
                 targetScreenHeight,
               //  numVirtualPagesForScrolling,
-                blurRadiusForBackground
+                blurRadiusForBackground,
+                blurDownscaleFactor,
+                blurIterations,
             )
 
             return WallpaperBitmaps(sourceSampled, topCropped, scrolling, blurred)
@@ -456,44 +513,101 @@ object SharedWallpaperRenderer {
         return inSampleSize
     }
 
-    private fun blurBitmapUsingRenderScript(context: Context, bitmap: Bitmap, radius: Float): Bitmap? {
-        if (radius <= 0f) return bitmap
-
-        val clampedRadius = radius.coerceIn(0.1f, 25.0f)
+    // blurBitmapUsingRenderScript 函数保持不变 (确保其内部对 radius 的 clamp 是 0.1f 到 25.0f)
+    private fun blurBitmapUsingRenderScript(
+        context: Context,
+        bitmap: Bitmap, // 原始输入 bitmap，此函数不应回收它
+        radius: Float,
+        iterations: Int = 1 // 迭代次数，默认为1
+    ): Bitmap? {
+        // 检查输入 bitmap 是否有效
         if (bitmap.isRecycled || bitmap.width == 0 || bitmap.height == 0) {
-            Log.w(TAG, "blurBitmapUsingRenderScript: Input bitmap is invalid.")
+            Log.w(TAG, "blurBitmapUsingRenderScript: Input bitmap is invalid or recycled.")
             return null
         }
 
-        var rs: RenderScript? = null
-        var outputBitmap: Bitmap? = null
-        try {
-            outputBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, bitmap.config ?: Bitmap.Config.ARGB_8888)
-            rs = RenderScript.create(context)
-            val input = Allocation.createFromBitmap(rs, bitmap)
-            val output = Allocation.createFromBitmap(rs, outputBitmap)
-            val script = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs))
+        val clampedRadius = radius.coerceIn(0.1f, 25.0f) // RenderScript Blur 最大半径 25f
+        val actualIterations = iterations.coerceAtLeast(1) // 确保至少迭代1次
 
-            script.setRadius(clampedRadius)
-            script.setInput(input)
-            script.forEach(output)
-            output.copyTo(outputBitmap)
-
-            input.destroy()
-            output.destroy()
-            script.destroy()
-        } catch (e: RSRuntimeException) {
-            Log.e(TAG, "RenderScript blur failed (RSRuntimeException). Ensure renderscriptTargetApi and support mode are set in build.gradle. Or device compatibility issue.", e)
-            outputBitmap?.recycle()
-            outputBitmap = null
-        } catch (e: Exception) {
-            Log.e(TAG, "RenderScript blur failed (General Exception)", e)
-            outputBitmap?.recycle()
-            outputBitmap = null
-        } finally {
-            rs?.destroy()
+        // 如果有效模糊半径过小且只迭代一次，直接返回原始bitmap的一个副本，以节省开销
+        if (clampedRadius < 0.1f && actualIterations == 1) {
+            Log.d(TAG, "blurBitmapUsingRenderScript: Radius ($clampedRadius) too small for single iteration, returning a copy.")
+            return try {
+                bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to copy bitmap when radius was too small", e)
+                null // 复制失败则返回null
+            }
         }
-        return outputBitmap
+
+        var rs: RenderScript? = null
+        var script: ScriptIntrinsicBlur? = null
+        var currentProcessingBitmap: Bitmap = bitmap // 用于迭代的当前位图，初始为输入bitmap
+        var iterationOutputBitmap: Bitmap? = null  // 每次迭代的输出位图
+
+        try {
+            rs = RenderScript.create(context)
+            script = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs))
+            script.setRadius(clampedRadius)
+
+            for (i in 0 until actualIterations) {
+                Log.d(TAG, "Blur iteration ${i + 1} of $actualIterations with radius $clampedRadius")
+
+                // 为当前迭代的输出创建一个新的 Bitmap
+                // 注意：currentProcessingBitmap 在第一次迭代时是原始 bitmap，
+                // 后续迭代时是上一次迭代产生的 iterationOutputBitmap。
+                iterationOutputBitmap = Bitmap.createBitmap(
+                    currentProcessingBitmap.width,
+                    currentProcessingBitmap.height,
+                    currentProcessingBitmap.config ?: Bitmap.Config.ARGB_8888
+                )
+
+                var inAlloc: Allocation? = null
+                var outAlloc: Allocation? = null
+
+                try {
+                    inAlloc = Allocation.createFromBitmap(rs, currentProcessingBitmap) // 本次迭代的输入
+                    outAlloc = Allocation.createFromBitmap(rs, iterationOutputBitmap) // 本次迭代的输出目标
+
+                    script.setInput(inAlloc)
+                    script.forEach(outAlloc)    // 执行模糊
+                    outAlloc.copyTo(iterationOutputBitmap) // 将结果复制到 iterationOutputBitmap
+                } finally {
+                    inAlloc?.destroy()
+                    outAlloc?.destroy()
+                }
+
+                // 如果 currentProcessingBitmap 不是最初传入的 bitmap (即它是一个中间产物)，
+                // 那么它在本次迭代后就不再需要了，应该被回收。
+                if (currentProcessingBitmap != bitmap) {
+                    Log.d(TAG, "Recycling intermediate bitmap from iteration ${i + 1}")
+                    currentProcessingBitmap.recycle()
+                }
+                currentProcessingBitmap = iterationOutputBitmap // 本次迭代的输出成为下一次迭代的输入
+            }
+            // 循环结束后，currentProcessingBitmap 持有的是最终的模糊结果
+            return currentProcessingBitmap
+
+        } catch (e: Exception) { // 通用异常捕获
+            Log.e(TAG, "RenderScript blur failed during iterations (radius: $clampedRadius, iterations: $actualIterations).", e)
+
+            // 发生异常时，我们需要清理掉在try块中可能创建的Bitmap
+            // iterationOutputBitmap 是最后一次尝试创建或赋值的输出Bitmap
+            iterationOutputBitmap?.recycle()
+
+            // 如果 currentProcessingBitmap 不是原始传入的 bitmap，并且它也不是 iterationOutputBitmap
+            // (或者 iterationOutputBitmap 为null)，那么 currentProcessingBitmap 是一个需要清理的中间状态。
+            // 但更简单的是：如果 currentProcessingBitmap 不是原始的 bitmap，就意味着它是函数内部创建的，
+            // 既然出错了，就应该回收它。
+            if (currentProcessingBitmap != bitmap) {
+                currentProcessingBitmap.recycle()
+            }
+            return null // 出错则返回null
+        } finally {
+            script?.destroy()
+            rs?.destroy()
+            Log.d(TAG, "RenderScript resources (script, rs) destroyed.")
+        }
     }
 
     fun drawPlaceholder(canvas: Canvas, width: Int, height: Int, text: String) {
@@ -518,4 +632,5 @@ object SharedWallpaperRenderer {
         val textY = topImageActualHeight / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
         canvas.drawText(text, textX, textY, placeholderTextPaint)
     }
+
 }

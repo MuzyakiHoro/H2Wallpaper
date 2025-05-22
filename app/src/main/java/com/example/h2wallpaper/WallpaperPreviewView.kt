@@ -40,6 +40,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
     private var currentP1OverlayFadeRatio: Float = 0.2f // 初始值可以与之前硬编码一致
     private var currentP2BackgroundFadeInRatio: Float = MainActivity.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
     private var currentBackgroundBlurRadius: Float = 25f // 初始值可以与之前硬编码一致
+    private var currentBlurDownscaleFactor: Float = MainActivity.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT / 100.0f
+    private var currentBlurIterations: Int = MainActivity.DEFAULT_BLUR_ITERATIONS
     private var currentSnapAnimationDurationMs: Long = 700L
     private var currentNormalizedInitialBgScrollOffset: Float = 0.0f // 新增
 
@@ -142,13 +144,17 @@ class WallpaperPreviewView @JvmOverloads constructor(
         backgroundBlurRadius: Float,
         snapAnimationDurationMs: Long,
         normalizedInitialBgScrollOffset: Float,
-        p2BackgroundFadeInRatio: Float// 新增参数
+        p2BackgroundFadeInRatio: Float,// 新增参数
+        blurDownscaleFactor: Float,
+        blurIterations: Int
     ) {
         val sensitivityChanged = this.currentScrollSensitivity != scrollSensitivity
         val p1FadeRatioChanged = this.currentP1OverlayFadeRatio != p1OverlayFadeRatio
         val blurRadiusChanged = this.currentBackgroundBlurRadius != backgroundBlurRadius
         val p2FadeRatioChanged = this.currentP2BackgroundFadeInRatio != p2BackgroundFadeInRatio
-
+        val downscaleChanged = this.currentBlurDownscaleFactor != blurDownscaleFactor
+        val iterationsChanged = this.currentBlurIterations != blurIterations
+        val initialBgOffsetChanged = this.currentNormalizedInitialBgScrollOffset != normalizedInitialBgScrollOffset
         // val snapDurationChanged = this.currentSnapAnimationDurationMs != snapAnimationDurationMs // snap duration change only affects new animations
 
         this.currentScrollSensitivity = scrollSensitivity.coerceIn(0.1f, 5.0f)
@@ -156,8 +162,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         this.currentP2BackgroundFadeInRatio = p2BackgroundFadeInRatio.coerceIn(0.0f, 1.0f)
         this.currentBackgroundBlurRadius = backgroundBlurRadius.coerceIn(0f, 50f) // Max 25f for RenderScript
         this.currentSnapAnimationDurationMs = snapAnimationDurationMs
-        val initialBgOffsetChanged = this.currentNormalizedInitialBgScrollOffset != normalizedInitialBgScrollOffset
         this.currentNormalizedInitialBgScrollOffset = normalizedInitialBgScrollOffset.coerceIn(0f, 1f)
+        this.currentBlurDownscaleFactor = blurDownscaleFactor
+        this.currentBlurIterations = blurIterations
 
 
         Log.d(TAG, "Preview Configs Updated: Sensitivity=$currentScrollSensitivity, FadeRatio=$currentP1OverlayFadeRatio, Blur=$currentBackgroundBlurRadius, SnapMs=$currentSnapAnimationDurationMs")
@@ -170,6 +177,10 @@ class WallpaperPreviewView @JvmOverloads constructor(
         if (blurRadiusChanged && this.imageUri != null) {
             Log.d(TAG, "Blur radius changed for preview, forcing full bitmap reload.")
             loadFullBitmapsFromUri(this.imageUri, forceInternalReload = true)
+        }
+        if (blurRadiusChanged || downscaleChanged || iterationsChanged && this.imageUri != null) { //
+            Log.d(TAG, "Blur params changed for preview, forcing full bitmap reload.") //
+            loadFullBitmapsFromUri(this.imageUri, forceInternalReload = true) //
         }
     }
 
@@ -252,7 +263,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
                         currentNormalizedFocusX,
                         currentNormalizedFocusY,
                         //numVirtualPages,
-                        currentBackgroundBlurRadius // Use the member variable
+                        currentBackgroundBlurRadius, // Use the member variable
+                        currentBlurDownscaleFactor,
+                        currentBlurIterations
                     )
                 }
                 ensureActive()

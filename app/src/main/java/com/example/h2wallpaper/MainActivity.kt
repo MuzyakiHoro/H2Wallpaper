@@ -74,7 +74,8 @@ class MainActivity : AppCompatActivity() {
     private var currentBackgroundBlurRadius: Float = DEFAULT_BACKGROUND_BLUR_RADIUS
     private var currentBackgroundInitialOffset: Float = DEFAULT_BACKGROUND_INITIAL_OFFSET // 新变量
     private var currentP2BackgroundFadeInRatio: Float = DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
-
+    private var currentBlurDownscaleFactorInt: Int = DEFAULT_BLUR_DOWNSCALE_FACTOR_INT
+    private var currentBlurIterations: Int = DEFAULT_BLUR_ITERATIONS
 
 
     private val INTERNAL_IMAGE_FILENAME = "h2_wallpaper_internal_image.jpg"
@@ -131,16 +132,20 @@ class MainActivity : AppCompatActivity() {
         const val KEY_BACKGROUND_BLUR_RADIUS = "backgroundBlurRadius"
         const val KEY_BACKGROUND_INITIAL_OFFSET = "backgroundInitialOffset" // 新增的Key
         const val KEY_P2_BACKGROUND_FADE_IN_RATIO = "p2BackgroundFadeInRatio"
+        const val KEY_BLUR_DOWNSCALE_FACTOR = "blurDownscaleFactor"
+        const val KEY_BLUR_ITERATIONS = "blurIterations"
+
 
         // 默认值 - 在这里修改以进行测试！
         const val DEFAULT_HEIGHT_RATIO = 1f / 3f
         const val DEFAULT_SCROLL_SENSITIVITY = 1f       // 滚动视差的灵敏度/范围 例如: 1.0f, 0.75f, 1.25f
         const val DEFAULT_P1_OVERLAY_FADE_RATIO = 0.5f   //P1淡出比例 0.2f, 0.3f, 0.5f
-        const val DEFAULT_P2_BACKGROUND_FADE_IN_RATIO = 0.7f // P2淡入比例 例如: 0.2f, 0.3f, 0.5f
+        const val DEFAULT_P2_BACKGROUND_FADE_IN_RATIO = 0.8f // P2淡入比例 例如: 0.2f, 0.3f, 0.5f
         const val DEFAULT_BACKGROUND_BLUR_RADIUS = 50f    // 背景模糊半径例如: 0f (无模糊), 10f, 25f
         const val DEFAULT_PREVIEW_SNAP_DURATION_MS: Long = 700L // 预览吸附动画时长例如: 300L, 500L, 700L
         const val DEFAULT_BACKGROUND_INITIAL_OFFSET = 1f/5f // 默认从最左侧开始
-
+        const val DEFAULT_BLUR_DOWNSCALE_FACTOR_INT = 25 // SeekBarPreference 中的整数默认值
+        const val DEFAULT_BLUR_ITERATIONS = 1
 
         private const val PERMISSION_REQUEST_READ_MEDIA_IMAGES = 1001
         private const val TAG = "H2WallpaperMain"
@@ -279,13 +284,14 @@ class MainActivity : AppCompatActivity() {
 
 
 
-        // --- 修改读取参数的部分 ---
+        // --- 加载参数 ---
         currentScrollSensitivity = prefs.getInt(KEY_SCROLL_SENSITIVITY, (DEFAULT_SCROLL_SENSITIVITY * 10).toInt()) / 10.0f
         currentP1OverlayFadeRatio = prefs.getInt(KEY_P1_OVERLAY_FADE_RATIO, (DEFAULT_P1_OVERLAY_FADE_RATIO * 100).toInt()) / 100.0f
         currentBackgroundBlurRadius = prefs.getInt(KEY_BACKGROUND_BLUR_RADIUS, DEFAULT_BACKGROUND_BLUR_RADIUS.toInt()).toFloat() // 直接读取整数并转为Float
         currentBackgroundInitialOffset = prefs.getInt(KEY_BACKGROUND_INITIAL_OFFSET, (DEFAULT_BACKGROUND_INITIAL_OFFSET * 10).toInt()) / 10.0f
         currentP2BackgroundFadeInRatio = prefs.getInt(KEY_P2_BACKGROUND_FADE_IN_RATIO, (DEFAULT_P2_BACKGROUND_FADE_IN_RATIO * 100).toInt()) / 100.0f
-
+        currentBlurDownscaleFactorInt = prefs.getInt(KEY_BLUR_DOWNSCALE_FACTOR, DEFAULT_BLUR_DOWNSCALE_FACTOR_INT)
+        currentBlurIterations = prefs.getInt(KEY_BLUR_ITERATIONS, DEFAULT_BLUR_ITERATIONS)
 
 
         val internalImageUriString = prefs.getString(KEY_IMAGE_URI, null)
@@ -300,7 +306,9 @@ class MainActivity : AppCompatActivity() {
             backgroundBlurRadius = currentBackgroundBlurRadius,
             snapAnimationDurationMs = DEFAULT_PREVIEW_SNAP_DURATION_MS, // 这个直接用MainActivity的默认值
             normalizedInitialBgScrollOffset = currentBackgroundInitialOffset, // 新增传递
-            p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio// 新增：传递 P2 淡入比例给预览视图
+            p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio,// 新增：传递 P2 淡入比例给预览视图
+            blurDownscaleFactor = currentBlurDownscaleFactorInt / 100.0f,
+            blurIterations = currentBlurIterations
         )
         // 单独设置那些不由 setConfigValues 控制的，或者在 setConfigValues 之后需要特定更新的
         wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio) // 假设高度比例仍单独设置
@@ -366,7 +374,8 @@ class MainActivity : AppCompatActivity() {
         editor.putInt(KEY_BACKGROUND_BLUR_RADIUS, currentBackgroundBlurRadius.toInt()) // 直接转为 Int
         editor.putInt(KEY_BACKGROUND_INITIAL_OFFSET, (currentBackgroundInitialOffset * 10).toInt())
         editor.putInt(KEY_P2_BACKGROUND_FADE_IN_RATIO, (currentP2BackgroundFadeInRatio * 100).toInt())
-
+        editor.putInt(KEY_BLUR_DOWNSCALE_FACTOR, currentBlurDownscaleFactorInt)
+        editor.putInt(KEY_BLUR_ITERATIONS, currentBlurIterations)
 
         // DEFAULT_PREVIEW_SNAP_DURATION_MS 是预览特性，通常不保存
 

@@ -77,42 +77,61 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="@android:color/transparent" android:paddingTop="8dp"
+        android:background="@android:color/transparent"
+        android:paddingTop="8dp"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:paddingBottom="8dp"
-        app:layout_constraintBottom_toTopOf="@id/heightControlsContainer" app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/heightControlsContainer"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="0dp">
-        <Button
-            android:id="@+id/btnSelectImage"
-            android:layout_width="wrap_content"
+
+        <LinearLayout
+            android:id="@+id/actionButtonsContainer"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:text="@string/select_image_button" />
-        <Button
-            android:id="@+id/btnAdvancedSettings"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="8dp"
-            android:text="高级设置" />
-        <Button
-            android:id="@+id/btnCustomizeForeground"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:enabled="false"
-            android:layout_gravity="center_horizontal"
-            android:text="自定义前景" />
+            android:orientation="horizontal"
+            android:gravity="center_horizontal">
+
+            <Button
+                android:id="@+id/btnSelectImage"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                style="?android:attr/buttonBarButtonStyle"
+                android:text="@string/select_image_button" />
+            <Button
+                android:id="@+id/btnAdvancedSettings"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp"
+                style="?android:attr/buttonBarButtonStyle"
+                android:text="高级设置" />
+            <Button
+                android:id="@+id/btnCustomizeForeground"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                style="?android:attr/buttonBarButtonStyle"
+                android:enabled="false"
+                android:text="自定义前景" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/tvSelectColorLabel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/select_background_color_label"
-            android:textColor="@android:color/white" android:shadowColor="#80000000" android:shadowDx="1"
+            android:textColor="@android:color/white"
+            android:shadowColor="#80000000"
+            android:shadowDx="1"
             android:shadowDy="1"
             android:shadowRadius="2"
             android:layout_marginTop="8dp"

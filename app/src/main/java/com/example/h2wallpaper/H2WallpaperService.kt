@@ -47,6 +47,8 @@ class H2WallpaperService : WallpaperService() {
         private var currentBackgroundBlurRadius: Float = MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS
         private var currentNormalizedInitialBgScrollOffset: Float = MainActivity.DEFAULT_BACKGROUND_INITIAL_OFFSET // 新变量
         private var currentP2BackgroundFadeInRatio: Float = MainActivity.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
+        private var currentBlurDownscaleFactor: Float = MainActivity.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT / 100.0f // 存储为浮点因子
+        private var currentBlurIterations: Int = MainActivity.DEFAULT_BLUR_ITERATIONS
 
         // --- End Configuration members ---
 
@@ -90,6 +92,9 @@ class H2WallpaperService : WallpaperService() {
             val oldPage1BackgroundColor = page1BackgroundColor
             val oldInitialBgOffset = currentNormalizedInitialBgScrollOffset // 记录旧值
             val oldP2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio//记录旧的 P2 淡入比例
+            val oldBlurDownscaleFactor = currentBlurDownscaleFactor
+            val oldBlurIterations = currentBlurIterations
+
 
             loadPreferencesFromStorage() // Load all preferences to get the new values
 
@@ -149,6 +154,18 @@ class H2WallpaperService : WallpaperService() {
                         needsRedrawOnly = true
                     }
                 }
+                MainActivity.KEY_BLUR_DOWNSCALE_FACTOR -> {
+                    if (oldBlurDownscaleFactor != currentBlurDownscaleFactor) {
+                        Log.i(DEBUG_TAG, "Preference changed: Blur Downscale Factor. Triggering full reload.")
+                        needsFullReload = true
+                    }
+                }
+                MainActivity.KEY_BLUR_ITERATIONS -> {
+                    if (oldBlurIterations != currentBlurIterations) {
+                        Log.i(DEBUG_TAG, "Preference changed: Blur Iterations. Triggering full reload.")
+                        needsFullReload = true
+                    }
+                }
             }
 
             if (needsFullReload) {
@@ -198,6 +215,9 @@ class H2WallpaperService : WallpaperService() {
                 MainActivity.KEY_P2_BACKGROUND_FADE_IN_RATIO,
                 (MainActivity.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO * 100).toInt()
             ) / 100.0f
+            val blurDownscaleFactorInt = prefs.getInt(MainActivity.KEY_BLUR_DOWNSCALE_FACTOR, MainActivity.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT)
+            currentBlurDownscaleFactor = blurDownscaleFactorInt / 100.0f // 转换为浮点数存储
+            currentBlurIterations = prefs.getInt(MainActivity.KEY_BLUR_ITERATIONS, MainActivity.DEFAULT_BLUR_ITERATIONS)
 
 
 
@@ -355,7 +375,9 @@ class H2WallpaperService : WallpaperService() {
                             normalizedFocusX = currentP1FocusX,
                             normalizedFocusY = currentP1FocusY,
                             //numVirtualPagesForScrolling = pagesForBackground,
-                            blurRadiusForBackground = currentBackgroundBlurRadius // Pass current blur radius
+                            blurRadiusForBackground = currentBackgroundBlurRadius, // Pass current blur radius
+                            blurDownscaleFactor = currentBlurDownscaleFactor, // 新增
+                            blurIterations = currentBlurIterations
                         )
                     }
                     ensureActive()
@@ -443,12 +465,14 @@ class H2WallpaperService : WallpaperService() {
                 else if(isVisible) drawCurrentFrame()
                 return
             }
-            val pagesForBg = if (!isPreview && numPagesReportedByLauncher <= 1) {
-                DEFAULT_VIRTUAL_PAGES_FOR_SCROLLING
-            } else {
-                numPagesReportedByLauncher.coerceAtLeast(1)
-            }
-            Log.i(DEBUG_TAG, "updateScrollingBackgroundAsync: Starting for numPages $pagesForBg, Blur: $currentBackgroundBlurRadius")
+            // val pagesForBg = ... (这行你之前已经注释掉了，保持即可)
+
+            // 从成员变量中获取当前的模糊参数值
+            // 这些成员变量应该已经在 loadPreferencesFromStorage() 中被正确加载了
+            val downscaleFactorToUse = currentBlurDownscaleFactor
+            val iterationsToUse = currentBlurIterations
+
+            Log.i(DEBUG_TAG, "updateScrollingBackgroundAsync: Starting for BlurRadius: $currentBackgroundBlurRadius, DownscaleFactor: $downscaleFactorToUse, Iterations: $iterationsToUse")
 
             val scrollingUpdateJob = engineScope.launch {
                 var newScrollingPair: Pair<Bitmap?, Bitmap?>? = null
@@ -459,12 +483,18 @@ class H2WallpaperService : WallpaperService() {
                     newScrollingPair = withContext(Dispatchers.IO) {
                         ensureActive()
                         SharedWallpaperRenderer.prepareScrollingAndBlurredBitmaps(
-                            applicationContext, currentSource, screenWidth, screenHeight,
-                            //pagesForBg,
-                            currentBackgroundBlurRadius // Use current blur radius
+                            applicationContext,
+                            currentSource,
+                            screenWidth,
+                            screenHeight,
+                            currentBackgroundBlurRadius, // 使用当前的模糊半径
+                            // --- 传递缺失的参数 ---
+                            downscaleFactorToUse,     // 使用从成员变量获取的降采样因子
+                            iterationsToUse           // 使用从成员变量获取的迭代次数
                         )
                     }
                     ensureActive()
+                    // ... (后续逻辑不变)
                     if (this@H2WallpaperEngine.imageUriString != null && engineWallpaperBitmaps?.sourceSampledBitmap == currentSource) {
                         if (oldScrollingBitmap != newScrollingPair?.first) oldScrollingBitmap?.recycle()
                         if (oldBlurredBitmap != newScrollingPair?.second) oldBlurredBitmap?.recycle()

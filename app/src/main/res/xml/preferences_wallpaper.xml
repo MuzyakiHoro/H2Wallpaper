@@ -47,6 +47,23 @@
             android:defaultValue="25" app:min="0"
             android:max="25"
             app:updatesContinuously="true"/>
+        <SeekBarPreference
+            app:key="blurDownscaleFactor"
+            app:title="模糊降采样强度"
+            app:summary="值越小，模糊越强但可能失真"
+            android:defaultValue="25"
+            app:min="5"
+            android:max="100"
+            app:updatesContinuously="true"/>
+
+        <SeekBarPreference
+            app:key="blurIterations"
+            app:title="模糊迭代次数"
+            app:summary="增加迭代可增强模糊"
+            android:defaultValue="1"
+            app:min="1"
+            android:max="3"
+            app:updatesContinuously="true"/>
 
     </PreferenceCategory>
 

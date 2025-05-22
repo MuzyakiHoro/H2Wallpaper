@@ -105,8 +105,25 @@ class WallpaperSettingsFragment : PreferenceFragmentCompat(), SharedPreferences.
                     preference.key,
                     MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS.toInt()
                 )
-                preference.summary = "当前: $value (范围 0 - 50)"
+                preference.summary = "当前: $value (范围 0 - 25)"
             }
+            MainActivity.KEY_BLUR_DOWNSCALE_FACTOR -> { // 新增
+                val intValue = sharedPreferences.getInt(
+                    preference.key,
+                    MainActivity.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT
+                )
+                // 将整数值转换为实际的浮点因子进行显示
+                val factor = intValue / 100.0f
+                preference.summary = String.format(Locale.US, "当前因子: %.2f (值: %d, 范围 0.05 - 1.00)", factor, intValue)
+            }
+            MainActivity.KEY_BLUR_ITERATIONS -> { // 新增
+                val value = sharedPreferences.getInt(
+                    preference.key,
+                    MainActivity.DEFAULT_BLUR_ITERATIONS
+                )
+                preference.summary = "当前: $value 次 (范围 1 - 3)"
+            }
+
             // 你可以为其他类型的 Preference 添加 summary 更新逻辑
             // 例如，ListPreference:
             // is ListPreference -> {
