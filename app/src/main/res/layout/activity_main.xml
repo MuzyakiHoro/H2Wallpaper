@@ -93,6 +93,13 @@
             android:layout_gravity="center_horizontal"
             android:text="@string/select_image_button" />
         <Button
+            android:id="@+id/btnAdvancedSettings"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="8dp"
+            android:text="高级设置" />
+        <Button
             android:id="@+id/btnCustomizeForeground"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

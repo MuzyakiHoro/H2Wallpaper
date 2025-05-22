@@ -168,17 +168,36 @@ class H2WallpaperService : WallpaperService() {
 
         private fun loadPreferencesFromStorage() {
             imageUriString = prefs.getString(MainActivity.KEY_IMAGE_URI, null)
-            page1BackgroundColor = prefs.getInt(MainActivity.KEY_BACKGROUND_COLOR, Color.LTGRAY) // Default color if not set
-            page1ImageHeightRatio = prefs.getFloat(MainActivity.KEY_IMAGE_HEIGHT_RATIO, MainActivity.DEFAULT_HEIGHT_RATIO)
-            currentScrollSensitivity = prefs.getFloat(MainActivity.KEY_SCROLL_SENSITIVITY, MainActivity.DEFAULT_SCROLL_SENSITIVITY)
-            currentP1FocusX = prefs.getFloat(MainActivity.KEY_P1_FOCUS_X, 0.5f)
-            currentP1FocusY = prefs.getFloat(MainActivity.KEY_P1_FOCUS_Y, 0.5f)
+            page1BackgroundColor = prefs.getInt(MainActivity.KEY_BACKGROUND_COLOR, Color.LTGRAY)
+            page1ImageHeightRatio = prefs.getFloat(MainActivity.KEY_IMAGE_HEIGHT_RATIO, MainActivity.DEFAULT_HEIGHT_RATIO) // 这个参数类型不变
+            currentP1FocusX = prefs.getFloat(MainActivity.KEY_P1_FOCUS_X, 0.5f) // 这个参数类型不变
+            currentP1FocusY = prefs.getFloat(MainActivity.KEY_P1_FOCUS_Y, 0.5f) // 这个参数类型不变
 
-            // Load new preferences with MainActivity defaults as fallbacks
-            currentP1OverlayFadeRatio = prefs.getFloat(MainActivity.KEY_P1_OVERLAY_FADE_RATIO, MainActivity.DEFAULT_P1_OVERLAY_FADE_RATIO)
-            currentBackgroundBlurRadius = prefs.getFloat(MainActivity.KEY_BACKGROUND_BLUR_RADIUS, MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS)
-            currentNormalizedInitialBgScrollOffset = prefs.getFloat(MainActivity.KEY_BACKGROUND_INITIAL_OFFSET, MainActivity.DEFAULT_BACKGROUND_INITIAL_OFFSET) // 新增
-            currentP2BackgroundFadeInRatio = prefs.getFloat(MainActivity.KEY_P2_BACKGROUND_FADE_IN_RATIO, MainActivity.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO)
+            // --- 修改以下参数的读取逻辑，先读取缩放后的整数，再转换为浮点数 ---
+            currentScrollSensitivity = prefs.getInt(
+                MainActivity.KEY_SCROLL_SENSITIVITY,
+                (MainActivity.DEFAULT_SCROLL_SENSITIVITY * 10).toInt()
+            ) / 10.0f
+
+            currentP1OverlayFadeRatio = prefs.getInt(
+                MainActivity.KEY_P1_OVERLAY_FADE_RATIO,
+                (MainActivity.DEFAULT_P1_OVERLAY_FADE_RATIO * 100).toInt()
+            ) / 100.0f
+
+            currentBackgroundBlurRadius = prefs.getInt(
+                MainActivity.KEY_BACKGROUND_BLUR_RADIUS,
+                MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS.toInt()
+            ).toFloat() // 直接读取整数并转为 Float
+
+            currentNormalizedInitialBgScrollOffset = prefs.getInt(
+                MainActivity.KEY_BACKGROUND_INITIAL_OFFSET,
+                (MainActivity.DEFAULT_BACKGROUND_INITIAL_OFFSET * 10).toInt()
+            ) / 10.0f
+
+            currentP2BackgroundFadeInRatio = prefs.getInt(
+                MainActivity.KEY_P2_BACKGROUND_FADE_IN_RATIO,
+                (MainActivity.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO * 100).toInt()
+            ) / 100.0f
 
 
 

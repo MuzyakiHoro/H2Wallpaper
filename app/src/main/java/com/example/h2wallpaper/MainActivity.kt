@@ -56,6 +56,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnHeightDecrease: Button
     private lateinit var btnCustomizeForeground: Button
     private lateinit var imageLoadingProgressBar: ProgressBar
+    private lateinit var btnAdvancedSettings: Button // <---
 
     // 状态变量
     private var selectedImageUri: Uri? = null
@@ -178,6 +179,7 @@ class MainActivity : AppCompatActivity() {
         btnHeightDecrease = findViewById(R.id.btnHeightDecrease)
         btnCustomizeForeground = findViewById(R.id.btnCustomizeForeground)
         imageLoadingProgressBar = findViewById(R.id.imageLoadingProgressBar)
+        btnAdvancedSettings = findViewById(R.id.btnAdvancedSettings)
 
         loadAndApplyPreferencesAndInitState() // 这会加载或设置默认配置，并应用到预览
 
@@ -200,6 +202,10 @@ class MainActivity : AppCompatActivity() {
             } else {
                 Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
             }
+        }
+        btnAdvancedSettings.setOnClickListener {
+            val intent = Intent(this, SettingsActivity::class.java)
+            startActivity(intent)
         }
         btnHeightReset.setOnClickListener { updatePage1ImageHeightRatio(DEFAULT_HEIGHT_RATIO) }
         btnHeightIncrease.setOnClickListener { updatePage1ImageHeightRatio((page1ImageHeightRatio + HEIGHT_RATIO_STEP)) }
@@ -242,6 +248,17 @@ class MainActivity : AppCompatActivity() {
             animateViewVisibility(heightControlsContainer, targetAlpha, targetVisibility)
             animateViewVisibility(btnSetWallpaper, targetAlpha, targetVisibility)
             animateViewVisibility(btnSelectImage, targetAlpha, targetVisibility)
+
+            btnAdvancedSettings?.let { animateViewVisibility(it, targetAlpha, targetVisibility) } // 假设你已经声明并初始化了 btnAdvancedSettings
+
+            if (selectedImageUri != null) {
+                animateViewVisibility(btnCustomizeForeground, targetAlpha, targetVisibility)
+            } else {
+                btnCustomizeForeground.visibility = View.GONE
+                btnCustomizeForeground.alpha = 0f
+            }
+
+
             if (selectedImageUri != null) {
                 animateViewVisibility(btnCustomizeForeground, targetAlpha, targetVisibility)
             } else {
@@ -259,13 +276,16 @@ class MainActivity : AppCompatActivity() {
         currentP1FocusX = prefs.getFloat(KEY_P1_FOCUS_X, 0.5f)
         currentP1FocusY = prefs.getFloat(KEY_P1_FOCUS_Y, 0.5f)
 
-        // 加载新的配置参数，如果SharedPreferences中没有，则使用 companion object 中的默认值
-        currentScrollSensitivity = prefs.getFloat(KEY_SCROLL_SENSITIVITY, DEFAULT_SCROLL_SENSITIVITY)
-        currentP1OverlayFadeRatio = prefs.getFloat(KEY_P1_OVERLAY_FADE_RATIO, DEFAULT_P1_OVERLAY_FADE_RATIO)
-        currentBackgroundBlurRadius = prefs.getFloat(KEY_BACKGROUND_BLUR_RADIUS, DEFAULT_BACKGROUND_BLUR_RADIUS)
-        currentBackgroundInitialOffset = prefs.getFloat(KEY_BACKGROUND_INITIAL_OFFSET, DEFAULT_BACKGROUND_INITIAL_OFFSET) // 新增
-        // 新增：加载 P2 背景淡入比例
-        currentP2BackgroundFadeInRatio = prefs.getFloat(KEY_P2_BACKGROUND_FADE_IN_RATIO, DEFAULT_P2_BACKGROUND_FADE_IN_RATIO)
+
+
+
+        // --- 修改读取参数的部分 ---
+        currentScrollSensitivity = prefs.getInt(KEY_SCROLL_SENSITIVITY, (DEFAULT_SCROLL_SENSITIVITY * 10).toInt()) / 10.0f
+        currentP1OverlayFadeRatio = prefs.getInt(KEY_P1_OVERLAY_FADE_RATIO, (DEFAULT_P1_OVERLAY_FADE_RATIO * 100).toInt()) / 100.0f
+        currentBackgroundBlurRadius = prefs.getInt(KEY_BACKGROUND_BLUR_RADIUS, DEFAULT_BACKGROUND_BLUR_RADIUS.toInt()).toFloat() // 直接读取整数并转为Float
+        currentBackgroundInitialOffset = prefs.getInt(KEY_BACKGROUND_INITIAL_OFFSET, (DEFAULT_BACKGROUND_INITIAL_OFFSET * 10).toInt()) / 10.0f
+        currentP2BackgroundFadeInRatio = prefs.getInt(KEY_P2_BACKGROUND_FADE_IN_RATIO, (DEFAULT_P2_BACKGROUND_FADE_IN_RATIO * 100).toInt()) / 100.0f
+
 
 
         val internalImageUriString = prefs.getString(KEY_IMAGE_URI, null)
@@ -340,12 +360,13 @@ class MainActivity : AppCompatActivity() {
         editor.putFloat(KEY_P1_FOCUS_X, currentP1FocusX)
         editor.putFloat(KEY_P1_FOCUS_Y, currentP1FocusY)
 
-        // 保存新的配置参数
-        editor.putFloat(KEY_SCROLL_SENSITIVITY, currentScrollSensitivity)
-        editor.putFloat(KEY_P1_OVERLAY_FADE_RATIO, currentP1OverlayFadeRatio)
-        editor.putFloat(KEY_BACKGROUND_BLUR_RADIUS, currentBackgroundBlurRadius)
-        editor.putFloat(KEY_BACKGROUND_INITIAL_OFFSET, currentBackgroundInitialOffset) //
-        editor.putFloat(KEY_P2_BACKGROUND_FADE_IN_RATIO, currentP2BackgroundFadeInRatio) // ：保存 P2 背景淡入比例
+        // --- 修改以下参数的保存逻辑，使其保存为缩放后的整数 ---
+        editor.putInt(KEY_SCROLL_SENSITIVITY, (currentScrollSensitivity * 10).toInt())
+        editor.putInt(KEY_P1_OVERLAY_FADE_RATIO, (currentP1OverlayFadeRatio * 100).toInt())
+        editor.putInt(KEY_BACKGROUND_BLUR_RADIUS, currentBackgroundBlurRadius.toInt()) // 直接转为 Int
+        editor.putInt(KEY_BACKGROUND_INITIAL_OFFSET, (currentBackgroundInitialOffset * 10).toInt())
+        editor.putInt(KEY_P2_BACKGROUND_FADE_IN_RATIO, (currentP2BackgroundFadeInRatio * 100).toInt())
+
 
         // DEFAULT_PREVIEW_SNAP_DURATION_MS 是预览特性，通常不保存
 
@@ -634,5 +655,12 @@ class MainActivity : AppCompatActivity() {
             Log.e(TAG, "Error trying to set wallpaper", e)
             Toast.makeText(this, getString(R.string.wallpaper_set_failed_toast, e.message ?: "Unknown error"), Toast.LENGTH_LONG).show()
         }
+    }
+    override fun onResume() {
+        super.onResume()
+        // 当 Activity 重新回到前台时（例如从 SettingsActivity 返回时），
+        // 重新加载所有 SharedPreferences 中的设置，并更新 WallpaperPreviewView
+        Log.d(TAG, "MainActivity onResume: Reloading preferences and updating preview.")
+        loadAndApplyPreferencesAndInitState()
     }
 }
