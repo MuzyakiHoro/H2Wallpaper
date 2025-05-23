@@ -41,6 +41,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import kotlin.math.roundToInt // 确保导入 roundToInt
 
 class MainActivity : AppCompatActivity() {
 
@@ -56,26 +57,29 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnHeightDecrease: Button
     private lateinit var btnCustomizeForeground: Button
     private lateinit var imageLoadingProgressBar: ProgressBar
-    private lateinit var btnAdvancedSettings: Button // <---
+    private lateinit var btnAdvancedSettings: Button
 
     // 状态变量
     private var selectedImageUri: Uri? = null
     private var selectedBackgroundColor: Int = Color.LTGRAY
     private var originalBitmapForColorExtraction: Bitmap? = null
-    var page1ImageHeightRatio: Float = DEFAULT_HEIGHT_RATIO // 直接使用 companion object 的值初始化
+    var page1ImageHeightRatio: Float = DEFAULT_HEIGHT_RATIO
     private var currentP1FocusX: Float = 0.5f
     private var currentP1FocusY: Float = 0.5f
-    // 新增 P2 背景淡入比例的变量
 
-
-    // 新增/修改的配置参数变量
+    // 配置参数变量 (程序内部逻辑使用 Float，但与 SharedPreferences 交互时，部分参数会转为 Int)
     private var currentScrollSensitivity: Float = DEFAULT_SCROLL_SENSITIVITY
     private var currentP1OverlayFadeRatio: Float = DEFAULT_P1_OVERLAY_FADE_RATIO
     private var currentBackgroundBlurRadius: Float = DEFAULT_BACKGROUND_BLUR_RADIUS
-    private var currentBackgroundInitialOffset: Float = DEFAULT_BACKGROUND_INITIAL_OFFSET // 新变量
+    private var currentBackgroundInitialOffset: Float = DEFAULT_BACKGROUND_INITIAL_OFFSET
     private var currentP2BackgroundFadeInRatio: Float = DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
-    private var currentBlurDownscaleFactorInt: Int = DEFAULT_BLUR_DOWNSCALE_FACTOR_INT
-    private var currentBlurIterations: Int = DEFAULT_BLUR_ITERATIONS
+    private var currentBlurDownscaleFactorInt: Int = DEFAULT_BLUR_DOWNSCALE_FACTOR_INT // 这个本身就是Int
+    private var currentBlurIterations: Int = DEFAULT_BLUR_ITERATIONS // 这个本身就是Int
+    private var currentP1ShadowRadius: Float = DEFAULT_P1_SHADOW_RADIUS
+    private var currentP1ShadowDx: Float = DEFAULT_P1_SHADOW_DX
+    private var currentP1ShadowDy: Float = DEFAULT_P1_SHADOW_DY
+    private var currentP1ShadowColor: Int = DEFAULT_P1_SHADOW_COLOR // 颜色是 Int
+    private var currentP1ImageBottomFadeHeight: Float = DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT
 
 
     private val INTERNAL_IMAGE_FILENAME = "h2_wallpaper_internal_image.jpg"
@@ -104,7 +108,7 @@ class MainActivity : AppCompatActivity() {
                 currentP1FocusX = data?.getFloatExtra(FocusParams.RESULT_FOCUS_X, 0.5f) ?: 0.5f
                 currentP1FocusY = data?.getFloatExtra(FocusParams.RESULT_FOCUS_Y, 0.5f) ?: 0.5f
 
-                savePreferences()
+                savePreferences() // 保存更新后的焦点
                 wallpaperPreviewView.setNormalizedFocus(currentP1FocusX, currentP1FocusY)
 
                 Toast.makeText(
@@ -121,35 +125,44 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val PREFS_NAME = "H2WallpaperPrefs"
         const val KEY_IMAGE_URI = "internalImageUri"
-        const val KEY_BACKGROUND_COLOR = "backgroundColor"
-        const val KEY_IMAGE_HEIGHT_RATIO = "imageHeightRatio"
-        const val KEY_P1_FOCUS_X = "p1FocusX"
-        const val KEY_P1_FOCUS_Y = "p1FocusY"
+        const val KEY_BACKGROUND_COLOR = "backgroundColor" // Int
+        const val KEY_IMAGE_HEIGHT_RATIO = "imageHeightRatio" // Float
+        const val KEY_P1_FOCUS_X = "p1FocusX" // Float
+        const val KEY_P1_FOCUS_Y = "p1FocusY" // Float
 
-        // --- 新增/修改的参数定义 ---
-        const val KEY_SCROLL_SENSITIVITY = "scrollSensitivity"
-        const val KEY_P1_OVERLAY_FADE_RATIO = "p1OverlayFadeRatio"
-        const val KEY_BACKGROUND_BLUR_RADIUS = "backgroundBlurRadius"
-        const val KEY_BACKGROUND_INITIAL_OFFSET = "backgroundInitialOffset" // 新增的Key
-        const val KEY_P2_BACKGROUND_FADE_IN_RATIO = "p2BackgroundFadeInRatio"
-        const val KEY_BLUR_DOWNSCALE_FACTOR = "blurDownscaleFactor"
-        const val KEY_BLUR_ITERATIONS = "blurIterations"
+        // 参数定义 (KEYs)
+        const val KEY_SCROLL_SENSITIVITY = "scrollSensitivity"         // Stored as Int (scaled)
+        const val KEY_P1_OVERLAY_FADE_RATIO = "p1OverlayFadeRatio"     // Stored as Int (scaled)
+        const val KEY_BACKGROUND_BLUR_RADIUS = "backgroundBlurRadius"  // Stored as Int
+        const val KEY_BACKGROUND_INITIAL_OFFSET = "backgroundInitialOffset" // Stored as Int (scaled)
+        const val KEY_P2_BACKGROUND_FADE_IN_RATIO = "p2BackgroundFadeInRatio" // Stored as Int (scaled)
+        const val KEY_BLUR_DOWNSCALE_FACTOR = "blurDownscaleFactor"    // Stored as Int
+        const val KEY_BLUR_ITERATIONS = "blurIterations"               // Stored as Int
+        const val KEY_P1_SHADOW_RADIUS = "p1ShadowRadius"              // Stored as Int
+        const val KEY_P1_SHADOW_DX = "p1ShadowDx"                      // Stored as Int
+        const val KEY_P1_SHADOW_DY = "p1ShadowDy"                      // Stored as Int
+        const val KEY_P1_SHADOW_COLOR = "p1ShadowColor"                // Stored as Int
+        const val KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT = "p1ImageBottomFadeHeight" // Stored as Int
 
-
-        // 默认值 - 在这里修改以进行测试！
+        // 默认值 (Float 或 Int，根据内部逻辑使用类型)
         const val DEFAULT_HEIGHT_RATIO = 1f / 3f
-        const val DEFAULT_SCROLL_SENSITIVITY = 1f       // 滚动视差的灵敏度/范围 例如: 1.0f, 0.75f, 1.25f
-        const val DEFAULT_P1_OVERLAY_FADE_RATIO = 0.5f   //P1淡出比例 0.2f, 0.3f, 0.5f
-        const val DEFAULT_P2_BACKGROUND_FADE_IN_RATIO = 0.8f // P2淡入比例 例如: 0.2f, 0.3f, 0.5f
-        const val DEFAULT_BACKGROUND_BLUR_RADIUS = 50f    // 背景模糊半径例如: 0f (无模糊), 10f, 25f
-        const val DEFAULT_PREVIEW_SNAP_DURATION_MS: Long = 700L // 预览吸附动画时长例如: 300L, 500L, 700L
-        const val DEFAULT_BACKGROUND_INITIAL_OFFSET = 1f/5f // 默认从最左侧开始
-        const val DEFAULT_BLUR_DOWNSCALE_FACTOR_INT = 25 // SeekBarPreference 中的整数默认值
-        const val DEFAULT_BLUR_ITERATIONS = 1
+        const val DEFAULT_SCROLL_SENSITIVITY = 1.0f
+        const val DEFAULT_P1_OVERLAY_FADE_RATIO = 0.5f
+        const val DEFAULT_P2_BACKGROUND_FADE_IN_RATIO = 0.8f
+        const val DEFAULT_BACKGROUND_BLUR_RADIUS = 25f // 将其视为 Float，保存时转 Int
+        const val DEFAULT_PREVIEW_SNAP_DURATION_MS: Long = 700L
+        const val DEFAULT_BACKGROUND_INITIAL_OFFSET = 0.2f // 1f/5f
+        const val DEFAULT_BLUR_DOWNSCALE_FACTOR_INT = 25 // 直接是 Int (代表0.25f)
+        const val DEFAULT_BLUR_ITERATIONS = 1          // Int
+
+        const val DEFAULT_P1_SHADOW_RADIUS = 0f
+        const val DEFAULT_P1_SHADOW_DX = 0f
+        const val DEFAULT_P1_SHADOW_DY = 0f
+        val DEFAULT_P1_SHADOW_COLOR = Color.argb(100, 0, 0, 0) // Int
+        const val DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT = 80f // Float, 保存时转 Int
 
         private const val PERMISSION_REQUEST_READ_MEDIA_IMAGES = 1001
         private const val TAG = "H2WallpaperMain"
-
         private const val HEIGHT_RATIO_STEP = 0.05f
         private const val MIN_HEIGHT_RATIO = 0.15f
         private const val MAX_HEIGHT_RATIO = 0.60f
@@ -157,8 +170,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d(TAG, "onCreate: Activity starting")
-
+        // ... (Window setup code remains the same) ...
         WindowCompat.setDecorFitsSystemWindows(window, false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             window.statusBarColor = Color.TRANSPARENT
@@ -172,7 +184,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         setContentView(R.layout.activity_main)
-
+        // ... (findViewById calls remain the same) ...
         btnSelectImage = findViewById(R.id.btnSelectImage)
         colorPaletteContainer = findViewById(R.id.colorPaletteContainer)
         btnSetWallpaper = findViewById(R.id.btnSetWallpaper)
@@ -186,8 +198,10 @@ class MainActivity : AppCompatActivity() {
         imageLoadingProgressBar = findViewById(R.id.imageLoadingProgressBar)
         btnAdvancedSettings = findViewById(R.id.btnAdvancedSettings)
 
-        loadAndApplyPreferencesAndInitState() // 这会加载或设置默认配置，并应用到预览
 
+        loadAndApplyPreferencesAndInitState()
+
+        // ... (WindowInsetsListener and button click listeners remain largely the same) ...
         val rootLayoutForInsets: View = findViewById(android.R.id.content)
         ViewCompat.setOnApplyWindowInsetsListener(rootLayoutForInsets) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -202,7 +216,7 @@ class MainActivity : AppCompatActivity() {
 
         btnSetWallpaper.setOnClickListener {
             if (selectedImageUri != null) {
-                savePreferences() // 确保在应用前保存当前所有设置
+                savePreferences()
                 promptToSetWallpaper()
             } else {
                 Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
@@ -254,15 +268,7 @@ class MainActivity : AppCompatActivity() {
             animateViewVisibility(btnSetWallpaper, targetAlpha, targetVisibility)
             animateViewVisibility(btnSelectImage, targetAlpha, targetVisibility)
 
-            btnAdvancedSettings?.let { animateViewVisibility(it, targetAlpha, targetVisibility) } // 假设你已经声明并初始化了 btnAdvancedSettings
-
-            if (selectedImageUri != null) {
-                animateViewVisibility(btnCustomizeForeground, targetAlpha, targetVisibility)
-            } else {
-                btnCustomizeForeground.visibility = View.GONE
-                btnCustomizeForeground.alpha = 0f
-            }
-
+            btnAdvancedSettings?.let { animateViewVisibility(it, targetAlpha, targetVisibility) }
 
             if (selectedImageUri != null) {
                 animateViewVisibility(btnCustomizeForeground, targetAlpha, targetVisibility)
@@ -281,51 +287,46 @@ class MainActivity : AppCompatActivity() {
         currentP1FocusX = prefs.getFloat(KEY_P1_FOCUS_X, 0.5f)
         currentP1FocusY = prefs.getFloat(KEY_P1_FOCUS_Y, 0.5f)
 
-
-
-
-        // --- 加载参数 ---
+        // 加载由 SeekBarPreference (Int) 控制的参数，并转换为 Float 成员变量
         currentScrollSensitivity = prefs.getInt(KEY_SCROLL_SENSITIVITY, (DEFAULT_SCROLL_SENSITIVITY * 10).toInt()) / 10.0f
         currentP1OverlayFadeRatio = prefs.getInt(KEY_P1_OVERLAY_FADE_RATIO, (DEFAULT_P1_OVERLAY_FADE_RATIO * 100).toInt()) / 100.0f
-        currentBackgroundBlurRadius = prefs.getInt(KEY_BACKGROUND_BLUR_RADIUS, DEFAULT_BACKGROUND_BLUR_RADIUS.toInt()).toFloat() // 直接读取整数并转为Float
+        currentBackgroundBlurRadius = prefs.getInt(KEY_BACKGROUND_BLUR_RADIUS, DEFAULT_BACKGROUND_BLUR_RADIUS.roundToInt()).toFloat()
         currentBackgroundInitialOffset = prefs.getInt(KEY_BACKGROUND_INITIAL_OFFSET, (DEFAULT_BACKGROUND_INITIAL_OFFSET * 10).toInt()) / 10.0f
         currentP2BackgroundFadeInRatio = prefs.getInt(KEY_P2_BACKGROUND_FADE_IN_RATIO, (DEFAULT_P2_BACKGROUND_FADE_IN_RATIO * 100).toInt()) / 100.0f
         currentBlurDownscaleFactorInt = prefs.getInt(KEY_BLUR_DOWNSCALE_FACTOR, DEFAULT_BLUR_DOWNSCALE_FACTOR_INT)
         currentBlurIterations = prefs.getInt(KEY_BLUR_ITERATIONS, DEFAULT_BLUR_ITERATIONS)
 
+        currentP1ShadowRadius = prefs.getInt(KEY_P1_SHADOW_RADIUS, DEFAULT_P1_SHADOW_RADIUS.roundToInt()).toFloat()
+        currentP1ShadowDx = prefs.getInt(KEY_P1_SHADOW_DX, DEFAULT_P1_SHADOW_DX.roundToInt()).toFloat()
+        currentP1ShadowDy = prefs.getInt(KEY_P1_SHADOW_DY, DEFAULT_P1_SHADOW_DY.roundToInt()).toFloat()
+        currentP1ShadowColor = prefs.getInt(KEY_P1_SHADOW_COLOR, DEFAULT_P1_SHADOW_COLOR) // Color is Int
+        currentP1ImageBottomFadeHeight = prefs.getInt(KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT, DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT.roundToInt()).toFloat()
+
 
         val internalImageUriString = prefs.getString(KEY_IMAGE_URI, null)
+        Log.i(TAG, "Loaded preferences: InternalURI=$internalImageUriString, ... P1ShadowRadius=$currentP1ShadowRadius, ...")
 
-        Log.i(TAG, "Loaded preferences: InternalURI=$internalImageUriString, Color=$selectedBackgroundColor, Ratio=$page1ImageHeightRatio, Sensitivity=$currentScrollSensitivity, Focus=($currentP1FocusX, $currentP1FocusY), P1FadeRatio=$currentP1OverlayFadeRatio, BlurRadius=$currentBackgroundBlurRadius")
 
-        // 将所有相关的配置值一次性应用到 WallpaperPreviewView
-        // 注意: WallpaperPreviewView 需要有一个 setConfigValues 方法来接收这些
         wallpaperPreviewView.setConfigValues(
             scrollSensitivity = currentScrollSensitivity,
             p1OverlayFadeRatio = currentP1OverlayFadeRatio,
             backgroundBlurRadius = currentBackgroundBlurRadius,
-            snapAnimationDurationMs = DEFAULT_PREVIEW_SNAP_DURATION_MS, // 这个直接用MainActivity的默认值
-            normalizedInitialBgScrollOffset = currentBackgroundInitialOffset, // 新增传递
-            p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio,// 新增：传递 P2 淡入比例给预览视图
-            blurDownscaleFactor = currentBlurDownscaleFactorInt / 100.0f,
-            blurIterations = currentBlurIterations
+            snapAnimationDurationMs = DEFAULT_PREVIEW_SNAP_DURATION_MS,
+            normalizedInitialBgScrollOffset = currentBackgroundInitialOffset,
+            p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio,
+            blurDownscaleFactor = currentBlurDownscaleFactorInt / 100.0f, // 从Int转换为Float
+            blurIterations = currentBlurIterations,
+            p1ShadowRadius = currentP1ShadowRadius,
+            p1ShadowDx = currentP1ShadowDx,
+            p1ShadowDy = currentP1ShadowDy,
+            p1ShadowColor = currentP1ShadowColor,
+            p1ImageBottomFadeHeight = currentP1ImageBottomFadeHeight
         )
-        // 单独设置那些不由 setConfigValues 控制的，或者在 setConfigValues 之后需要特定更新的
-        wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio) // 假设高度比例仍单独设置
-        wallpaperPreviewView.setNormalizedFocus(currentP1FocusX, currentP1FocusY) // 焦点单独设置
 
-        // selectedBackgroundColor 是 WallpaperPreviewView 的内部状态，
-        // 它通过 WallpaperConfig 传递给 SharedWallpaperRenderer。
-        // 如果 WallpaperPreviewView 有 setSelectedBackgroundColor 方法，则调用它。
-        // 目前的 WallpaperPreviewView.kt (原始文件) 是直接使用成员变量 selectedBackgroundColor
-        // 并在 onDraw 中传递。MainActivity 中修改 selectedBackgroundColor 后，
-        // 需要调用 wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
-        // 然后 invalidate。 如果 setConfigValues 也能处理这个就更好了。
-        // 为简单起见，我们假设 WallpaperPreviewView 会在其内部使用 MainActivity 修改的 selectedBackgroundColor
-        // 或者 MainActivity 在修改颜色后调用 preview.invalidate()。
-        // 最好的做法是 WallpaperPreviewView 有一个 setSelectedBackgroundColor 方法。
-        // 假设 wallpaperPreviewView.selectedBackgroundColor = selectedBackgroundColor (如果它是public)
-        // wallpaperPreviewView.invalidate() // 确保颜色变化后重绘
+        wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio)
+        wallpaperPreviewView.setNormalizedFocus(currentP1FocusX, currentP1FocusY)
+        wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor) // 确保调用这个
+
 
         if (internalImageUriString != null) {
             val internalUri = Uri.parse(internalImageUriString)
@@ -344,7 +345,6 @@ class MainActivity : AppCompatActivity() {
 
             if (fileExists) {
                 selectedImageUri = internalUri
-                // setImageUri 会触发预览的位图加载，加载完成后会使用上面通过 setConfigValues 设置的参数
                 wallpaperPreviewView.setImageUri(selectedImageUri)
                 btnCustomizeForeground.isEnabled = true
                 extractColorsFromBitmapUri(selectedImageUri!!, false)
@@ -353,7 +353,7 @@ class MainActivity : AppCompatActivity() {
             }
         } else {
             selectedImageUri = null
-            wallpaperPreviewView.setImageUri(null) // 清除预览
+            wallpaperPreviewView.setImageUri(null)
             btnCustomizeForeground.isEnabled = false
             setDefaultColorPaletteAndUpdatePreview()
         }
@@ -364,26 +364,33 @@ class MainActivity : AppCompatActivity() {
         val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit()
         editor.putInt(KEY_BACKGROUND_COLOR, selectedBackgroundColor)
-        editor.putFloat(KEY_IMAGE_HEIGHT_RATIO, page1ImageHeightRatio)
-        editor.putFloat(KEY_P1_FOCUS_X, currentP1FocusX)
-        editor.putFloat(KEY_P1_FOCUS_Y, currentP1FocusY)
+        editor.putFloat(KEY_IMAGE_HEIGHT_RATIO, page1ImageHeightRatio) // 保持 Float
+        editor.putFloat(KEY_P1_FOCUS_X, currentP1FocusX)             // 保持 Float
+        editor.putFloat(KEY_P1_FOCUS_Y, currentP1FocusY)             // 保持 Float
 
-        // --- 修改以下参数的保存逻辑，使其保存为缩放后的整数 ---
+        // 对于由 SeekBarPreference 控制的参数，统一存为 Int
         editor.putInt(KEY_SCROLL_SENSITIVITY, (currentScrollSensitivity * 10).toInt())
         editor.putInt(KEY_P1_OVERLAY_FADE_RATIO, (currentP1OverlayFadeRatio * 100).toInt())
-        editor.putInt(KEY_BACKGROUND_BLUR_RADIUS, currentBackgroundBlurRadius.toInt()) // 直接转为 Int
+        editor.putInt(KEY_BACKGROUND_BLUR_RADIUS, currentBackgroundBlurRadius.roundToInt())
         editor.putInt(KEY_BACKGROUND_INITIAL_OFFSET, (currentBackgroundInitialOffset * 10).toInt())
         editor.putInt(KEY_P2_BACKGROUND_FADE_IN_RATIO, (currentP2BackgroundFadeInRatio * 100).toInt())
-        editor.putInt(KEY_BLUR_DOWNSCALE_FACTOR, currentBlurDownscaleFactorInt)
-        editor.putInt(KEY_BLUR_ITERATIONS, currentBlurIterations)
+        editor.putInt(KEY_BLUR_DOWNSCALE_FACTOR, currentBlurDownscaleFactorInt) // 本身就是Int
+        editor.putInt(KEY_BLUR_ITERATIONS, currentBlurIterations)         // 本身就是Int
 
-        // DEFAULT_PREVIEW_SNAP_DURATION_MS 是预览特性，通常不保存
+        // 新增的 P1 特效参数也存为 Int
+        editor.putInt(KEY_P1_SHADOW_RADIUS, currentP1ShadowRadius.roundToInt())
+        editor.putInt(KEY_P1_SHADOW_DX, currentP1ShadowDx.roundToInt())
+        editor.putInt(KEY_P1_SHADOW_DY, currentP1ShadowDy.roundToInt())
+        editor.putInt(KEY_P1_SHADOW_COLOR, currentP1ShadowColor) // Color is Int
+        editor.putInt(KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT, currentP1ImageBottomFadeHeight.roundToInt())
+
 
         selectedImageUri?.let { editor.putString(KEY_IMAGE_URI, it.toString()) } ?: editor.remove(KEY_IMAGE_URI)
         editor.apply()
-        Log.d(TAG, "Preferences saved: Uri=${selectedImageUri?.toString()}, Color=$selectedBackgroundColor, HeightRatio=$page1ImageHeightRatio, Focus=($currentP1FocusX, $currentP1FocusY), Sensitivity=$currentScrollSensitivity, P1FadeRatio=$currentP1OverlayFadeRatio, BlurRadius=$currentBackgroundBlurRadius")
+        Log.d(TAG, "Preferences saved: ... P1ShadowRadius (as Int)=${currentP1ShadowRadius.roundToInt()}, P1BottomFadeHeight (as Int)=${currentP1ImageBottomFadeHeight.roundToInt()} ...")
     }
 
+    // ... (copyImageToInternalStorage, saveImageToInternalAppStorage, deleteInternalImage, animateViewVisibility, updatePage1ImageHeightRatio, permission methods, openGallery, handleFailedImageAccess, color extraction, promptToSetWallpaper methods remain the same) ...
     private fun copyImageToInternalStorage(sourceUri: Uri) {
         imageLoadingProgressBar.visibility = View.VISIBLE
         btnSelectImage.isEnabled = false
@@ -403,9 +410,8 @@ class MainActivity : AppCompatActivity() {
                 currentP1FocusY = 0.5f
                 savePreferences() // 保存新的URI和重置后的焦点及其他当前设置
 
-                // 确保预览使用最新的配置，包括焦点和刚刚加载的图片
                 wallpaperPreviewView.setNormalizedFocus(currentP1FocusX, currentP1FocusY)
-                wallpaperPreviewView.setImageUri(selectedImageUri, true) // 使用内部URI设置预览, forceReload
+                wallpaperPreviewView.setImageUri(selectedImageUri, true)
 
                 btnCustomizeForeground.isEnabled = true
                 extractColorsFromBitmapUri(selectedImageUri!!, true)
@@ -501,8 +507,8 @@ class MainActivity : AppCompatActivity() {
 
         page1ImageHeightRatio = clampedRatio
         Log.d(TAG, "updatePage1ImageHeightRatio: New ratio $page1ImageHeightRatio")
-        wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio) // 更新预览
-        savePreferences() // 保存新的高度比例和其他当前设置
+        wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio)
+        savePreferences()
     }
 
     private fun checkAndRequestReadMediaImagesPermission() {
@@ -556,7 +562,7 @@ class MainActivity : AppCompatActivity() {
         try {
             val inputStream = contentResolver.openInputStream(internalUri)
             val options = BitmapFactory.Options()
-            options.inSampleSize = 2 // 提取颜色时使用采样，减少内存
+            options.inSampleSize = 2
             originalBitmapForColorExtraction?.recycle()
             originalBitmapForColorExtraction = BitmapFactory.decodeStream(inputStream, null, options)
             inputStream?.close()
@@ -593,16 +599,13 @@ class MainActivity : AppCompatActivity() {
                     selectedBackgroundColor = colors[0]
                 }
             } else {
-                setDefaultColorPalette() // 使用默认调色板
+                setDefaultColorPalette()
             }
 
-            // 如果颜色改变，或者这是一张新图片，则更新预览并保存
             if (oldSelectedColor != selectedBackgroundColor || isNewImage) {
-                // 假设 WallpaperPreviewView 有一个方法来设置背景色，或者它会通过 config 更新
-                wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor) // 你需要在 WallpaperPreviewView 中实现这个
+                wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
                 savePreferences()
             } else if (selectedBackgroundColor != Color.LTGRAY && colors.contains(selectedBackgroundColor)) {
-                // 确保即使颜色没变，预览也使用当前选中的颜色
                 wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
             }
         }
@@ -610,7 +613,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setDefaultColorPaletteAndUpdatePreview() {
         setDefaultColorPalette()
-        wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor) // 你需要在 WallpaperPreviewView 中实现这个
+        wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
     }
 
     private fun setDefaultColorPalette() {
@@ -634,8 +637,8 @@ class MainActivity : AppCompatActivity() {
             colorView.setBackgroundColor(color)
             colorView.setOnClickListener {
                 selectedBackgroundColor = color
-                wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor) // 更新预览
-                savePreferences() // 保存
+                wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
+                savePreferences()
             }
             colorPaletteContainer.addView(colorView)
         }
@@ -651,6 +654,7 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         originalBitmapForColorExtraction?.recycle()
         originalBitmapForColorExtraction = null
+        Log.d(TAG, "MainActivity onDestroy")
     }
 
     private fun promptToSetWallpaper() {
@@ -665,10 +669,9 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, getString(R.string.wallpaper_set_failed_toast, e.message ?: "Unknown error"), Toast.LENGTH_LONG).show()
         }
     }
+
     override fun onResume() {
         super.onResume()
-        // 当 Activity 重新回到前台时（例如从 SettingsActivity 返回时），
-        // 重新加载所有 SharedPreferences 中的设置，并更新 WallpaperPreviewView
         Log.d(TAG, "MainActivity onResume: Reloading preferences and updating preview.")
         loadAndApplyPreferencesAndInitState()
     }

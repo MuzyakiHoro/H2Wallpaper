@@ -49,6 +49,11 @@ class H2WallpaperService : WallpaperService() {
         private var currentP2BackgroundFadeInRatio: Float = MainActivity.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
         private var currentBlurDownscaleFactor: Float = MainActivity.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT / 100.0f // 存储为浮点因子
         private var currentBlurIterations: Int = MainActivity.DEFAULT_BLUR_ITERATIONS
+        private var currentP1ShadowRadius: Float = MainActivity.DEFAULT_P1_SHADOW_RADIUS
+        private var currentP1ShadowDx: Float = MainActivity.DEFAULT_P1_SHADOW_DX
+        private var currentP1ShadowDy: Float = MainActivity.DEFAULT_P1_SHADOW_DY
+        private var currentP1ShadowColor: Int = MainActivity.DEFAULT_P1_SHADOW_COLOR
+        private var currentP1ImageBottomFadeHeight: Float = MainActivity.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT
 
         // --- End Configuration members ---
 
@@ -166,6 +171,15 @@ class H2WallpaperService : WallpaperService() {
                         needsFullReload = true
                     }
                 }
+                MainActivity.KEY_P1_SHADOW_RADIUS,
+                MainActivity.KEY_P1_SHADOW_DX,
+                MainActivity.KEY_P1_SHADOW_DY,
+                MainActivity.KEY_P1_SHADOW_COLOR,
+                MainActivity.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> {
+                    // 这些参数的变化通常只需要重绘
+                    Log.i(DEBUG_TAG, "Preference changed: P1 Effect (Shadow/BottomFade). Triggering redraw.")
+                    needsRedrawOnly = true
+                }
             }
 
             if (needsFullReload) {
@@ -185,12 +199,15 @@ class H2WallpaperService : WallpaperService() {
 
         private fun loadPreferencesFromStorage() {
             imageUriString = prefs.getString(MainActivity.KEY_IMAGE_URI, null)
-            page1BackgroundColor = prefs.getInt(MainActivity.KEY_BACKGROUND_COLOR, Color.LTGRAY)
-            page1ImageHeightRatio = prefs.getFloat(MainActivity.KEY_IMAGE_HEIGHT_RATIO, MainActivity.DEFAULT_HEIGHT_RATIO) // 这个参数类型不变
-            currentP1FocusX = prefs.getFloat(MainActivity.KEY_P1_FOCUS_X, 0.5f) // 这个参数类型不变
-            currentP1FocusY = prefs.getFloat(MainActivity.KEY_P1_FOCUS_Y, 0.5f) // 这个参数类型不变
+            page1BackgroundColor = prefs.getInt(MainActivity.KEY_BACKGROUND_COLOR, Color.LTGRAY) // 这个是 Int, 通常没问题
 
-            // --- 修改以下参数的读取逻辑，先读取缩放后的整数，再转换为浮点数 ---
+            // 这些参数在 MainActivity 中是以 Float 形式存在，但在 SharedPreferences 中我们统一存为 Int (或 scaled Int)
+            // 因此，我们先用 getInt 读取，然后转换为 Float
+
+            page1ImageHeightRatio = prefs.getFloat(MainActivity.KEY_IMAGE_HEIGHT_RATIO, MainActivity.DEFAULT_HEIGHT_RATIO) // 这个之前就是Float，保持
+            currentP1FocusX = prefs.getFloat(MainActivity.KEY_P1_FOCUS_X, 0.5f) // 这个之前就是Float，保持
+            currentP1FocusY = prefs.getFloat(MainActivity.KEY_P1_FOCUS_Y, 0.5f) // 这个之前就是Float，保持
+
             currentScrollSensitivity = prefs.getInt(
                 MainActivity.KEY_SCROLL_SENSITIVITY,
                 (MainActivity.DEFAULT_SCROLL_SENSITIVITY * 10).toInt()
@@ -201,10 +218,10 @@ class H2WallpaperService : WallpaperService() {
                 (MainActivity.DEFAULT_P1_OVERLAY_FADE_RATIO * 100).toInt()
             ) / 100.0f
 
-            currentBackgroundBlurRadius = prefs.getInt(
+            currentBackgroundBlurRadius = prefs.getInt( // 读取 Int
                 MainActivity.KEY_BACKGROUND_BLUR_RADIUS,
-                MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS.toInt()
-            ).toFloat() // 直接读取整数并转为 Float
+                MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS.roundToInt() // 默认值也用 Int 形式
+            ).toFloat() // 转换为 Float
 
             currentNormalizedInitialBgScrollOffset = prefs.getInt(
                 MainActivity.KEY_BACKGROUND_INITIAL_OFFSET,
@@ -215,13 +232,47 @@ class H2WallpaperService : WallpaperService() {
                 MainActivity.KEY_P2_BACKGROUND_FADE_IN_RATIO,
                 (MainActivity.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO * 100).toInt()
             ) / 100.0f
+
+            // 模糊相关的额外参数 (假设它们在 SharedPreferences 中也是 Int)
+            // 确保 MainActivity.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT 和 DEFAULT_BLUR_ITERATIONS 存在
+            // currentBlurDownscaleFactor = prefs.getInt(MainActivity.KEY_BLUR_DOWNSCALE_FACTOR, MainActivity.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT) / 100.0f
+            // currentBlurIterations = prefs.getInt(MainActivity.KEY_BLUR_ITERATIONS, MainActivity.DEFAULT_BLUR_ITERATIONS)
+            // 你在 H2WallpaperService 中可能没有直接使用这两个模糊参数，它们主要用于 loadAndProcessInitialBitmaps
+            // 但如果 H2WallpaperEngine 也需要它们，就需要像上面这样加载。
+            // 如果它们只在 MainActivity 中用于决定传递给 loadAndProcessInitialBitmaps 的值，
+            // 那么 Service 在调用 loadAndProcessInitialBitmaps 时需要直接从 SharedPreferences 读取或通过某种方式获取这些值。
+            // 为了与 MainActivity 的 loadAndApplyPreferencesAndInitState 保持一致，我们也读取它们：
             val blurDownscaleFactorInt = prefs.getInt(MainActivity.KEY_BLUR_DOWNSCALE_FACTOR, MainActivity.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT)
-            currentBlurDownscaleFactor = blurDownscaleFactorInt / 100.0f // 转换为浮点数存储
-            currentBlurIterations = prefs.getInt(MainActivity.KEY_BLUR_ITERATIONS, MainActivity.DEFAULT_BLUR_ITERATIONS)
+            // this.currentBlurDownscaleFactor = blurDownscaleFactorInt / 100.0f; // 如果 H2WallpaperEngine 有这个成员变量
+            val blurIterations = prefs.getInt(MainActivity.KEY_BLUR_ITERATIONS, MainActivity.DEFAULT_BLUR_ITERATIONS)
+            // this.currentBlurIterations = blurIterations; // 如果 H2WallpaperEngine 有这个成员变量
 
 
+            // --- 为新增的 P1 特效参数，也使用 getInt 读取，然后转换为 Float ---
+            currentP1ShadowRadius = prefs.getInt(
+                MainActivity.KEY_P1_SHADOW_RADIUS,
+                MainActivity.DEFAULT_P1_SHADOW_RADIUS.roundToInt()
+            ).toFloat()
 
-            Log.i(DEBUG_TAG, "Preferences loaded/reloaded (Service): URI=$imageUriString, Color=$page1BackgroundColor, Ratio=$page1ImageHeightRatio, Sensitivity=$currentScrollSensitivity, Focus=($currentP1FocusX, $currentP1FocusY), P1FadeRatio=$currentP1OverlayFadeRatio, BlurRadius=$currentBackgroundBlurRadius")
+            currentP1ShadowDx = prefs.getInt(
+                MainActivity.KEY_P1_SHADOW_DX,
+                MainActivity.DEFAULT_P1_SHADOW_DX.roundToInt()
+            ).toFloat()
+
+            currentP1ShadowDy = prefs.getInt(
+                MainActivity.KEY_P1_SHADOW_DY,
+                MainActivity.DEFAULT_P1_SHADOW_DY.roundToInt()
+            ).toFloat()
+
+            currentP1ShadowColor = prefs.getInt(MainActivity.KEY_P1_SHADOW_COLOR, MainActivity.DEFAULT_P1_SHADOW_COLOR) // Color 是 Int
+
+            currentP1ImageBottomFadeHeight = prefs.getInt(
+                MainActivity.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT,
+                MainActivity.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT.roundToInt()
+            ).toFloat()
+
+            // 更新 Logcat 打印以包含新参数
+            Log.i(DEBUG_TAG, "Preferences loaded/reloaded (Service): URI=$imageUriString, Color=$page1BackgroundColor, Ratio=$page1ImageHeightRatio, Sensitivity=$currentScrollSensitivity, Focus=($currentP1FocusX, $currentP1FocusY), P1FadeRatio=$currentP1OverlayFadeRatio, BlurRadius=$currentBackgroundBlurRadius, P1ShadowRadius=$currentP1ShadowRadius, P1BottomFadeHeight=$currentP1ImageBottomFadeHeight, BlurDownscaleInt=$blurDownscaleFactorInt, BlurIter=$blurIterations")
         }
 
         private fun loadFullBitmapsAsyncIfNeeded() {
@@ -542,7 +593,12 @@ class H2WallpaperService : WallpaperService() {
                             p1OverlayFadeTransitionRatio = currentP1OverlayFadeRatio, // Use member variable
                             scrollSensitivityFactor = this.currentScrollSensitivity,    // Use member variable
                             normalizedInitialBgScrollOffset = this.currentNormalizedInitialBgScrollOffset, // Use member variable
-                            p2BackgroundFadeInRatio = this.currentP2BackgroundFadeInRatio //传递 P2 淡入比例
+                            p2BackgroundFadeInRatio = this.currentP2BackgroundFadeInRatio, //传递 P2 淡入比例
+                            p1ShadowRadius = this.currentP1ShadowRadius,
+                            p1ShadowDx = this.currentP1ShadowDx,
+                            p1ShadowDy = this.currentP1ShadowDy,
+                            p1ShadowColor = this.currentP1ShadowColor,
+                            p1ImageBottomFadeHeight = this.currentP1ImageBottomFadeHeight
                         )
                         SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps)
                     } else {

@@ -7,6 +7,7 @@ import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceGroup
 import androidx.preference.SeekBarPreference
 import java.util.Locale
+import kotlin.math.roundToInt
 
 class WallpaperSettingsFragment : PreferenceFragmentCompat(), SharedPreferences.OnSharedPreferenceChangeListener {
 
@@ -65,7 +66,6 @@ class WallpaperSettingsFragment : PreferenceFragmentCompat(), SharedPreferences.
     }
 
     private fun updatePreferenceSummary(preference: Preference) {
-        // 确保 sharedPreferences 已初始化
         if (!::sharedPreferences.isInitialized) {
             sharedPreferences = preferenceManager.sharedPreferences!!
         }
@@ -76,7 +76,6 @@ class WallpaperSettingsFragment : PreferenceFragmentCompat(), SharedPreferences.
                     preference.key,
                     (MainActivity.DEFAULT_SCROLL_SENSITIVITY * 10).toInt()
                 )
-                // 使用 Locale.US 来确保小数点是 '.'
                 preference.summary = String.format(Locale.US, "当前: %.1f (范围 0.1 - 2.0)", scaledValue / 10.0f)
             }
             MainActivity.KEY_P1_OVERLAY_FADE_RATIO -> {
@@ -101,44 +100,66 @@ class WallpaperSettingsFragment : PreferenceFragmentCompat(), SharedPreferences.
                 preference.summary = String.format(Locale.US, "当前: %.1f (范围 0.0 - 1.0)", scaledValue / 10.0f)
             }
             MainActivity.KEY_BACKGROUND_BLUR_RADIUS -> {
-                val value = sharedPreferences.getInt(
+                // 假设 blur radius 在 SharedPreferences 中存的是 Int (由 SeekBarPreference 直接写入)
+                val valueInt = sharedPreferences.getInt(
                     preference.key,
-                    MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS.toInt()
+                    MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS.roundToInt() // 默认值对应 Int
                 )
-                preference.summary = "当前: $value (范围 0 - 25)"
+                preference.summary = "当前: $valueInt px (范围 0 - 50)" // 直接显示整数像素
             }
-            MainActivity.KEY_BLUR_DOWNSCALE_FACTOR -> { // 新增
-                val intValue = sharedPreferences.getInt(
+            MainActivity.KEY_BLUR_DOWNSCALE_FACTOR -> {
+                val valueInt = sharedPreferences.getInt( // 直接是百分比整数
                     preference.key,
                     MainActivity.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT
                 )
-                // 将整数值转换为实际的浮点因子进行显示
-                val factor = intValue / 100.0f
-                preference.summary = String.format(Locale.US, "当前因子: %.2f (值: %d, 范围 0.05 - 1.00)", factor, intValue)
+                preference.summary = String.format(Locale.US, "当前: %.2f (值 %d / 100)", valueInt / 100.0f, valueInt)
             }
-            MainActivity.KEY_BLUR_ITERATIONS -> { // 新增
-                val value = sharedPreferences.getInt(
+            MainActivity.KEY_BLUR_ITERATIONS -> {
+                val valueInt = sharedPreferences.getInt(
                     preference.key,
                     MainActivity.DEFAULT_BLUR_ITERATIONS
                 )
-                preference.summary = "当前: $value 次 (范围 1 - 3)"
+                preference.summary = "当前: $valueInt 次"
             }
 
-            // 你可以为其他类型的 Preference 添加 summary 更新逻辑
-            // 例如，ListPreference:
-            // is ListPreference -> {
-            //     preference.summary = preference.entry
-            // }
-            // EditTextPreference:
-            // is EditTextPreference -> {
-            //     preference.summary = preference.text
-            // }
+            // --- 新增 P1 特效参数的 summary 更新 ---
+            // 假设这些参数在 SharedPreferences 中都由 SeekBarPreference 存为 Int (代表像素值)
+            MainActivity.KEY_P1_SHADOW_RADIUS -> {
+                val valueInt = sharedPreferences.getInt(
+                    preference.key,
+                    MainActivity.DEFAULT_P1_SHADOW_RADIUS.roundToInt()
+                )
+                preference.summary = String.format(Locale.US, "当前: %d px", valueInt)
+            }
+            MainActivity.KEY_P1_SHADOW_DX -> {
+                val valueInt = sharedPreferences.getInt(
+                    preference.key,
+                    MainActivity.DEFAULT_P1_SHADOW_DX.roundToInt()
+                )
+                preference.summary = String.format(Locale.US, "当前: %d px", valueInt)
+            }
+            MainActivity.KEY_P1_SHADOW_DY -> {
+                val valueInt = sharedPreferences.getInt(
+                    preference.key,
+                    MainActivity.DEFAULT_P1_SHADOW_DY.roundToInt()
+                )
+                preference.summary = String.format(Locale.US, "当前: %d px", valueInt)
+            }
+            MainActivity.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> {
+                val valueInt = sharedPreferences.getInt( // 读取 Int
+                    preference.key,
+                    MainActivity.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT.roundToInt() // 默认值也用Int形式
+                )
+                preference.summary = String.format(Locale.US, "当前: %d px", valueInt)
+            }
+            // 注意：KEY_P1_SHADOW_COLOR 是 Int 类型，通常不由 SeekBarPreference 直接控制，
+            // 如果将来添加颜色选择，其 summary 更新方式会不同。目前我们没在UI上提供它。
+
             else -> {
-                // 对于没有特殊处理的 Preference，可以保留其在 XML 中定义的静态 summary
-                // 或者如果 XML summary 使用了占位符（如 %s），可以在这里设置
-                // 例如：if (preference.summaryProvider == null && preference is EditTextPreference) {
-                //    preference.summary = preference.text
-                // }
+                // 对于没有特殊处理的 Preference，可以尝试获取其持久化的值并显示
+                // 但通常 SeekBarPreference 需要特定格式的 summary
+                // 如果是 EditTextPreference 或 ListPreference，有标准方法获取其值
+                // preference.summary = sharedPreferences.getString(preference.key, "") // 示例
             }
         }
     }

@@ -16,6 +16,7 @@ object SharedWallpaperRenderer {
     private const val TAG = "SharedRenderer"
     private const val DEBUG_TAG_RENDERER = "SharedRenderer_Debug"
 
+
     const val DEFAULT_BACKGROUND_BLUR_RADIUS = 25f
 
     data class WallpaperBitmaps(
@@ -51,7 +52,13 @@ object SharedWallpaperRenderer {
         val p1OverlayFadeTransitionRatio: Float = 0.5f,
         val scrollSensitivityFactor: Float = 1.0f,
         val normalizedInitialBgScrollOffset: Float = 0.0f, // <-- 新增的参数
-        val p2BackgroundFadeInRatio: Float
+        val p2BackgroundFadeInRatio: Float,
+        val p1ShadowRadius: Float,
+        val p1ShadowDx: Float,
+        val p1ShadowDy: Float,
+        val p1ShadowColor: Int,
+        val p1ImageBottomFadeHeight: Float // 对应 P1_IMAGE_BOTTOM_FADE_HEIGHT_PX
+
 
 
     )
@@ -71,7 +78,12 @@ object SharedWallpaperRenderer {
 
     // 值越小，"糊"的程度越高，但也可能越失真
     private const val MIN_DOWNSCALED_DIMENSION = 16 // 缩小后图像的最小宽度/高度，防止过小
-
+/*    private const val P1_SHADOW_RADIUS = 0f // 阴影模糊半径
+    private const val P1_SHADOW_DX = 0f    // X轴偏移，0f 表示阴影在图片正下方
+    private const val P1_SHADOW_DY = 0f   // Y轴偏移，正值表示阴影在图片下方
+    private var P1_SHADOW_COLOR = Color.argb(100, 0, 0, 0) // 半透明黑色阴影
+    private const val P1_IMAGE_BOTTOM_FADE_HEIGHT_PX = 1000f // 假设渐变高度为 60 像素
+*/
     fun drawFrame(
         canvas: Canvas,
         config: WallpaperConfig,
@@ -82,125 +94,150 @@ object SharedWallpaperRenderer {
             return
         }
 
-        canvas.drawColor(config.page1BackgroundColor) // 清除画布，作为最底层背景
+        // 绘制最底层的颜色，这将作为P1颜色条在完全不透明时的颜色，
+        // 也是P2背景图透明时可能透出的底色。
+        canvas.drawColor(config.page1BackgroundColor)
 
         val safeNumVirtualPages = config.numVirtualPages.coerceAtLeast(1)
-        var p1OverlayAlpha = 255
-        var p2BackgroundAlpha = 255
-
-        // --- P1 图层透明度计算 ---
-        // P1的淡出效果由 config.p1OverlayFadeTransitionRatio 控制
-        if (safeNumVirtualPages > 1) {
-            if (config.p1OverlayFadeTransitionRatio > 0.01f) { // 仅当ratio大于一个小阈值时才应用过渡
-                // 基准区间计算方式保持与之前一致，这决定了过渡效果发生的XOffset范围
-                // 例如，如果 numVirtualPages = 3, ratio = 0.5, 则淡出效果发生在 XOffset 从 0 到 (1/3 * 0.5) = 1/6 的区间内。
-                val p1SinglePageXOffsetRange = 1.0f / safeNumVirtualPages.toFloat()
-                val p1FadeEffectMaxXOffset = p1SinglePageXOffsetRange * config.p1OverlayFadeTransitionRatio.coerceIn(0.01f, 1f)
-
-                if (config.currentXOffset < p1FadeEffectMaxXOffset) {
-                    val p1TransitionProgress = config.currentXOffset / p1FadeEffectMaxXOffset
-                    // P1 淡出曲线: (1 - progress^2)
-                    p1OverlayAlpha = (255 * (1.0f - p1TransitionProgress.toDouble().pow(2.0))).toInt().coerceIn(0, 255)
-                } else {
-                    p1OverlayAlpha = 0 // P1 完全淡出
-                }
-            } else { // p1OverlayFadeTransitionRatio 配置为0或非常小，P1采用瞬间切换
-                p1OverlayAlpha = if (config.currentXOffset == 0f) 255 else 0
-            }
-        } else { // safeNumVirtualPages == 1 (单页模式)
-            p1OverlayAlpha = 255 // P1 始终完全可见
-        }
+        var p2BackgroundAlpha = 255 // P2背景图的透明度
 
         // --- P2 背景图层透明度计算 ---
-        // P2的淡入效果由 config.p2BackgroundFadeInRatio 控制
         if (safeNumVirtualPages > 1) {
-            if (config.p2BackgroundFadeInRatio > 0.01f) { // P2有独立的淡入过渡配置
-                // 使用与P1类似的逻辑计算P2的过渡区间
+            if (config.p2BackgroundFadeInRatio > 0.01f) {
                 val p2SinglePageXOffsetRange = 1.0f / safeNumVirtualPages.toFloat()
                 val p2FadeEffectMaxXOffset = p2SinglePageXOffsetRange * config.p2BackgroundFadeInRatio.coerceIn(0.01f, 1f)
-
                 if (config.currentXOffset < p2FadeEffectMaxXOffset) {
                     val p2TransitionProgress = config.currentXOffset / p2FadeEffectMaxXOffset
-                    // P2 淡入曲线: progress^2 (使其在形式上与P1的淡出曲线对称，可按需调整)
                     p2BackgroundAlpha = (255 * p2TransitionProgress.toDouble().pow(2.0)).toInt().coerceIn(0, 255)
                 } else {
-                    p2BackgroundAlpha = 255 // P2 完全可见
+                    p2BackgroundAlpha = 255
                 }
-            } else { // P2 配置为不进行淡入过渡 (p2BackgroundFadeInRatio 约等于 0)
-                // 在这种情况下，P2 的行为需要考虑 P1 的配置：
-                // 1. 如果 P1 也配置为瞬间切换 (p1OverlayFadeTransitionRatio 约等于 0)
-                //    则 P2 也瞬间切换，与 P1 可见性相反 (P1可见时P2不可见，反之亦然)。
+            } else {
                 if (config.p1OverlayFadeTransitionRatio <= 0.01f) {
                     p2BackgroundAlpha = if (config.currentXOffset == 0f) 0 else 255
                 } else {
-                    // 2. 如果 P1 有自己的淡出过渡，而 P2 配置为不淡入（或瞬间完成），
-                    //    那么 P2 应该始终保持完全可见，P1 在其上层进行淡出。
                     p2BackgroundAlpha = 255
                 }
             }
-        } else { // safeNumVirtualPages == 1 (单页模式)
-            p2BackgroundAlpha = 255 // P2 背景在单页模式下始终完全可见 (P1会绘制在它之上)
+        } else {
+            p2BackgroundAlpha = 255
         }
 
-        // 背景图绘制逻辑
+        // --- 绘制 P2 滚动背景图 ---
         val backgroundToDraw = bitmaps.blurredScrollingBackgroundBitmap ?: bitmaps.scrollingBackgroundBitmap
         backgroundToDraw?.let { bgBmp ->
             if (!bgBmp.isRecycled && bgBmp.width > 0 && bgBmp.height > 0) {
-                val imageActualWidth = bgBmp.width.toFloat() //
-                val screenActualWidth = config.screenWidth.toFloat() //
+                val imageActualWidth = bgBmp.width.toFloat()
+                val screenActualWidth = config.screenWidth.toFloat()
 
-                // 背景滚动计算逻辑 (保持不变)
-                val maxInitialPixelOffset = (imageActualWidth - screenActualWidth).coerceAtLeast(0f) //
-                val safeInitialPixelOffset = (imageActualWidth * config.normalizedInitialBgScrollOffset).coerceIn(0f, maxInitialPixelOffset) //
-                val totalScrollToAlignRightEdge = (imageActualWidth - screenActualWidth).coerceAtLeast(0f) //
-                val dynamicScrollableRange = (totalScrollToAlignRightEdge - safeInitialPixelOffset).coerceAtLeast(0f) //
-                val currentDynamicScroll = config.currentXOffset * (dynamicScrollableRange * config.scrollSensitivityFactor) //
-                var currentScrollPxFloat = safeInitialPixelOffset + currentDynamicScroll //
-                currentScrollPxFloat = currentScrollPxFloat.coerceIn(safeInitialPixelOffset, totalScrollToAlignRightEdge) //
-                currentScrollPxFloat = currentScrollPxFloat.coerceAtLeast(0f) //
+                val maxInitialPixelOffset = (imageActualWidth - screenActualWidth).coerceAtLeast(0f)
+                val safeInitialPixelOffset = (imageActualWidth * config.normalizedInitialBgScrollOffset).coerceIn(0f, maxInitialPixelOffset)
+                val totalScrollToAlignRightEdge = (imageActualWidth - screenActualWidth).coerceAtLeast(0f)
+                val dynamicScrollableRange = (totalScrollToAlignRightEdge - safeInitialPixelOffset).coerceAtLeast(0f)
+                val currentDynamicScroll = config.currentXOffset * (dynamicScrollableRange * config.scrollSensitivityFactor)
+                var currentScrollPxFloat = safeInitialPixelOffset + currentDynamicScroll
+                currentScrollPxFloat = currentScrollPxFloat.coerceIn(safeInitialPixelOffset, totalScrollToAlignRightEdge)
+                currentScrollPxFloat = currentScrollPxFloat.coerceAtLeast(0f)
 
                 val bgTopOffset = ((config.screenHeight - bgBmp.height) / 2f)
+
                 canvas.save()
                 canvas.translate(-currentScrollPxFloat, bgTopOffset)
-
-                // 应用计算得到的 P2 背景透明度
                 scrollingBgPaint.alpha = p2BackgroundAlpha
                 canvas.drawBitmap(bgBmp, 0f, 0f, scrollingBgPaint)
                 canvas.restore()
-
-                Log.d(DEBUG_TAG_RENDERER, "drawFrame: P1 Alpha=$p1OverlayAlpha, P2 BG Alpha=$p2BackgroundAlpha, XOffset=${config.currentXOffset}, P1FadeRatio=${config.p1OverlayFadeTransitionRatio}, P2FadeInRatio=${config.p2BackgroundFadeInRatio}")
-
             } else {
-                Log.w(TAG, "drawFrame: Background bitmap is invalid or recycled.")
+                Log.w(TAG, "drawFrame: Background bitmap (P2) is invalid or recycled.")
             }
-        } ?: Log.d(TAG, "drawFrame: No background bitmap available to draw.")
+        } ?: Log.d(TAG, "drawFrame: No background bitmap available for P2.")
 
-        // P1 前景图和背景色绘制逻辑 (这部分逻辑保持不变, P1 使用 p1OverlayAlpha)
-        val topImageActualHeight = (config.screenHeight * config.page1ImageHeightRatio).toInt() //
-        if (p1OverlayAlpha > 0 && topImageActualHeight > 0) { //
-            // P1 自身的背景色 (绘制在P2图层之上，P1图片之下)
-            p1OverlayBgPaint.color = config.page1BackgroundColor //
-            p1OverlayBgPaint.alpha = p1OverlayAlpha // P1背景色使用P1的透明度
-            canvas.drawRect( //
-                0f, //
-                topImageActualHeight.toFloat(), //
-                config.screenWidth.toFloat(), //
-                config.screenHeight.toFloat(), //
-                p1OverlayBgPaint //
+        // --- P1 前景图、其下方的背景色条，以及阴影的绘制逻辑 ---
+        var topImageActualHeight = (config.screenHeight * config.page1ImageHeightRatio).toInt()
+
+        // 计算 P1 图层整体的透明度 (p1OverallAlpha)
+        var p1OverallAlpha = 255
+        if (safeNumVirtualPages > 1) {
+            if (config.p1OverlayFadeTransitionRatio > 0.01f) {
+                val p1SinglePageXOffsetRange = 1.0f / safeNumVirtualPages.toFloat()
+                val p1FadeEffectMaxXOffset = p1SinglePageXOffsetRange * config.p1OverlayFadeTransitionRatio.coerceIn(0.01f, 1f)
+                if (config.currentXOffset < p1FadeEffectMaxXOffset) {
+                    val p1TransitionProgress = config.currentXOffset / p1FadeEffectMaxXOffset
+                    p1OverallAlpha = (255 * (1.0f - p1TransitionProgress.toDouble().pow(2.0))).toInt().coerceIn(0, 255)
+                } else {
+                    p1OverallAlpha = 0
+                }
+            } else {
+                p1OverallAlpha = if (config.currentXOffset == 0f) 255 else 0
+            }
+        } else {
+            p1OverallAlpha = 255
+        }
+
+
+
+        if (p1OverallAlpha > 0 && topImageActualHeight > 0) {
+            canvas.saveLayerAlpha(
+                0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(),
+                p1OverallAlpha
             )
 
-            // P1 前景图片
-            bitmaps.page1TopCroppedBitmap?.let { topBmp -> //
-                if (!topBmp.isRecycled && topBmp.width > 0 && topBmp.height > 0) { //
-                    p1OverlayImagePaint.alpha = p1OverlayAlpha // P1图片使用P1的透明度
-                    canvas.drawBitmap(topBmp, 0f, 0f, p1OverlayImagePaint) //
-                } else {
-                    Log.w(TAG, "drawFrame: P1 top cropped bitmap is invalid or recycled.")
+            // 1. 绘制 P1 图片下方的【纯色】背景色条 (config.page1BackgroundColor)
+            p1OverlayBgPaint.shader = null
+            p1OverlayBgPaint.color = config.page1BackgroundColor
+            p1OverlayBgPaint.alpha = 255
+            canvas.drawRect(
+                0f,
+                topImageActualHeight.toFloat(),
+                config.screenWidth.toFloat(),
+                config.screenHeight.toFloat(),
+                p1OverlayBgPaint
+            )
+
+            // 2. 绘制 P1 前景图片，并让其底部“融入”到下方的 P1 背景色中
+            bitmaps.page1TopCroppedBitmap?.let { topBmp ->
+                if (!topBmp.isRecycled && topBmp.width > 0 && topBmp.height > 0) {
+                    val imageWidth = topBmp.width.toFloat()
+                    val imageHeight = topBmp.height.toFloat()
+
+                    // 2a. 绘制 P1 图片的【投影阴影】(如果启用了参数)
+                    if (config.p1ShadowRadius > 0f && Color.alpha(config.p1ShadowColor) > 0) {
+                        val shadowCasterPaint = Paint(p1OverlayImagePaint)
+                        shadowCasterPaint.alpha = 0
+                        shadowCasterPaint.setShadowLayer(config.p1ShadowRadius, config.p1ShadowDx, config.p1ShadowDy, config.p1ShadowColor)
+                        canvas.drawRect(0f, 0f, imageWidth, imageHeight, shadowCasterPaint)
+                    }
+
+                    // 2b. 先绘制完整的不透明的 P1 图片
+                    val baseImagePaint = Paint(p1OverlayImagePaint) // 使用干净的Paint
+                    baseImagePaint.alpha = 255 // 确保图片自身是不透明的
+                    canvas.drawBitmap(topBmp, 0f, 0f, baseImagePaint)
+
+                    // 2c. 在 P1 图片的底部【之上】叠加一个从 P1 背景色向上渐变到透明的遮罩层
+                    // 这个遮罩层会覆盖 P1 图片的底部，使其看起来像是融入了 P1 背景色
+                    val fadeStartY = imageHeight // 渐变起始点 (图片底部，P1背景色完全覆盖)
+                    val fadeEndY = (imageHeight - config.p1ImageBottomFadeHeight) // 使用 config.p1ImageBottomFadeHeight
+
+                    if (fadeStartY > fadeEndY && config.p1ImageBottomFadeHeight > 0) { // 使用 config.p1ImageBottomFadeHeight
+                        val overlayFadeGradient = LinearGradient(
+                            0f, fadeStartY,     // Y for config.page1BackgroundColor (opaque)
+                            0f, fadeEndY,       // Y for Color.TRANSPARENT
+                            config.page1BackgroundColor, // 在图片底部是P1背景色 (完全不透明)
+                            Color.TRANSPARENT,           // 向上渐变为完全透明 (露出P1图片)
+                            Shader.TileMode.CLAMP
+                        )
+                        val overlayFadePaint = Paint().apply {
+                            isAntiAlias = true
+                            shader = overlayFadeGradient
+                            // 使用默认的 PorterDuff.Mode.SRC_OVER 即可，因为是叠加在图片之上
+                        }
+                        // 绘制这个遮罩矩形，它只覆盖P1图片区域
+                        canvas.drawRect(0f, 0f, imageWidth, imageHeight, overlayFadePaint)
+                    }
                 }
-            } ?: run { //
-                Log.d(TAG, "drawFrame: No P1 top cropped bitmap available to draw.")
             }
+            canvas.restore() // 对应最外层的 saveLayerAlpha
         }
+        Log.d(DEBUG_TAG_RENDERER, "drawFrame: P1 Overall Alpha=$p1OverallAlpha, P2 BG Alpha=$p2BackgroundAlpha, XOffset=${config.currentXOffset}")
     }
 
     fun preparePage1TopCroppedBitmap(
