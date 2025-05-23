@@ -19,6 +19,6 @@
     <string name="image_preview_description_page1">壁纸第一页预览图</string>
     <string name="image_preview_description_page_other">壁纸后续页预览图</string>
     <string name="reset_height_button">复位高度</string>
-    <string name="increase_height_button">图片变大</string>
-    <string name="decrease_height_button">图片变小</string>
+    <string name="increase_height_button">图片高度+</string>
+    <string name="decrease_height_button">图片高度-</string>
 </resources>
