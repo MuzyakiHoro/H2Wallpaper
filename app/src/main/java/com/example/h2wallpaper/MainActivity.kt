@@ -80,6 +80,7 @@ class MainActivity : AppCompatActivity() {
     private var currentP1ShadowDy: Float = DEFAULT_P1_SHADOW_DY
     private var currentP1ShadowColor: Int = DEFAULT_P1_SHADOW_COLOR // 颜色是 Int
     private var currentP1ImageBottomFadeHeight: Float = DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT
+    private var currentImageContentVersion: Long = DEFAULT_IMAGE_CONTENT_VERSION
 
 
     private val INTERNAL_IMAGE_FILENAME = "h2_wallpaper_internal_image.jpg"
@@ -143,6 +144,7 @@ class MainActivity : AppCompatActivity() {
         const val KEY_P1_SHADOW_DY = "p1ShadowDy"                      // Stored as Int
         const val KEY_P1_SHADOW_COLOR = "p1ShadowColor"                // Stored as Int
         const val KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT = "p1ImageBottomFadeHeight" // Stored as Int
+        const val KEY_IMAGE_CONTENT_VERSION = "imageContentVersion" // 图片时间戳
 
         // 默认值 (Float 或 Int，根据内部逻辑使用类型)
         const val DEFAULT_HEIGHT_RATIO = 1f / 3f
@@ -158,14 +160,16 @@ class MainActivity : AppCompatActivity() {
         const val DEFAULT_P1_SHADOW_RADIUS = 0f
         const val DEFAULT_P1_SHADOW_DX = 0f
         const val DEFAULT_P1_SHADOW_DY = 0f
-        val DEFAULT_P1_SHADOW_COLOR = Color.argb(100, 0, 0, 0) // Int
-        const val DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT = 80f // Float, 保存时转 Int
+        val DEFAULT_P1_SHADOW_COLOR = Color.argb(180, 0, 0, 0) // Int
+        const val DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT = 0f // Float, 保存时转 Int
+        const val DEFAULT_IMAGE_CONTENT_VERSION = 0L // 初始版本或时间戳
 
         private const val PERMISSION_REQUEST_READ_MEDIA_IMAGES = 1001
         private const val TAG = "H2WallpaperMain"
-        private const val HEIGHT_RATIO_STEP = 0.05f
+        private const val HEIGHT_RATIO_STEP = 0.02f
         private const val MIN_HEIGHT_RATIO = 0.15f
-        private const val MAX_HEIGHT_RATIO = 0.60f
+        private const val MAX_HEIGHT_RATIO = 0.75f
+
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -301,6 +305,7 @@ class MainActivity : AppCompatActivity() {
         currentP1ShadowDy = prefs.getInt(KEY_P1_SHADOW_DY, DEFAULT_P1_SHADOW_DY.roundToInt()).toFloat()
         currentP1ShadowColor = prefs.getInt(KEY_P1_SHADOW_COLOR, DEFAULT_P1_SHADOW_COLOR) // Color is Int
         currentP1ImageBottomFadeHeight = prefs.getInt(KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT, DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT.roundToInt()).toFloat()
+        currentImageContentVersion = prefs.getLong(KEY_IMAGE_CONTENT_VERSION, DEFAULT_IMAGE_CONTENT_VERSION)
 
 
         val internalImageUriString = prefs.getString(KEY_IMAGE_URI, null)
@@ -386,6 +391,8 @@ class MainActivity : AppCompatActivity() {
 
 
         selectedImageUri?.let { editor.putString(KEY_IMAGE_URI, it.toString()) } ?: editor.remove(KEY_IMAGE_URI)
+        editor.putLong(KEY_IMAGE_CONTENT_VERSION, System.currentTimeMillis()) // 存入当前时间戳作为版本
+
         editor.apply()
         Log.d(TAG, "Preferences saved: ... P1ShadowRadius (as Int)=${currentP1ShadowRadius.roundToInt()}, P1BottomFadeHeight (as Int)=${currentP1ImageBottomFadeHeight.roundToInt()} ...")
     }

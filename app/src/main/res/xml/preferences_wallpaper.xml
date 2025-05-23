@@ -72,25 +72,25 @@
             app:key="p1ShadowRadius"
             app:title="P1 图片投影半径"
             app:summary="当前值将在此显示"
-            android:defaultValue="0" app:min="0"               android:max="50" app:updatesContinuously="true"/>
+            android:defaultValue="0" app:min="0"               android:max="20" app:updatesContinuously="true"/>
 
         <SeekBarPreference
             app:key="p1ShadowDx"
             app:title="P1 图片投影X轴偏移"
             app:summary="当前值将在此显示"
-            android:defaultValue="0" app:min="0"              android:max="50" app:updatesContinuously="true"/>
+            android:defaultValue="0" app:min="-20"              android:max="20" app:updatesContinuously="true"/>
 
         <SeekBarPreference
             app:key="p1ShadowDy"
             app:title="P1 图片投影Y轴偏移"
             app:summary="当前值将在此显示"
-            android:defaultValue="0" app:min="0"              android:max="50" app:updatesContinuously="true"/>
+            android:defaultValue="0" app:min="0"              android:max="20" app:updatesContinuously="true"/>
 
         <SeekBarPreference
             app:key="p1ImageBottomFadeHeight"
             app:title="P1 图片底部融入高度"
             app:summary="当前值将在此显示"
-            android:defaultValue="80" app:min="0"                 android:max="2560" app:updatesContinuously="true"/>
+            android:defaultValue="0" app:min="0"                 android:max="2560" app:updatesContinuously="true"/>
 
     </PreferenceCategory>
 

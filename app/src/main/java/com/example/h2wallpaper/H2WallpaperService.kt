@@ -54,6 +54,7 @@ class H2WallpaperService : WallpaperService() {
         private var currentP1ShadowDy: Float = MainActivity.DEFAULT_P1_SHADOW_DY
         private var currentP1ShadowColor: Int = MainActivity.DEFAULT_P1_SHADOW_COLOR
         private var currentP1ImageBottomFadeHeight: Float = MainActivity.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT
+        private var currentImageContentVersion: Long = MainActivity.DEFAULT_IMAGE_CONTENT_VERSION
 
         // --- End Configuration members ---
 
@@ -81,118 +82,136 @@ class H2WallpaperService : WallpaperService() {
         }
 
         override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
-            Log.i(DEBUG_TAG, "onSharedPreferenceChanged: key=$key received.")
+            Log.i(DEBUG_TAG, "onSharedPreferenceChanged: key=$key received by service.")
             var needsFullReload = false
             var needsP1TopUpdate = false
             var needsRedrawOnly = false
 
-            // Store old values to compare after reloading all preferences
-            val oldImageUri = imageUriString
+            // --- 1. 保存关键参数的旧值，以便精确比较 ---
+            val oldImageUriString = imageUriString
+            val oldImageContentVersion = currentImageContentVersion // 新增：保存旧的图片内容版本
+
+            // 保存其他可能影响位图生成或P1顶部裁剪的旧值
             val oldP1FocusX = currentP1FocusX
             val oldP1FocusY = currentP1FocusY
             val oldPage1ImageHeightRatio = page1ImageHeightRatio
-            val oldScrollSensitivity = currentScrollSensitivity
-            val oldP1OverlayFadeRatio = currentP1OverlayFadeRatio
             val oldBackgroundBlurRadius = currentBackgroundBlurRadius
-            val oldPage1BackgroundColor = page1BackgroundColor
-            val oldInitialBgOffset = currentNormalizedInitialBgScrollOffset // 记录旧值
-            val oldP2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio//记录旧的 P2 淡入比例
             val oldBlurDownscaleFactor = currentBlurDownscaleFactor
             val oldBlurIterations = currentBlurIterations
+            // 你可以根据需要添加更多旧值的保存，例如 P1 特效参数，如果它们的改变不仅仅是重绘
 
+            // --- 2. 加载所有最新的配置值到成员变量 ---
+            // 这会更新 this.imageUriString, this.currentImageContentVersion, 等所有成员变量
+            loadPreferencesFromStorage()
 
-            loadPreferencesFromStorage() // Load all preferences to get the new values
+            // --- 3. 核心判断逻辑：优先检查图片内容版本或URI本身 ---
+            if (oldImageContentVersion != currentImageContentVersion) {
+                Log.i(DEBUG_TAG, "Image Content Version changed from $oldImageContentVersion to $currentImageContentVersion. Triggering full reload.")
+                needsFullReload = true
+            } else if (oldImageUriString != imageUriString) { // 图片URI字符串本身发生变化（不太可能，但作为保险）
+                Log.i(DEBUG_TAG, "Image URI string changed from '$oldImageUriString' to '$imageUriString'. Triggering full reload.")
+                needsFullReload = true
+            } else {
+                // 如果图片内容版本和URI字符串都没变，再根据具体的 key (如果 key 不是 null) 判断
+                key?.let { currentKey ->
+                    when (currentKey) {
+                        // KEY_IMAGE_URI 和 KEY_IMAGE_CONTENT_VERSION 的主要逻辑已在上面处理
+                        // 这里主要处理其他参数的变化
 
-            when (key) {
-                MainActivity.KEY_IMAGE_URI -> {
-                    if (oldImageUri != imageUriString) {
-                        Log.i(DEBUG_TAG, "Preference changed: Image URI. Triggering full reload.")
-                        needsFullReload = true
+                        // 需要更新P1顶部图片的情况
+                        MainActivity.KEY_P1_FOCUS_X,
+                        MainActivity.KEY_P1_FOCUS_Y -> {
+                            if (oldP1FocusX != currentP1FocusX || oldP1FocusY != currentP1FocusY) {
+                                Log.i(DEBUG_TAG, "Preference changed: P1 Focus. Triggering P1 top update.")
+                                needsP1TopUpdate = true
+                            } else {
+                                Log.i(DEBUG_TAG, "Preference changed: P1 Focus. No P1 top update needed.")
+                            }
+                        }
+                        MainActivity.KEY_IMAGE_HEIGHT_RATIO -> {
+                            if (oldPage1ImageHeightRatio != page1ImageHeightRatio) {
+                                Log.i(DEBUG_TAG, "Preference changed: P1 Height Ratio. Triggering P1 top update.")
+                                needsP1TopUpdate = true
+                            } else {
+                                Log.i(DEBUG_TAG, "Preference changed: P1 Height Ratio. No P1 top update needed.")
+                            }
+                        }
+
+                        // 需要完整重载背景位图的情况 (模糊相关)
+                        MainActivity.KEY_BACKGROUND_BLUR_RADIUS,
+                        MainActivity.KEY_BLUR_DOWNSCALE_FACTOR,
+                        MainActivity.KEY_BLUR_ITERATIONS -> {
+                            if (oldBackgroundBlurRadius != currentBackgroundBlurRadius ||
+                                oldBlurDownscaleFactor != currentBlurDownscaleFactor ||
+                                oldBlurIterations != currentBlurIterations) {
+                                Log.i(DEBUG_TAG, "Preference changed: Blur related params ('$currentKey'). Triggering full reload.")
+                                needsFullReload = true
+                            } else {
+                                Log.i(DEBUG_TAG, "Preference changed: Blur related params ('$currentKey'). No full reload needed.")
+                            }
+                        }
+
+                        // 其他所有只影响最终绘制表现的参数，只需要重绘
+                        MainActivity.KEY_BACKGROUND_COLOR,
+                        MainActivity.KEY_SCROLL_SENSITIVITY,
+                        MainActivity.KEY_P1_OVERLAY_FADE_RATIO,
+                        MainActivity.KEY_P2_BACKGROUND_FADE_IN_RATIO,
+                        MainActivity.KEY_BACKGROUND_INITIAL_OFFSET,
+                        MainActivity.KEY_P1_SHADOW_RADIUS,
+                        MainActivity.KEY_P1_SHADOW_DX,
+                        MainActivity.KEY_P1_SHADOW_DY,
+                        MainActivity.KEY_P1_SHADOW_COLOR,
+                        MainActivity.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> {
+                            // 这里可以添加对这些参数旧值和新值的比较，如果确实改变了才设置 needsRedrawOnly
+                            // 为了确保更新，即使值可能相同（例如用户进入设置但没改动就退出，但SharedPreferences可能被触发），
+                            // 简单起见，只要是这些key，就假设需要重绘。
+                            // 或者更精确：
+                            // if (isValueActuallyChanged(oldValue, newValue)) { needsRedrawOnly = true; }
+                            Log.i(DEBUG_TAG, "Preference changed: Visual rendering param ('$currentKey'). Triggering redraw.")
+                            needsRedrawOnly = true
+                        }
+                        else -> {
+                            Log.w(DEBUG_TAG, "Unhandled preference key in onSharedPreferenceChanged: $currentKey")
+                        }
                     }
-                }
-                MainActivity.KEY_P1_FOCUS_X, MainActivity.KEY_P1_FOCUS_Y -> {
-                    if (oldP1FocusX != currentP1FocusX || oldP1FocusY != currentP1FocusY) {
-                        Log.i(DEBUG_TAG, "Preference changed: P1 Focus. Triggering P1 top update.")
-                        needsP1TopUpdate = true
-                    }
-                }
-                MainActivity.KEY_IMAGE_HEIGHT_RATIO -> {
-                    if (oldPage1ImageHeightRatio != page1ImageHeightRatio) {
-                        Log.i(DEBUG_TAG, "Preference changed: P1 Height Ratio. Triggering P1 top update.")
-                        needsP1TopUpdate = true
-                    }
-                }
-                MainActivity.KEY_SCROLL_SENSITIVITY -> {
-                    if (oldScrollSensitivity != currentScrollSensitivity) {
-                        Log.i(DEBUG_TAG, "Preference changed: Scroll Sensitivity. Triggering redraw.")
+                } ?: run {
+                    // 如果 key 为 null (例如 editor.clear().commit() 或某些批量更新)，
+                    // 我们已经通过比较 imageContentVersion 和 imageUriString 来处理了最重要的情况。
+                    // 对于其他参数，如果 key 为 null，我们可能无法知道是哪个具体参数变了。
+                    // 一个保守的做法是，如果 key 为 null 且不是因为图片变化，也触发一次重绘。
+                    // 但通常，如果图片版本和URI都没变，而 key 是 null，可能表示没有用户可感知的变化。
+                    // 或者，如果 key 为 null，并且我们没有因为版本号或URI变化而设置 needsFullReload，
+                    // 我们可以假设至少需要一次重绘来确保状态同步。
+                    if (!needsFullReload) { // 只有在没有因为图片变化而需要完整重载时
+                        Log.i(DEBUG_TAG, "Preference key is null, and image not changed. Triggering redraw as a precaution.")
                         needsRedrawOnly = true
                     }
-                }
-                MainActivity.KEY_P1_OVERLAY_FADE_RATIO -> {
-                    if (oldP1OverlayFadeRatio != currentP1OverlayFadeRatio) {
-                        Log.i(DEBUG_TAG, "Preference changed: P1 Overlay Fade Ratio. Triggering redraw.")
-                        needsRedrawOnly = true
-                    }
-                }
-                MainActivity.KEY_BACKGROUND_BLUR_RADIUS -> {
-                    if (oldBackgroundBlurRadius != currentBackgroundBlurRadius) {
-                        Log.i(DEBUG_TAG, "Preference changed: Background Blur Radius. Triggering full reload.")
-                        needsFullReload = true // Blur change requires regenerating scrolling background
-                    }
-                }
-                MainActivity.KEY_BACKGROUND_COLOR -> {
-                    if (oldPage1BackgroundColor != page1BackgroundColor) {
-                        Log.i(DEBUG_TAG, "Preference changed: Background Color. Triggering redraw.")
-                        needsRedrawOnly = true
-                    }
-                }
-                MainActivity.KEY_BACKGROUND_INITIAL_OFFSET -> {
-                    if (oldInitialBgOffset != currentNormalizedInitialBgScrollOffset) {
-                        Log.i(DEBUG_TAG, "Preference changed: Background Initial Offset. Triggering redraw.")
-                        needsRedrawOnly = true
-                    }
-                }
-                // 处理 P2 淡入比例变化
-                MainActivity.KEY_P2_BACKGROUND_FADE_IN_RATIO -> {
-                    if (oldP2BackgroundFadeInRatio != currentP2BackgroundFadeInRatio) {
-                        Log.i(DEBUG_TAG, "Preference changed: P2 Background FadeIn Ratio. Triggering redraw.")
-                        needsRedrawOnly = true
-                    }
-                }
-                MainActivity.KEY_BLUR_DOWNSCALE_FACTOR -> {
-                    if (oldBlurDownscaleFactor != currentBlurDownscaleFactor) {
-                        Log.i(DEBUG_TAG, "Preference changed: Blur Downscale Factor. Triggering full reload.")
-                        needsFullReload = true
-                    }
-                }
-                MainActivity.KEY_BLUR_ITERATIONS -> {
-                    if (oldBlurIterations != currentBlurIterations) {
-                        Log.i(DEBUG_TAG, "Preference changed: Blur Iterations. Triggering full reload.")
-                        needsFullReload = true
-                    }
-                }
-                MainActivity.KEY_P1_SHADOW_RADIUS,
-                MainActivity.KEY_P1_SHADOW_DX,
-                MainActivity.KEY_P1_SHADOW_DY,
-                MainActivity.KEY_P1_SHADOW_COLOR,
-                MainActivity.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> {
-                    // 这些参数的变化通常只需要重绘
-                    Log.i(DEBUG_TAG, "Preference changed: P1 Effect (Shadow/BottomFade). Triggering redraw.")
-                    needsRedrawOnly = true
                 }
             }
 
+            // --- 4. 根据标志执行操作 ---
             if (needsFullReload) {
-                loadFullBitmapsAsyncIfNeeded()
+                Log.i(DEBUG_TAG, "Action: Executing full bitmap reload due to changed preferences.")
+                loadFullBitmapsAsync() // 这个方法应该负责取消旧任务和回收旧位图
             } else if (needsP1TopUpdate) {
                 if (engineWallpaperBitmaps?.sourceSampledBitmap != null && imageUriString != null) {
+                    Log.i(DEBUG_TAG, "Action: Executing P1 top cropped bitmap update.")
                     updateTopCroppedBitmapAsync()
-                } else if (imageUriString != null) { // If source bitmap is missing, but we have URI, do full reload
-                    Log.w(DEBUG_TAG, "P1 top update requested, but sourceSampledBitmap is null. Forcing full reload.")
-                    loadFullBitmapsAsyncIfNeeded()
+                } else if (imageUriString != null) { // 源位图丢失但URI仍在，可能需要完整重载
+                    Log.w(DEBUG_TAG, "Action: P1 top update requested, but sourceSampledBitmap is null or image URI invalid. Forcing full reload.")
+                    loadFullBitmapsAsync()
+                } else {
+                    Log.w(DEBUG_TAG, "Action: P1 top update requested, but no image URI available. Doing nothing.")
                 }
             } else if (needsRedrawOnly) {
-                if (isVisible) drawCurrentFrame()
+                if (isVisible) {
+                    Log.i(DEBUG_TAG, "Action: Executing redraw due to changed preferences.")
+                    drawCurrentFrame()
+                } else {
+                    Log.i(DEBUG_TAG, "Action: Redraw needed, but service not visible. Will redraw on next visibility change.")
+                }
+            } else {
+                Log.i(DEBUG_TAG, "Action: No specific update action triggered by preference change.")
             }
         }
 
@@ -271,8 +290,11 @@ class H2WallpaperService : WallpaperService() {
                 MainActivity.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT.roundToInt()
             ).toFloat()
 
+            currentImageContentVersion = prefs.getLong(MainActivity.KEY_IMAGE_CONTENT_VERSION, MainActivity.DEFAULT_IMAGE_CONTENT_VERSION)
+
             // 更新 Logcat 打印以包含新参数
             Log.i(DEBUG_TAG, "Preferences loaded/reloaded (Service): URI=$imageUriString, Color=$page1BackgroundColor, Ratio=$page1ImageHeightRatio, Sensitivity=$currentScrollSensitivity, Focus=($currentP1FocusX, $currentP1FocusY), P1FadeRatio=$currentP1OverlayFadeRatio, BlurRadius=$currentBackgroundBlurRadius, P1ShadowRadius=$currentP1ShadowRadius, P1BottomFadeHeight=$currentP1ImageBottomFadeHeight, BlurDownscaleInt=$blurDownscaleFactorInt, BlurIter=$blurIterations")
+            Log.i(DEBUG_TAG, "Service Loaded Prefs: imageUriString='$imageUriString', page1BackgroundColor=${page1BackgroundColor.toUInt().toString(16)}, page1ImageHeightRatio=$page1ImageHeightRatio, ... (打印所有重要参数)")
         }
 
         private fun loadFullBitmapsAsyncIfNeeded() {

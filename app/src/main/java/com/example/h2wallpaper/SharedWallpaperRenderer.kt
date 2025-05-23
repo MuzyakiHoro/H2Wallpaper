@@ -174,8 +174,17 @@ object SharedWallpaperRenderer {
         }
 
 
+            Log.d(TAG, "Service DrawFrame P1 Check: p1OverallAlpha=$p1OverallAlpha, topImageActualHeight=$topImageActualHeight, page1ImageHeightRatio=${config.page1ImageHeightRatio}")
+            Log.d(TAG, "Service DrawFrame P1 Check: p1ShadowRadius=${config.p1ShadowRadius}, p1ImageBottomFadeHeight=${config.p1ImageBottomFadeHeight}")
+            Log.d(TAG, "Service DrawFrame P1 Check: page1TopCroppedBitmap is null? ${bitmaps.page1TopCroppedBitmap == null}")
+            if (bitmaps.page1TopCroppedBitmap != null) {
+                Log.d(TAG, "Service DrawFrame P1 Check: page1TopCroppedBitmap dimensions: ${bitmaps.page1TopCroppedBitmap!!.width}x${bitmaps.page1TopCroppedBitmap!!.height}")
+            }
 
         if (p1OverallAlpha > 0 && topImageActualHeight > 0) {
+
+            Log.d(TAG, "Service DrawFrame: Drawing P1 content block.")
+
             canvas.saveLayerAlpha(
                 0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(),
                 p1OverallAlpha

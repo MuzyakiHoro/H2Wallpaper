@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "com.example.h2wallpaper"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.h2wallpaper"
         minSdk = 31
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 
