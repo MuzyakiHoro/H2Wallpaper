@@ -56,6 +56,9 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1") // 你可以检查是否有更新的稳定版本
     implementation("androidx.viewpager2:viewpager2:1.1.0") // 或更新的稳定版本 (1.1.0-beta02, 1.1.0等)
     implementation("androidx.preference:preference-ktx:1.2.1") // 使用最新的稳定版本
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0") // 使用最新的稳定版本
+    implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0") // 使用最新的稳定版本
+
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
