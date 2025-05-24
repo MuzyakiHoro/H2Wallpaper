@@ -30,7 +30,7 @@
         android:id="@+id/btnSetWallpaper"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="32dp"
         android:text="@string/set_wallpaper_button"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
@@ -74,7 +74,32 @@
             android:layout_height="wrap_content"
             android:text="@string/decrease_height_button" />
     </LinearLayout>
+    <LinearLayout
+        android:id="@+id/p1EditControlsContainer"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:visibility="gone"
+        tools:visibility="visible" app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/controlsContainer"> <Button
+        android:id="@+id/btnApplyP1Changes"
+        style="?android:attr/buttonBarButtonStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="应用更改"/>
 
+        <Button
+            android:id="@+id/btnCancelP1Changes"
+            style="?android:attr/buttonBarButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:text="取消更改"/>
+    </LinearLayout>
     <LinearLayout
         android:id="@+id/controlsContainer"
         android:layout_width="0dp"
@@ -158,6 +183,7 @@
                 android:paddingTop="4dp"
                 android:paddingBottom="4dp" />
         </HorizontalScrollView>
+
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
