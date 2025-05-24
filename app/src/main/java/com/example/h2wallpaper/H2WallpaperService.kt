@@ -12,19 +12,14 @@ import kotlinx.coroutines.*
 import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToInt
 
-// 显式导入 WallpaperConfigConstants 对象
+// 导入 WallpaperConfigConstants 对象
 import com.example.h2wallpaper.WallpaperConfigConstants
-
-// H2WallpaperService 主要使用 WallpaperConfigConstants 的顶层成员，
-// FocusParams 主要由 Activity 使用，这里可以不导入 FocusParams，除非将来服务也需要它。
 
 class H2WallpaperService : WallpaperService() {
 
     companion object {
         private const val TAG = "H2WallpaperSvc"
         private const val DEBUG_TAG = "H2WallpaperSvc_Debug"
-
-        // 这个默认值可以保留在此，或者如果希望完全统一，也可以移至 WallpaperConfigConstants
         private const val DEFAULT_VIRTUAL_PAGES_FOR_SCROLLING = 3
     }
 
@@ -43,6 +38,13 @@ class H2WallpaperService : WallpaperService() {
         private var engineWallpaperBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
         private val engineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
         private var currentBitmapLoadJob: Job? = null
+
+        // --- WallpaperPreferencesRepository 实例 ---
+        private lateinit var preferencesRepository: WallpaperPreferencesRepository
+
+        // SharedPreferences 实例仍然需要，用于注册监听器
+        private lateinit var prefs: SharedPreferences
+
 
         // --- Configuration members ---
         private var imageUriString: String? = null
@@ -76,17 +78,19 @@ class H2WallpaperService : WallpaperService() {
         private var numPagesReportedByLauncher = 1
         private var currentPageOffset = 0f
 
-        private val prefs: SharedPreferences by lazy {
-            applicationContext.getSharedPreferences(
-                WallpaperConfigConstants.PREFS_NAME,
-                Context.MODE_PRIVATE
-            )
-        }
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
             this.surfaceHolder = surfaceHolder
             Log.i(TAG, "H2WallpaperEngine Created. IsPreview: ${isPreview}")
+
+            // 初始化 Repository 和 SharedPreferences 实例
+            preferencesRepository = WallpaperPreferencesRepository(applicationContext)
+            prefs = applicationContext.getSharedPreferences(
+                WallpaperConfigConstants.PREFS_NAME,
+                Context.MODE_PRIVATE
+            )
+
 
             prefs.registerOnSharedPreferenceChangeListener(this)
             loadPreferencesFromStorage() // Initial load
@@ -109,7 +113,7 @@ class H2WallpaperService : WallpaperService() {
             var needsRedrawOnly = false
 
             val oldImageUriString = imageUriString
-            val oldImageContentVersion = currentImageContentVersion
+            val oldImageContentVersion = currentImageContentVersion // 使用 Repository 获取的值
             val oldP1FocusX = currentP1FocusX
             val oldP1FocusY = currentP1FocusY
             val oldPage1ImageHeightRatio = page1ImageHeightRatio
@@ -117,8 +121,10 @@ class H2WallpaperService : WallpaperService() {
             val oldBlurDownscaleFactor = currentBlurDownscaleFactor
             val oldBlurIterations = currentBlurIterations
 
-            loadPreferencesFromStorage() // 这会更新所有成员变量
+            // 从 Repository 重新加载所有配置到成员变量
+            loadPreferencesFromStorage()
 
+            // --- 核心判断逻辑：优先检查图片内容版本或URI本身 ---
             if (oldImageContentVersion != currentImageContentVersion) {
                 Log.i(DEBUG_TAG, "Image Content Version changed. Triggering full reload.")
                 needsFullReload = true
@@ -131,12 +137,20 @@ class H2WallpaperService : WallpaperService() {
                         WallpaperConfigConstants.KEY_P1_FOCUS_X,
                         WallpaperConfigConstants.KEY_P1_FOCUS_Y -> {
                             if (oldP1FocusX != currentP1FocusX || oldP1FocusY != currentP1FocusY) {
+                                Log.i(
+                                    DEBUG_TAG,
+                                    "Preference changed: P1 Focus. Triggering P1 top update."
+                                )
                                 needsP1TopUpdate = true
                             }
                         }
 
                         WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO -> {
                             if (oldPage1ImageHeightRatio != page1ImageHeightRatio) {
+                                Log.i(
+                                    DEBUG_TAG,
+                                    "Preference changed: P1 Height Ratio. Triggering P1 top update."
+                                )
                                 needsP1TopUpdate = true
                             }
                         }
@@ -148,10 +162,14 @@ class H2WallpaperService : WallpaperService() {
                                 oldBlurDownscaleFactor != currentBlurDownscaleFactor ||
                                 oldBlurIterations != currentBlurIterations
                             ) {
+                                Log.i(
+                                    DEBUG_TAG,
+                                    "Preference changed: Blur related params. Triggering full reload."
+                                )
                                 needsFullReload = true
                             }
                         }
-
+                        // 其他只影响最终绘制表现的参数，只需要重绘
                         WallpaperConfigConstants.KEY_BACKGROUND_COLOR,
                         WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY,
                         WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO,
@@ -162,15 +180,19 @@ class H2WallpaperService : WallpaperService() {
                         WallpaperConfigConstants.KEY_P1_SHADOW_DY,
                         WallpaperConfigConstants.KEY_P1_SHADOW_COLOR,
                         WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> {
+                            Log.i(
+                                DEBUG_TAG,
+                                "Preference changed: Visual rendering param. Triggering redraw."
+                            )
                             needsRedrawOnly = true
                         }
                         // KEY_IMAGE_URI 和 KEY_IMAGE_CONTENT_VERSION 已通过比较版本号和URI字符串处理
-                        WallpaperConfigConstants.KEY_IMAGE_URI -> { /* Already handled by string comparison */
+                        WallpaperConfigConstants.KEY_IMAGE_URI -> { /* Already handled */
                         }
-                        // else -> Log.w(DEBUG_TAG, "Unhandled preference key: $currentKey") // 可选
+                        // else -> Log.w(DEBUG_TAG, "Unhandled preference key in onSharedPreferenceChanged: $currentKey")
                     }
-                } ?: run {
-                    if (!needsFullReload) { // 只有在没有因为图片变化而需要完整重载时
+                } ?: run { // key is null
+                    if (!needsFullReload) {
                         Log.i(
                             DEBUG_TAG,
                             "Preference key is null, and image not changed. Triggering redraw as a precaution."
@@ -180,110 +202,139 @@ class H2WallpaperService : WallpaperService() {
                 }
             }
 
+            // --- 根据标志执行操作 ---
             if (needsFullReload) {
+                Log.i(DEBUG_TAG, "Action: Executing full bitmap reload due to changed preferences.")
                 loadFullBitmapsAsync()
             } else if (needsP1TopUpdate) {
                 if (engineWallpaperBitmaps?.sourceSampledBitmap != null && imageUriString != null) {
+                    Log.i(DEBUG_TAG, "Action: Executing P1 top cropped bitmap update.")
                     updateTopCroppedBitmapAsync()
                 } else if (imageUriString != null) {
+                    Log.w(
+                        DEBUG_TAG,
+                        "Action: P1 top update requested, but sourceSampledBitmap is null. Forcing full reload."
+                    )
                     loadFullBitmapsAsync()
                 }
             } else if (needsRedrawOnly) {
-                if (isVisible) drawCurrentFrame()
+                if (isVisible) {
+                    Log.i(DEBUG_TAG, "Action: Executing redraw due to changed preferences.")
+                    drawCurrentFrame()
+                }
             }
         }
 
 
         private fun loadPreferencesFromStorage() {
-            imageUriString = prefs.getString(WallpaperConfigConstants.KEY_IMAGE_URI, null)
-            page1BackgroundColor = prefs.getInt(
-                WallpaperConfigConstants.KEY_BACKGROUND_COLOR,
-                WallpaperConfigConstants.DEFAULT_BACKGROUND_COLOR
-            )
-            page1ImageHeightRatio = prefs.getFloat(
-                WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO,
-                WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO
-            )
-            currentP1FocusX = prefs.getFloat(
-                WallpaperConfigConstants.KEY_P1_FOCUS_X,
-                WallpaperConfigConstants.DEFAULT_P1_FOCUS_X
-            )
-            currentP1FocusY = prefs.getFloat(
-                WallpaperConfigConstants.KEY_P1_FOCUS_Y,
-                WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y
-            )
-
-            currentScrollSensitivity = prefs.getInt(
-                WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY,
-                WallpaperConfigConstants.DEFAULT_SCROLL_SENSITIVITY_INT
-            ) / 10.0f
-
-            currentP1OverlayFadeRatio = prefs.getInt(
-                WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO,
-                WallpaperConfigConstants.DEFAULT_P1_OVERLAY_FADE_RATIO_INT
-            ) / 100.0f
-
-            currentBackgroundBlurRadius = prefs.getInt(
-                WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS,
-                WallpaperConfigConstants.DEFAULT_BACKGROUND_BLUR_RADIUS_INT
-            ).toFloat()
-
-            currentNormalizedInitialBgScrollOffset = prefs.getInt(
-                WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET,
-                WallpaperConfigConstants.DEFAULT_BACKGROUND_INITIAL_OFFSET_INT
-            ) / 10.0f
-
-            currentP2BackgroundFadeInRatio = prefs.getInt(
-                WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO,
-                WallpaperConfigConstants.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO_INT
-            ) / 100.0f
-
-            val blurDownscaleFactorInt = prefs.getInt(
-                WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR,
-                WallpaperConfigConstants.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT
-            )
-            this.currentBlurDownscaleFactor = blurDownscaleFactorInt / 100.0f
-            val blurIterationsVal = prefs.getInt(
-                WallpaperConfigConstants.KEY_BLUR_ITERATIONS,
-                WallpaperConfigConstants.DEFAULT_BLUR_ITERATIONS
-            )
-            this.currentBlurIterations = blurIterationsVal
-
-            currentP1ShadowRadius = prefs.getInt(
-                WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS,
-                WallpaperConfigConstants.DEFAULT_P1_SHADOW_RADIUS_INT
-            ).toFloat()
-
-            currentP1ShadowDx = prefs.getInt(
-                WallpaperConfigConstants.KEY_P1_SHADOW_DX,
-                WallpaperConfigConstants.DEFAULT_P1_SHADOW_DX_INT
-            ).toFloat()
-
-            currentP1ShadowDy = prefs.getInt(
-                WallpaperConfigConstants.KEY_P1_SHADOW_DY,
-                WallpaperConfigConstants.DEFAULT_P1_SHADOW_DY_INT
-            ).toFloat()
-
-            currentP1ShadowColor = prefs.getInt(
-                WallpaperConfigConstants.KEY_P1_SHADOW_COLOR,
-                WallpaperConfigConstants.DEFAULT_P1_SHADOW_COLOR
-            )
-
-            currentP1ImageBottomFadeHeight = prefs.getInt(
-                WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT,
-                WallpaperConfigConstants.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT_INT
-            ).toFloat()
-
-            currentImageContentVersion = prefs.getLong(
-                WallpaperConfigConstants.KEY_IMAGE_CONTENT_VERSION,
-                WallpaperConfigConstants.DEFAULT_IMAGE_CONTENT_VERSION
-            )
+            // 从 Repository 读取配置
+            imageUriString = preferencesRepository.getSelectedImageUri()?.toString()
+            page1BackgroundColor = preferencesRepository.getSelectedBackgroundColor()
+            page1ImageHeightRatio = preferencesRepository.getPage1ImageHeightRatio()
+            currentP1FocusX = preferencesRepository.getP1FocusX()
+            currentP1FocusY = preferencesRepository.getP1FocusY()
+            currentScrollSensitivity = preferencesRepository.getScrollSensitivity()
+            currentP1OverlayFadeRatio = preferencesRepository.getP1OverlayFadeRatio()
+            currentBackgroundBlurRadius = preferencesRepository.getBackgroundBlurRadius()
+            currentNormalizedInitialBgScrollOffset =
+                preferencesRepository.getBackgroundInitialOffset()
+            currentP2BackgroundFadeInRatio = preferencesRepository.getP2BackgroundFadeInRatio()
+            currentBlurDownscaleFactor = preferencesRepository.getBlurDownscaleFactorInt() / 100.0f
+            currentBlurIterations = preferencesRepository.getBlurIterations()
+            currentP1ShadowRadius = preferencesRepository.getP1ShadowRadius()
+            currentP1ShadowDx = preferencesRepository.getP1ShadowDx()
+            currentP1ShadowDy = preferencesRepository.getP1ShadowDy()
+            currentP1ShadowColor = preferencesRepository.getP1ShadowColor()
+            currentP1ImageBottomFadeHeight = preferencesRepository.getP1ImageBottomFadeHeight()
+            currentImageContentVersion = preferencesRepository.getImageContentVersion()
 
             Log.i(
                 DEBUG_TAG,
-                "Preferences loaded/reloaded (Service): URI=$imageUriString, BlurDownscaleFactor=$currentBlurDownscaleFactor, BlurIterations=$currentBlurIterations, P1ShadowRadius=$currentP1ShadowRadius"
+                "Preferences loaded/reloaded via Repository (Service): URI=$imageUriString, BlurFactor=$currentBlurDownscaleFactor, BlurIter=$currentBlurIterations"
             )
         }
+
+        // loadFullBitmapsAsyncIfNeeded, onSurfaceChanged, onSurfaceDestroyed,
+        // onVisibilityChanged, onOffsetsChanged, loadFullBitmapsAsync,
+        // updateTopCroppedBitmapAsync, updateScrollingBackgroundAsync,
+        // drawCurrentFrame, onDestroy
+        // 这些方法的内部逻辑大部分保持不变，因为它们依赖的是已经通过 loadPreferencesFromStorage()
+        // 更新好的成员变量。
+
+        // 只需要确保在调用 SharedWallpaperRenderer 的方法时，传递的是这些最新的成员变量即可。
+        // 例如，在 loadFullBitmapsAsync 中：
+        private fun loadFullBitmapsAsync() {
+            currentBitmapLoadJob?.cancel()
+            engineWallpaperBitmaps?.recycleInternals()
+            engineWallpaperBitmaps = null
+
+            val uriStringToLoad = imageUriString // 使用成员变量
+            if (uriStringToLoad == null || screenWidth <= 0 || screenHeight <= 0) {
+                if (isVisible) drawCurrentFrame()
+                return
+            }
+            val uri = Uri.parse(uriStringToLoad)
+            Log.i(
+                DEBUG_TAG,
+                "loadFullBitmapsAsync: Starting for URI: $uri. Focus:($currentP1FocusX, $currentP1FocusY), Blur:$currentBackgroundBlurRadius"
+            )
+
+            if (isVisible) {
+                drawCurrentFrame() // Draw placeholder immediately
+            }
+
+            currentBitmapLoadJob = engineScope.launch {
+                var newBitmapsHolder: SharedWallpaperRenderer.WallpaperBitmaps? = null
+                try {
+                    ensureActive()
+                    val pagesForBackground = if (!isPreview && numPagesReportedByLauncher <= 1) {
+                        DEFAULT_VIRTUAL_PAGES_FOR_SCROLLING
+                    } else {
+                        numPagesReportedByLauncher.coerceAtLeast(1)
+                    }
+
+                    newBitmapsHolder = withContext(Dispatchers.IO) {
+                        ensureActive()
+                        SharedWallpaperRenderer.loadAndProcessInitialBitmaps(
+                            context = applicationContext,
+                            imageUri = uri,
+                            targetScreenWidth = screenWidth,
+                            targetScreenHeight = screenHeight,
+                            page1ImageHeightRatio = page1ImageHeightRatio, // 使用成员变量
+                            normalizedFocusX = currentP1FocusX,           // 使用成员变量
+                            normalizedFocusY = currentP1FocusY,           // 使用成员变量
+                            blurRadiusForBackground = currentBackgroundBlurRadius, // 使用成员变量
+                            blurDownscaleFactor = currentBlurDownscaleFactor,     // 使用成员变量
+                            blurIterations = currentBlurIterations            // 使用成员变量
+                        )
+                    }
+                    ensureActive()
+
+                    if (this@H2WallpaperEngine.imageUriString == uriStringToLoad) {
+                        engineWallpaperBitmaps = newBitmapsHolder
+                    } else {
+                        newBitmapsHolder?.recycleInternals()
+                        if (this@H2WallpaperEngine.imageUriString == null) engineWallpaperBitmaps =
+                            null
+                    }
+                } catch (e: CancellationException) {
+                    newBitmapsHolder?.recycleInternals()
+                } catch (e: Exception) {
+                    newBitmapsHolder?.recycleInternals()
+                    engineWallpaperBitmaps = null // 确保出错时清空
+                } finally {
+                    if (coroutineContext[Job] == currentBitmapLoadJob) currentBitmapLoadJob = null
+                    if (isVisible && (this@H2WallpaperEngine.imageUriString == uriStringToLoad || this@H2WallpaperEngine.imageUriString == null)) {
+                        drawCurrentFrame()
+                    }
+                }
+            }
+        }
+
+        // 其余方法 (onSurfaceChanged, onSurfaceDestroyed, onVisibilityChanged, onOffsetsChanged,
+        // updateTopCroppedBitmapAsync, updateScrollingBackgroundAsync, drawCurrentFrame, onDestroy)
+        // 的内部逻辑与之前基本一致，因为它们大多操作的是引擎的成员变量或调用已更新的方法。
+        // 主要变化是在 loadPreferencesFromStorage 中如何获取这些成员变量的值。
 
         private fun loadFullBitmapsAsyncIfNeeded() {
             if (imageUriString != null && screenWidth > 0 && screenHeight > 0) {
@@ -366,6 +417,7 @@ class H2WallpaperService : WallpaperService() {
             val oldNumPages = numPagesReportedByLauncher
             this.numPagesReportedByLauncher = newlyCalculatedPages.coerceIn(1, 20)
 
+
             Log.i(
                 DEBUG_TAG,
                 "onOffsetsChanged: xOffsetStepParam=$xOffsetStepParam, Calculated total pages=${this.numPagesReportedByLauncher}, oldNumPages=$oldNumPages, currentXOffset=$xOffset"
@@ -384,75 +436,6 @@ class H2WallpaperService : WallpaperService() {
             }
         }
 
-        private fun loadFullBitmapsAsync() {
-            currentBitmapLoadJob?.cancel()
-            engineWallpaperBitmaps?.recycleInternals()
-            engineWallpaperBitmaps = null
-
-            val uriStringToLoad = imageUriString
-            if (uriStringToLoad == null || screenWidth <= 0 || screenHeight <= 0) {
-                if (isVisible) drawCurrentFrame()
-                return
-            }
-            val uri = Uri.parse(uriStringToLoad)
-            Log.i(
-                DEBUG_TAG,
-                "loadFullBitmapsAsync: Starting for URI: $uri. Focus:($currentP1FocusX, $currentP1FocusY), Blur:$currentBackgroundBlurRadius"
-            )
-
-            if (isVisible) {
-                drawCurrentFrame()
-            }
-
-            currentBitmapLoadJob = engineScope.launch {
-                var newBitmapsHolder: SharedWallpaperRenderer.WallpaperBitmaps? = null
-                try {
-                    ensureActive()
-                    val pagesForBackground = if (!isPreview && numPagesReportedByLauncher <= 1) {
-                        DEFAULT_VIRTUAL_PAGES_FOR_SCROLLING
-                    } else {
-                        numPagesReportedByLauncher.coerceAtLeast(1)
-                    }
-
-                    newBitmapsHolder = withContext(Dispatchers.IO) {
-                        ensureActive()
-                        SharedWallpaperRenderer.loadAndProcessInitialBitmaps(
-                            context = applicationContext,
-                            imageUri = uri,
-                            targetScreenWidth = screenWidth,
-                            targetScreenHeight = screenHeight,
-                            page1ImageHeightRatio = page1ImageHeightRatio,
-                            normalizedFocusX = currentP1FocusX,
-                            normalizedFocusY = currentP1FocusY,
-                            blurRadiusForBackground = currentBackgroundBlurRadius,
-                            blurDownscaleFactor = currentBlurDownscaleFactor,
-                            blurIterations = currentBlurIterations
-                        )
-                    }
-                    ensureActive()
-
-                    if (this@H2WallpaperEngine.imageUriString == uriStringToLoad) {
-                        engineWallpaperBitmaps = newBitmapsHolder
-                        Log.i(DEBUG_TAG, "Full bitmaps loaded successfully for $uri.")
-                    } else {
-                        newBitmapsHolder?.recycleInternals()
-                        if (this@H2WallpaperEngine.imageUriString == null) engineWallpaperBitmaps =
-                            null
-                    }
-                } catch (e: CancellationException) {
-                    newBitmapsHolder?.recycleInternals()
-                } catch (e: Exception) {
-                    newBitmapsHolder?.recycleInternals()
-                    engineWallpaperBitmaps = null
-                } finally {
-                    if (coroutineContext[Job] == currentBitmapLoadJob) currentBitmapLoadJob = null
-                    if (isVisible && (this@H2WallpaperEngine.imageUriString == uriStringToLoad || this@H2WallpaperEngine.imageUriString == null)) {
-                        drawCurrentFrame()
-                    }
-                }
-            }
-        }
-
         private fun updateTopCroppedBitmapAsync() {
             val currentSourceBitmap = engineWallpaperBitmaps?.sourceSampledBitmap
             if (currentSourceBitmap == null || screenWidth <= 0 || screenHeight <= 0 || imageUriString == null) {
@@ -465,7 +448,7 @@ class H2WallpaperService : WallpaperService() {
                 "updateTopCroppedBitmapAsync: Starting for ratio $page1ImageHeightRatio, Focus($currentP1FocusX, $currentP1FocusY)"
             )
 
-            val p1TopUpdateJob = engineScope.launch { // Renamed to avoid conflict with member
+            val p1TopUpdateJob = engineScope.launch {
                 var newTopCropped: Bitmap? = null
                 val oldTopCropped = engineWallpaperBitmaps?.page1TopCroppedBitmap
                 try {
@@ -516,7 +499,7 @@ class H2WallpaperService : WallpaperService() {
                 "updateScrollingBackgroundAsync: BlurRadius: $currentBackgroundBlurRadius, Downscale: $downscaleFactorToUse, Iterations: $iterationsToUse"
             )
 
-            val scrollingUpdateJob = engineScope.launch { // Renamed to avoid conflict with member
+            val scrollingUpdateJob = engineScope.launch {
                 var newScrollingPair: Pair<Bitmap?, Bitmap?>? = null
                 val oldScrollingBitmap = engineWallpaperBitmaps?.scrollingBackgroundBitmap
                 val oldBlurredBitmap = engineWallpaperBitmaps?.blurredScrollingBackgroundBitmap
@@ -611,7 +594,7 @@ class H2WallpaperService : WallpaperService() {
 
         override fun onDestroy() {
             super.onDestroy()
-            prefs.unregisterOnSharedPreferenceChangeListener(this)
+            prefs.unregisterOnSharedPreferenceChangeListener(this) // 仍然需要取消监听
             engineScope.cancel()
             engineWallpaperBitmaps?.recycleInternals()
             engineWallpaperBitmaps = null
