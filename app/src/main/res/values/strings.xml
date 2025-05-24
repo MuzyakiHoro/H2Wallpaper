@@ -22,4 +22,7 @@
     <string name="reset_height_button">复位高度</string>
     <string name="increase_height_button">图片高度+</string>
     <string name="decrease_height_button">图片高度-</string>
+    <string name="image_loading_in_preview_placeholder">图片加载中…</string>
+    <string name="please_select_image_for_preview_placeholder">请选择图片</string>
+
 </resources>

@@ -25,17 +25,15 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
-
     <Button
         android:id="@+id/btnSetWallpaper"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="44dp"
         android:text="@string/set_wallpaper_button"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
-
     <LinearLayout
         android:id="@+id/heightControlsContainer"
         android:layout_width="0dp"
@@ -141,14 +139,12 @@
             android:shadowRadius="2"
             android:text="@string/select_background_color_label"
             android:textColor="@android:color/white" />
-
         <HorizontalScrollView
             android:id="@+id/hsvColorPalette"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:contentDescription="@string/color_palette_scroll_view_description">
-
             <LinearLayout
                 android:id="@+id/colorPaletteContainer"
                 android:layout_width="wrap_content"
