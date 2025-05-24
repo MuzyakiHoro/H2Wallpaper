@@ -60,7 +60,6 @@ object SharedWallpaperRenderer {
         val p1ImageBottomFadeHeight: Float // 对应 P1_IMAGE_BOTTOM_FADE_HEIGHT_PX
 
 
-
     )
 
     private val scrollingBgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
@@ -78,12 +77,13 @@ object SharedWallpaperRenderer {
 
     // 值越小，"糊"的程度越高，但也可能越失真
     private const val MIN_DOWNSCALED_DIMENSION = 16 // 缩小后图像的最小宽度/高度，防止过小
-/*    private const val P1_SHADOW_RADIUS = 0f // 阴影模糊半径
-    private const val P1_SHADOW_DX = 0f    // X轴偏移，0f 表示阴影在图片正下方
-    private const val P1_SHADOW_DY = 0f   // Y轴偏移，正值表示阴影在图片下方
-    private var P1_SHADOW_COLOR = Color.argb(100, 0, 0, 0) // 半透明黑色阴影
-    private const val P1_IMAGE_BOTTOM_FADE_HEIGHT_PX = 1000f // 假设渐变高度为 60 像素
-*/
+
+    /*    private const val P1_SHADOW_RADIUS = 0f // 阴影模糊半径
+        private const val P1_SHADOW_DX = 0f    // X轴偏移，0f 表示阴影在图片正下方
+        private const val P1_SHADOW_DY = 0f   // Y轴偏移，正值表示阴影在图片下方
+        private var P1_SHADOW_COLOR = Color.argb(100, 0, 0, 0) // 半透明黑色阴影
+        private const val P1_IMAGE_BOTTOM_FADE_HEIGHT_PX = 1000f // 假设渐变高度为 60 像素
+    */
     fun drawFrame(
         canvas: Canvas,
         config: WallpaperConfig,
@@ -105,10 +105,12 @@ object SharedWallpaperRenderer {
         if (safeNumVirtualPages > 1) {
             if (config.p2BackgroundFadeInRatio > 0.01f) {
                 val p2SinglePageXOffsetRange = 1.0f / safeNumVirtualPages.toFloat()
-                val p2FadeEffectMaxXOffset = p2SinglePageXOffsetRange * config.p2BackgroundFadeInRatio.coerceIn(0.01f, 1f)
+                val p2FadeEffectMaxXOffset =
+                    p2SinglePageXOffsetRange * config.p2BackgroundFadeInRatio.coerceIn(0.01f, 1f)
                 if (config.currentXOffset < p2FadeEffectMaxXOffset) {
                     val p2TransitionProgress = config.currentXOffset / p2FadeEffectMaxXOffset
-                    p2BackgroundAlpha = (255 * p2TransitionProgress.toDouble().pow(2.0)).toInt().coerceIn(0, 255)
+                    p2BackgroundAlpha =
+                        (255 * p2TransitionProgress.toDouble().pow(2.0)).toInt().coerceIn(0, 255)
                 } else {
                     p2BackgroundAlpha = 255
                 }
@@ -124,19 +126,30 @@ object SharedWallpaperRenderer {
         }
 
         // --- 绘制 P2 滚动背景图 ---
-        val backgroundToDraw = bitmaps.blurredScrollingBackgroundBitmap ?: bitmaps.scrollingBackgroundBitmap
+        val backgroundToDraw =
+            bitmaps.blurredScrollingBackgroundBitmap ?: bitmaps.scrollingBackgroundBitmap
         backgroundToDraw?.let { bgBmp ->
             if (!bgBmp.isRecycled && bgBmp.width > 0 && bgBmp.height > 0) {
                 val imageActualWidth = bgBmp.width.toFloat()
                 val screenActualWidth = config.screenWidth.toFloat()
 
                 val maxInitialPixelOffset = (imageActualWidth - screenActualWidth).coerceAtLeast(0f)
-                val safeInitialPixelOffset = (imageActualWidth * config.normalizedInitialBgScrollOffset).coerceIn(0f, maxInitialPixelOffset)
-                val totalScrollToAlignRightEdge = (imageActualWidth - screenActualWidth).coerceAtLeast(0f)
-                val dynamicScrollableRange = (totalScrollToAlignRightEdge - safeInitialPixelOffset).coerceAtLeast(0f)
-                val currentDynamicScroll = config.currentXOffset * (dynamicScrollableRange * config.scrollSensitivityFactor)
+                val safeInitialPixelOffset =
+                    (imageActualWidth * config.normalizedInitialBgScrollOffset).coerceIn(
+                        0f,
+                        maxInitialPixelOffset
+                    )
+                val totalScrollToAlignRightEdge =
+                    (imageActualWidth - screenActualWidth).coerceAtLeast(0f)
+                val dynamicScrollableRange =
+                    (totalScrollToAlignRightEdge - safeInitialPixelOffset).coerceAtLeast(0f)
+                val currentDynamicScroll =
+                    config.currentXOffset * (dynamicScrollableRange * config.scrollSensitivityFactor)
                 var currentScrollPxFloat = safeInitialPixelOffset + currentDynamicScroll
-                currentScrollPxFloat = currentScrollPxFloat.coerceIn(safeInitialPixelOffset, totalScrollToAlignRightEdge)
+                currentScrollPxFloat = currentScrollPxFloat.coerceIn(
+                    safeInitialPixelOffset,
+                    totalScrollToAlignRightEdge
+                )
                 currentScrollPxFloat = currentScrollPxFloat.coerceAtLeast(0f)
 
                 val bgTopOffset = ((config.screenHeight - bgBmp.height) / 2f)
@@ -159,10 +172,16 @@ object SharedWallpaperRenderer {
         if (safeNumVirtualPages > 1) {
             if (config.p1OverlayFadeTransitionRatio > 0.01f) {
                 val p1SinglePageXOffsetRange = 1.0f / safeNumVirtualPages.toFloat()
-                val p1FadeEffectMaxXOffset = p1SinglePageXOffsetRange * config.p1OverlayFadeTransitionRatio.coerceIn(0.01f, 1f)
+                val p1FadeEffectMaxXOffset =
+                    p1SinglePageXOffsetRange * config.p1OverlayFadeTransitionRatio.coerceIn(
+                        0.01f,
+                        1f
+                    )
                 if (config.currentXOffset < p1FadeEffectMaxXOffset) {
                     val p1TransitionProgress = config.currentXOffset / p1FadeEffectMaxXOffset
-                    p1OverallAlpha = (255 * (1.0f - p1TransitionProgress.toDouble().pow(2.0))).toInt().coerceIn(0, 255)
+                    p1OverallAlpha =
+                        (255 * (1.0f - p1TransitionProgress.toDouble().pow(2.0))).toInt()
+                            .coerceIn(0, 255)
                 } else {
                     p1OverallAlpha = 0
                 }
@@ -174,12 +193,24 @@ object SharedWallpaperRenderer {
         }
 
 
-            Log.d(TAG, "Service DrawFrame P1 Check: p1OverallAlpha=$p1OverallAlpha, topImageActualHeight=$topImageActualHeight, page1ImageHeightRatio=${config.page1ImageHeightRatio}")
-            Log.d(TAG, "Service DrawFrame P1 Check: p1ShadowRadius=${config.p1ShadowRadius}, p1ImageBottomFadeHeight=${config.p1ImageBottomFadeHeight}")
-            Log.d(TAG, "Service DrawFrame P1 Check: page1TopCroppedBitmap is null? ${bitmaps.page1TopCroppedBitmap == null}")
-            if (bitmaps.page1TopCroppedBitmap != null) {
-                Log.d(TAG, "Service DrawFrame P1 Check: page1TopCroppedBitmap dimensions: ${bitmaps.page1TopCroppedBitmap!!.width}x${bitmaps.page1TopCroppedBitmap!!.height}")
-            }
+        Log.d(
+            TAG,
+            "Service DrawFrame P1 Check: p1OverallAlpha=$p1OverallAlpha, topImageActualHeight=$topImageActualHeight, page1ImageHeightRatio=${config.page1ImageHeightRatio}"
+        )
+        Log.d(
+            TAG,
+            "Service DrawFrame P1 Check: p1ShadowRadius=${config.p1ShadowRadius}, p1ImageBottomFadeHeight=${config.p1ImageBottomFadeHeight}"
+        )
+        Log.d(
+            TAG,
+            "Service DrawFrame P1 Check: page1TopCroppedBitmap is null? ${bitmaps.page1TopCroppedBitmap == null}"
+        )
+        if (bitmaps.page1TopCroppedBitmap != null) {
+            Log.d(
+                TAG,
+                "Service DrawFrame P1 Check: page1TopCroppedBitmap dimensions: ${bitmaps.page1TopCroppedBitmap!!.width}x${bitmaps.page1TopCroppedBitmap!!.height}"
+            )
+        }
 
         if (p1OverallAlpha > 0 && topImageActualHeight > 0) {
 
@@ -212,7 +243,12 @@ object SharedWallpaperRenderer {
                     if (config.p1ShadowRadius > 0f && Color.alpha(config.p1ShadowColor) > 0) {
                         val shadowCasterPaint = Paint(p1OverlayImagePaint)
                         shadowCasterPaint.alpha = 0
-                        shadowCasterPaint.setShadowLayer(config.p1ShadowRadius, config.p1ShadowDx, config.p1ShadowDy, config.p1ShadowColor)
+                        shadowCasterPaint.setShadowLayer(
+                            config.p1ShadowRadius,
+                            config.p1ShadowDx,
+                            config.p1ShadowDy,
+                            config.p1ShadowColor
+                        )
                         canvas.drawRect(0f, 0f, imageWidth, imageHeight, shadowCasterPaint)
                     }
 
@@ -224,7 +260,8 @@ object SharedWallpaperRenderer {
                     // 2c. 在 P1 图片的底部【之上】叠加一个从 P1 背景色向上渐变到透明的遮罩层
                     // 这个遮罩层会覆盖 P1 图片的底部，使其看起来像是融入了 P1 背景色
                     val fadeStartY = imageHeight // 渐变起始点 (图片底部，P1背景色完全覆盖)
-                    val fadeEndY = (imageHeight - config.p1ImageBottomFadeHeight) // 使用 config.p1ImageBottomFadeHeight
+                    val fadeEndY =
+                        (imageHeight - config.p1ImageBottomFadeHeight) // 使用 config.p1ImageBottomFadeHeight
 
                     if (fadeStartY > fadeEndY && config.p1ImageBottomFadeHeight > 0) { // 使用 config.p1ImageBottomFadeHeight
                         val overlayFadeGradient = LinearGradient(
@@ -246,7 +283,10 @@ object SharedWallpaperRenderer {
             }
             canvas.restore() // 对应最外层的 saveLayerAlpha
         }
-        Log.d(DEBUG_TAG_RENDERER, "drawFrame: P1 Overall Alpha=$p1OverallAlpha, P2 BG Alpha=$p2BackgroundAlpha, XOffset=${config.currentXOffset}")
+        Log.d(
+            DEBUG_TAG_RENDERER,
+            "drawFrame: P1 Overall Alpha=$p1OverallAlpha, P2 BG Alpha=$p2BackgroundAlpha, XOffset=${config.currentXOffset}"
+        )
     }
 
     fun preparePage1TopCroppedBitmap(
@@ -262,20 +302,29 @@ object SharedWallpaperRenderer {
             return null
         }
         if (targetScreenWidth <= 0 || targetScreenHeight <= 0 || page1ImageHeightRatio <= 0f || page1ImageHeightRatio >= 1f) {
-            Log.w(TAG, "preparePage1TopCroppedBitmap: Invalid target dimensions or ratio. SW:$targetScreenWidth, SH:$targetScreenHeight, Ratio:$page1ImageHeightRatio")
+            Log.w(
+                TAG,
+                "preparePage1TopCroppedBitmap: Invalid target dimensions or ratio. SW:$targetScreenWidth, SH:$targetScreenHeight, Ratio:$page1ImageHeightRatio"
+            )
             return null
         }
 
         val targetP1ActualHeight = (targetScreenHeight * page1ImageHeightRatio).roundToInt()
         if (targetP1ActualHeight <= 0) {
-            Log.w(TAG, "preparePage1TopCroppedBitmap: Calculated targetP1ActualHeight is zero or less.")
+            Log.w(
+                TAG,
+                "preparePage1TopCroppedBitmap: Calculated targetP1ActualHeight is zero or less."
+            )
             return null
         }
 
         val bmWidth = sourceBitmap.width
         val bmHeight = sourceBitmap.height
         if (bmWidth <= 0 || bmHeight <= 0) {
-            Log.w(TAG, "preparePage1TopCroppedBitmap: Source bitmap has zero or negative dimensions.")
+            Log.w(
+                TAG,
+                "preparePage1TopCroppedBitmap: Source bitmap has zero or negative dimensions."
+            )
             return null
         }
 
@@ -316,22 +365,40 @@ object SharedWallpaperRenderer {
             val srcY = srcYIdeal.roundToInt().coerceIn(0, bmHeight - finalCropHeight)
             // --- END OF MODIFIED LOGIC ---
 
-            Log.d(TAG, "preparePage1TopCroppedBitmap: Focus($normalizedFocusX, $normalizedFocusY) -> DesiredCenterPx(${desiredCenterXInSourcePx.roundToInt()},${desiredCenterYInSourcePx.roundToInt()})")
-            Log.d(TAG, "preparePage1TopCroppedBitmap: CropRectSize(${finalCropWidth}x${finalCropHeight}), IdealSrc(${srcXIdeal.roundToInt()},${srcYIdeal.roundToInt()}) -> FinalSrc($srcX,$srcY) from ${bmWidth}x${bmHeight} for target ${targetScreenWidth}x${targetP1ActualHeight}")
+            Log.d(
+                TAG,
+                "preparePage1TopCroppedBitmap: Focus($normalizedFocusX, $normalizedFocusY) -> DesiredCenterPx(${desiredCenterXInSourcePx.roundToInt()},${desiredCenterYInSourcePx.roundToInt()})"
+            )
+            Log.d(
+                TAG,
+                "preparePage1TopCroppedBitmap: CropRectSize(${finalCropWidth}x${finalCropHeight}), IdealSrc(${srcXIdeal.roundToInt()},${srcYIdeal.roundToInt()}) -> FinalSrc($srcX,$srcY) from ${bmWidth}x${bmHeight} for target ${targetScreenWidth}x${targetP1ActualHeight}"
+            )
 
 
             if (finalCropWidth > 0 && finalCropHeight > 0) { // Redundant check as coerced to 1 above, but good for safety
                 // Check if srcX/Y + cropWidth/Height would exceed bmWidth/Height (should be handled by coerceIn for srcX/Y)
                 // Example: if srcX = bmWidth - finalCropWidth, then srcX + finalCropWidth = bmWidth. Correct.
 
-                val cropped = Bitmap.createBitmap(sourceBitmap, srcX, srcY, finalCropWidth, finalCropHeight)
-                page1TopCropped = Bitmap.createScaledBitmap(cropped, targetScreenWidth, targetP1ActualHeight, true)
+                val cropped =
+                    Bitmap.createBitmap(sourceBitmap, srcX, srcY, finalCropWidth, finalCropHeight)
+                page1TopCropped = Bitmap.createScaledBitmap(
+                    cropped,
+                    targetScreenWidth,
+                    targetP1ActualHeight,
+                    true
+                )
                 if (cropped != page1TopCropped && !cropped.isRecycled) {
                     cropped.recycle()
                 }
-                Log.d(TAG, "Page1 top cropped bitmap created: ${page1TopCropped.width}x${page1TopCropped.height}")
+                Log.d(
+                    TAG,
+                    "Page1 top cropped bitmap created: ${page1TopCropped.width}x${page1TopCropped.height}"
+                )
             } else {
-                Log.w(TAG, "preparePage1TopCroppedBitmap: Calculated finalCropWidth or finalCropHeight is zero or less (should not happen).")
+                Log.w(
+                    TAG,
+                    "preparePage1TopCroppedBitmap: Calculated finalCropWidth or finalCropHeight is zero or less (should not happen)."
+                )
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error creating page1TopCroppedBitmap", e)
@@ -377,7 +444,10 @@ object SharedWallpaperRenderer {
         val scaledWidthForScrollingBg = (originalBitmapWidth * scaleToFitScreenHeight).roundToInt()
 
         if (scaledWidthForScrollingBg <= 0) {
-            Log.w(TAG, "prepareScrollingAndBlurredBitmaps: Calculated scaledOriginalWidth is zero or less.")
+            Log.w(
+                TAG,
+                "prepareScrollingAndBlurredBitmaps: Calculated scaledOriginalWidth is zero or less."
+            )
             return Pair(null, null)
         }
 
@@ -389,7 +459,12 @@ object SharedWallpaperRenderer {
 
         try {
             // 2. 创建基础的滚动背景图 (按屏幕高度缩放)
-            baseScrollingBitmap = Bitmap.createScaledBitmap(sourceBitmap, scaledWidthForScrollingBg, targetScreenHeight, true)
+            baseScrollingBitmap = Bitmap.createScaledBitmap(
+                sourceBitmap,
+                scaledWidthForScrollingBg,
+                targetScreenHeight,
+                true
+            )
             finalScrollingBackground = baseScrollingBitmap // 未模糊的滚动背景图赋值
 
             // 3. 如果需要模糊 (blurRadius > 0)，则进行模糊处理
@@ -408,11 +483,24 @@ object SharedWallpaperRenderer {
                 // 条件：当降采样因子显著小于1 (表示希望降采样) 并且
                 // 计算出的降采样后尺寸确实小于原待模糊图像尺寸时，才执行降采样路径。
                 if (actualDownscaleFactor < 0.99f && (downscaledWidth < sourceForActualBlur.width || downscaledHeight < sourceForActualBlur.height)) {
-                    Log.d(TAG, "Applying enhanced blur: Downscale by x$actualDownscaleFactor, Iterations: $blurIterations")
-                    downscaledForBlur = Bitmap.createScaledBitmap(sourceForActualBlur, downscaledWidth, downscaledHeight, true)
+                    Log.d(
+                        TAG,
+                        "Applying enhanced blur: Downscale by x$actualDownscaleFactor, Iterations: $blurIterations"
+                    )
+                    downscaledForBlur = Bitmap.createScaledBitmap(
+                        sourceForActualBlur,
+                        downscaledWidth,
+                        downscaledHeight,
+                        true
+                    )
 
                     val radiusForDownscaledBitmap = blurRadius.coerceIn(0.1f, 25.0f)
-                    blurredDownscaled = blurBitmapUsingRenderScript(context, downscaledForBlur, radiusForDownscaledBitmap, blurIterations)
+                    blurredDownscaled = blurBitmapUsingRenderScript(
+                        context,
+                        downscaledForBlur,
+                        radiusForDownscaledBitmap,
+                        blurIterations
+                    )
 
                     if (blurredDownscaled != null) {
                         upscaledBlurredBitmap = Bitmap.createScaledBitmap(
@@ -423,15 +511,31 @@ object SharedWallpaperRenderer {
                         )
                         finalBlurredScrollingBackground = upscaledBlurredBitmap
                     } else {
-                        Log.w(TAG, "Enhanced blur: Blurring on downscaled image failed. Falling back to standard blur on original-scale.")
+                        Log.w(
+                            TAG,
+                            "Enhanced blur: Blurring on downscaled image failed. Falling back to standard blur on original-scale."
+                        )
                         // 如果在缩小图上模糊失败，则在原始缩放尺寸的图上进行模糊作为后备
-                        finalBlurredScrollingBackground = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
+                        finalBlurredScrollingBackground = blurBitmapUsingRenderScript(
+                            context,
+                            sourceForActualBlur,
+                            blurRadius,
+                            blurIterations
+                        )
                     }
                 } else {
                     // 如果不满足降采样条件 (例如因子接近1，或图片本身已经很小)
                     // 直接在 baseScrollingBitmap 上进行标准模糊（但仍使用迭代次数）
-                    Log.d(TAG, "Applying standard blur (no effective downscale or factor too high). Iterations: $blurIterations")
-                    finalBlurredScrollingBackground = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
+                    Log.d(
+                        TAG,
+                        "Applying standard blur (no effective downscale or factor too high). Iterations: $blurIterations"
+                    )
+                    finalBlurredScrollingBackground = blurBitmapUsingRenderScript(
+                        context,
+                        sourceForActualBlur,
+                        blurRadius,
+                        blurIterations
+                    )
                 }
             } else if (baseScrollingBitmap != null && !baseScrollingBitmap.isRecycled) {
                 // 不需要模糊 (blurRadius 为0或非常小)
@@ -453,12 +557,14 @@ object SharedWallpaperRenderer {
                 downscaledForBlur?.recycle()
             }
             blurredDownscaled?.recycle()
-            Log.d(TAG, "Intermediate bitmaps for blur (downscaled, blurredDownscaled) recycled if they were created.")
+            Log.d(
+                TAG,
+                "Intermediate bitmaps for blur (downscaled, blurredDownscaled) recycled if they were created."
+            )
         }
 
         return Pair(finalScrollingBackground, finalBlurredScrollingBackground)
     }
-
 
 
     fun loadAndProcessInitialBitmaps(
@@ -479,34 +585,46 @@ object SharedWallpaperRenderer {
             return WallpaperBitmaps(null, null, null, null)
         }
         if (targetScreenWidth <= 0 || targetScreenHeight <= 0) {
-            Log.w(TAG, "loadAndProcessInitialBitmaps: Invalid target dimensions. SW:$targetScreenWidth, SH:$targetScreenHeight")
+            Log.w(
+                TAG,
+                "loadAndProcessInitialBitmaps: Invalid target dimensions. SW:$targetScreenWidth, SH:$targetScreenHeight"
+            )
             return WallpaperBitmaps(null, null, null, null)
         }
 
         var sourceSampled: Bitmap? = null
         try {
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            context.contentResolver.openInputStream(imageUri)?.use { BitmapFactory.decodeStream(it, null, options) }
+            context.contentResolver.openInputStream(imageUri)
+                ?.use { BitmapFactory.decodeStream(it, null, options) }
 
             if (options.outWidth <= 0 || options.outHeight <= 0) {
-                Log.e(TAG, "loadAndProcessInitialBitmaps: Image bounds invalid after first decode. URI: $imageUri")
+                Log.e(
+                    TAG,
+                    "loadAndProcessInitialBitmaps: Image bounds invalid after first decode. URI: $imageUri"
+                )
                 return WallpaperBitmaps(null, null, null, null)
             }
 
-            options.inSampleSize = calculateInSampleSize(options,
+            options.inSampleSize = calculateInSampleSize(
+                options,
                 maxOf(targetScreenWidth, targetScreenWidth),
                 maxOf((targetScreenHeight * page1ImageHeightRatio).roundToInt(), targetScreenHeight)
             )
             options.inJustDecodeBounds = false
             options.inPreferredConfig = Bitmap.Config.ARGB_8888
 
-            context.contentResolver.openInputStream(imageUri)?.use { sourceSampled = BitmapFactory.decodeStream(it, null, options) }
+            context.contentResolver.openInputStream(imageUri)
+                ?.use { sourceSampled = BitmapFactory.decodeStream(it, null, options) }
 
             if (sourceSampled == null || sourceSampled!!.isRecycled) {
                 Log.e(TAG, "Failed to decode sourceSampledBitmap. URI: $imageUri")
                 return WallpaperBitmaps(null, null, null, null)
             }
-            Log.d(TAG, "loadAndProcessInitialBitmaps: Source sampled to ${sourceSampled!!.width}x${sourceSampled!!.height} with inSampleSize=${options.inSampleSize}")
+            Log.d(
+                TAG,
+                "loadAndProcessInitialBitmaps: Source sampled to ${sourceSampled!!.width}x${sourceSampled!!.height} with inSampleSize=${options.inSampleSize}"
+            )
 
             val topCropped = preparePage1TopCroppedBitmap(
                 sourceSampled,
@@ -522,7 +640,7 @@ object SharedWallpaperRenderer {
                 sourceSampled,
                 targetScreenWidth,
                 targetScreenHeight,
-              //  numVirtualPagesForScrolling,
+                //  numVirtualPagesForScrolling,
                 blurRadiusForBackground,
                 blurDownscaleFactor,
                 blurIterations,
@@ -537,7 +655,11 @@ object SharedWallpaperRenderer {
         }
     }
 
-    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+    private fun calculateInSampleSize(
+        options: BitmapFactory.Options,
+        reqWidth: Int,
+        reqHeight: Int
+    ): Int {
         val height = options.outHeight
         val width = options.outWidth
         var inSampleSize = 1
@@ -555,7 +677,10 @@ object SharedWallpaperRenderer {
                 }
             }
         }
-        Log.d(TAG, "calculateInSampleSize: original ${width}x${height}, required ${reqWidth}x${reqHeight}, sampleSize $inSampleSize")
+        Log.d(
+            TAG,
+            "calculateInSampleSize: original ${width}x${height}, required ${reqWidth}x${reqHeight}, sampleSize $inSampleSize"
+        )
         return inSampleSize
     }
 
@@ -577,7 +702,10 @@ object SharedWallpaperRenderer {
 
         // 如果有效模糊半径过小且只迭代一次，直接返回原始bitmap的一个副本，以节省开销
         if (clampedRadius < 0.1f && actualIterations == 1) {
-            Log.d(TAG, "blurBitmapUsingRenderScript: Radius ($clampedRadius) too small for single iteration, returning a copy.")
+            Log.d(
+                TAG,
+                "blurBitmapUsingRenderScript: Radius ($clampedRadius) too small for single iteration, returning a copy."
+            )
             return try {
                 bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
             } catch (e: Exception) {
@@ -597,7 +725,10 @@ object SharedWallpaperRenderer {
             script.setRadius(clampedRadius)
 
             for (i in 0 until actualIterations) {
-                Log.d(TAG, "Blur iteration ${i + 1} of $actualIterations with radius $clampedRadius")
+                Log.d(
+                    TAG,
+                    "Blur iteration ${i + 1} of $actualIterations with radius $clampedRadius"
+                )
 
                 // 为当前迭代的输出创建一个新的 Bitmap
                 // 注意：currentProcessingBitmap 在第一次迭代时是原始 bitmap，
@@ -635,7 +766,11 @@ object SharedWallpaperRenderer {
             return currentProcessingBitmap
 
         } catch (e: Exception) { // 通用异常捕获
-            Log.e(TAG, "RenderScript blur failed during iterations (radius: $clampedRadius, iterations: $actualIterations).", e)
+            Log.e(
+                TAG,
+                "RenderScript blur failed during iterations (radius: $clampedRadius, iterations: $actualIterations).",
+                e
+            )
 
             // 发生异常时，我们需要清理掉在try块中可能创建的Bitmap
             // iterationOutputBitmap 是最后一次尝试创建或赋值的输出Bitmap
@@ -662,20 +797,34 @@ object SharedWallpaperRenderer {
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), placeholderBgPaint)
 
         placeholderTextPaint.alpha = 200
-        val textY = height / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
+        val textY =
+            height / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
         canvas.drawText(text, width / 2f, textY, placeholderTextPaint)
     }
 
-    private fun drawPlaceholderForP1Overlay(canvas: Canvas, viewWidth: Int, topImageActualHeight: Int, text: String, overallAlpha: Int) {
+    private fun drawPlaceholderForP1Overlay(
+        canvas: Canvas,
+        viewWidth: Int,
+        topImageActualHeight: Int,
+        text: String,
+        overallAlpha: Int
+    ) {
         if (topImageActualHeight <= 0) return
 
         placeholderBgPaint.color = Color.GRAY
         placeholderBgPaint.alpha = overallAlpha
-        canvas.drawRect(0f, 0f, viewWidth.toFloat(), topImageActualHeight.toFloat(), placeholderBgPaint)
+        canvas.drawRect(
+            0f,
+            0f,
+            viewWidth.toFloat(),
+            topImageActualHeight.toFloat(),
+            placeholderBgPaint
+        )
 
         placeholderTextPaint.alpha = overallAlpha
         val textX = viewWidth / 2f
-        val textY = topImageActualHeight / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
+        val textY =
+            topImageActualHeight / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
         canvas.drawText(text, textX, textY, placeholderTextPaint)
     }
 

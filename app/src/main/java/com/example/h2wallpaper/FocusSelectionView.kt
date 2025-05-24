@@ -67,42 +67,56 @@ class FocusSelectionView @JvmOverloads constructor(
     }
 
     private fun initializeGestureDetectors() {
-        gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent): Boolean {
-                return sourceBitmap != null // 只有在有图片时才开始处理手势
-            }
-            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
-                if (sourceBitmap == null || e1 == null) return false // 添加e1的空检查
-                imageMatrix.postTranslate(-distanceX, -distanceY)
-                applyMatrixBounds()
-                invalidate()
-                return true
-            }
-        })
+        gestureDetector =
+            GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+                override fun onDown(e: MotionEvent): Boolean {
+                    return sourceBitmap != null // 只有在有图片时才开始处理手势
+                }
 
-        scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScale(detector: ScaleGestureDetector): Boolean {
-                if (sourceBitmap == null) return false
-                val scaleFactor = detector.scaleFactor
-                val currentGlobalScale = getCurrentGlobalScale()
-                val baseFillScale = calculateBaseFillScale()
-
-                var newGlobalScale = currentGlobalScale * scaleFactor
-                newGlobalScale = newGlobalScale.coerceIn(
-                    baseFillScale * minUserScaleFactor,
-                    baseFillScale * maxUserScaleFactor
-                )
-
-                val actualAppliedScaleFactor = newGlobalScale / currentGlobalScale
-
-                if (actualAppliedScaleFactor != 1.0f) {
-                    imageMatrix.postScale(actualAppliedScaleFactor, actualAppliedScaleFactor, detector.focusX, detector.focusY)
+                override fun onScroll(
+                    e1: MotionEvent?,
+                    e2: MotionEvent,
+                    distanceX: Float,
+                    distanceY: Float
+                ): Boolean {
+                    if (sourceBitmap == null || e1 == null) return false // 添加e1的空检查
+                    imageMatrix.postTranslate(-distanceX, -distanceY)
                     applyMatrixBounds()
                     invalidate()
+                    return true
                 }
-                return true
-            }
-        })
+            })
+
+        scaleGestureDetector = ScaleGestureDetector(
+            context,
+            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScale(detector: ScaleGestureDetector): Boolean {
+                    if (sourceBitmap == null) return false
+                    val scaleFactor = detector.scaleFactor
+                    val currentGlobalScale = getCurrentGlobalScale()
+                    val baseFillScale = calculateBaseFillScale()
+
+                    var newGlobalScale = currentGlobalScale * scaleFactor
+                    newGlobalScale = newGlobalScale.coerceIn(
+                        baseFillScale * minUserScaleFactor,
+                        baseFillScale * maxUserScaleFactor
+                    )
+
+                    val actualAppliedScaleFactor = newGlobalScale / currentGlobalScale
+
+                    if (actualAppliedScaleFactor != 1.0f) {
+                        imageMatrix.postScale(
+                            actualAppliedScaleFactor,
+                            actualAppliedScaleFactor,
+                            detector.focusX,
+                            detector.focusY
+                        )
+                        applyMatrixBounds()
+                        invalidate()
+                    }
+                    return true
+                }
+            })
     }
 
     override fun onDetachedFromWindow() {
@@ -114,8 +128,16 @@ class FocusSelectionView @JvmOverloads constructor(
         Log.d(TAG, "onDetachedFromWindow: Resources cleaned up.")
     }
 
-    fun setImageUri(uri: Uri, targetP1AspectRatio: Float, initialNormFocusX: Float = 0.5f, initialNormFocusY: Float = 0.5f) {
-        Log.d(TAG, "setImageUri called with URI: $uri, AspectRatio: $targetP1AspectRatio, InitialFocus: ($initialNormFocusX, $initialNormFocusY)")
+    fun setImageUri(
+        uri: Uri,
+        targetP1AspectRatio: Float,
+        initialNormFocusX: Float = 0.5f,
+        initialNormFocusY: Float = 0.5f
+    ) {
+        Log.d(
+            TAG,
+            "setImageUri called with URI: $uri, AspectRatio: $targetP1AspectRatio, InitialFocus: ($initialNormFocusX, $initialNormFocusY)"
+        )
         this.p1PreviewAspectRatio = if (targetP1AspectRatio > 0) targetP1AspectRatio else 16f / 9f
 
         bitmapLoadingJob?.cancel()
@@ -129,27 +151,45 @@ class FocusSelectionView @JvmOverloads constructor(
                 val loadedBitmap = loadImageAsync(uri)
                 if (!isActive) { // 协程可能在加载过程中被取消
                     loadedBitmap?.recycle()
-                    Log.d(TAG, "setImageUri: Coroutine cancelled during/after load, recycling loaded bitmap if any.")
+                    Log.d(
+                        TAG,
+                        "setImageUri: Coroutine cancelled during/after load, recycling loaded bitmap if any."
+                    )
                     return@launch
                 }
 
                 if (loadedBitmap != null) {
-                    Log.i(TAG, "setImageUri: Bitmap loaded successfully, original size: ${loadedBitmap.width}x${loadedBitmap.height}")
+                    Log.i(
+                        TAG,
+                        "setImageUri: Bitmap loaded successfully, original size: ${loadedBitmap.width}x${loadedBitmap.height}"
+                    )
                     sourceBitmap = loadedBitmap
                     if (width > 0 && height > 0) { // 确保View已测量
                         resetImageToFocusPoint(initialNormFocusX, initialNormFocusY)
                     } else {
                         // View尚未测量，等待onSizeChanged中调用resetImageState
-                        Log.d(TAG, "setImageUri: View not yet measured, reset will happen in onSizeChanged.")
+                        Log.d(
+                            TAG,
+                            "setImageUri: View not yet measured, reset will happen in onSizeChanged."
+                        )
                         // 也可以post一个任务来确保在测量后执行
-                        post { if (width > 0 && height > 0) resetImageToFocusPoint(initialNormFocusX, initialNormFocusY) }
+                        post {
+                            if (width > 0 && height > 0) resetImageToFocusPoint(
+                                initialNormFocusX,
+                                initialNormFocusY
+                            )
+                        }
                     }
                 } else {
                     Log.e(TAG, "setImageUri: loadImageAsync returned null for URI: $uri")
                     Toast.makeText(context, "图片加载失败", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "setImageUri: Exception during image loading or processing for URI: $uri", e)
+                Log.e(
+                    TAG,
+                    "setImageUri: Exception during image loading or processing for URI: $uri",
+                    e
+                )
                 Toast.makeText(context, "图片加载异常: ${e.message}", Toast.LENGTH_SHORT).show()
             } finally {
                 if (isActive) invalidate() // 确保在协程结束时（如果还在活动状态）重绘一次
@@ -164,7 +204,10 @@ class FocusSelectionView @JvmOverloads constructor(
         try {
             inputStream = context.contentResolver.openInputStream(uri)
             if (inputStream == null) {
-                Log.e(TAG, "loadImageAsync: contentResolver.openInputStream(uri) returned NULL for $uri")
+                Log.e(
+                    TAG,
+                    "loadImageAsync: contentResolver.openInputStream(uri) returned NULL for $uri"
+                )
                 return@withContext null
             }
             Log.d(TAG, "loadImageAsync: Successfully opened InputStream for $uri")
@@ -177,16 +220,22 @@ class FocusSelectionView @JvmOverloads constructor(
             }
 
             if (options.outWidth <= 0 || options.outHeight <= 0) {
-                Log.e(TAG, "loadImageAsync: Bitmap dimensions are invalid after size check. Width: ${options.outWidth}, Height: ${options.outHeight}")
+                Log.e(
+                    TAG,
+                    "loadImageAsync: Bitmap dimensions are invalid after size check. Width: ${options.outWidth}, Height: ${options.outHeight}"
+                )
                 return@withContext null
             }
 
             // 计算采样率
             var inSampleSize = 1
             // 目标：让解码后的图片尺寸不要过大，例如最长边不超过2048px，或短边不小于预览框估算尺寸
-            val estimatedPreviewBoxShortSide = min(width.toFloat() * 0.6f, height.toFloat() * 0.6f) / 2f // 非常粗略的估算
-            val reqWidth = if(estimatedPreviewBoxShortSide > 0) estimatedPreviewBoxShortSide.toInt() * 2 else 1080
-            val reqHeight = if(estimatedPreviewBoxShortSide > 0) estimatedPreviewBoxShortSide.toInt() * 2 else 1920
+            val estimatedPreviewBoxShortSide =
+                min(width.toFloat() * 0.6f, height.toFloat() * 0.6f) / 2f // 非常粗略的估算
+            val reqWidth =
+                if (estimatedPreviewBoxShortSide > 0) estimatedPreviewBoxShortSide.toInt() * 2 else 1080
+            val reqHeight =
+                if (estimatedPreviewBoxShortSide > 0) estimatedPreviewBoxShortSide.toInt() * 2 else 1920
 
 
             if (options.outHeight > reqHeight || options.outWidth > reqWidth) {
@@ -200,7 +249,10 @@ class FocusSelectionView @JvmOverloads constructor(
             options.inSampleSize = inSampleSize
             options.inJustDecodeBounds = false
             options.inPreferredConfig = Bitmap.Config.ARGB_8888
-            Log.d(TAG, "loadImageAsync: Calculated inSampleSize: $inSampleSize for original ${options.outWidth}x${options.outHeight}")
+            Log.d(
+                TAG,
+                "loadImageAsync: Calculated inSampleSize: $inSampleSize for original ${options.outWidth}x${options.outHeight}"
+            )
 
 
             // 再次打开流进行实际解码
@@ -209,22 +261,46 @@ class FocusSelectionView @JvmOverloads constructor(
             }
 
             if (bitmap != null) {
-                Log.i(TAG, "loadImageAsync: Bitmap decoded successfully from $uri, new size: ${bitmap.width}x${bitmap.height}")
+                Log.i(
+                    TAG,
+                    "loadImageAsync: Bitmap decoded successfully from $uri, new size: ${bitmap.width}x${bitmap.height}"
+                )
             } else {
-                Log.e(TAG, "loadImageAsync: BitmapFactory.decodeStream returned null for $uri with inSampleSize=$inSampleSize")
+                Log.e(
+                    TAG,
+                    "loadImageAsync: BitmapFactory.decodeStream returned null for $uri with inSampleSize=$inSampleSize"
+                )
             }
             return@withContext bitmap
         } catch (e: SecurityException) {
-            Log.e(TAG, "loadImageAsync: SecurityException for URI: $uri. READ PERMISSION DENIED.", e)
-            launch(Dispatchers.Main) { Toast.makeText(context, "无法访问图片，请检查权限", Toast.LENGTH_LONG).show() }
+            Log.e(
+                TAG,
+                "loadImageAsync: SecurityException for URI: $uri. READ PERMISSION DENIED.",
+                e
+            )
+            launch(Dispatchers.Main) {
+                Toast.makeText(
+                    context,
+                    "无法访问图片，请检查权限",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
             return@withContext null
         } catch (e: FileNotFoundException) {
             Log.e(TAG, "loadImageAsync: FileNotFoundException for URI: $uri. File not found.", e)
-            launch(Dispatchers.Main) { Toast.makeText(context, "图片文件未找到", Toast.LENGTH_LONG).show() }
+            launch(Dispatchers.Main) {
+                Toast.makeText(context, "图片文件未找到", Toast.LENGTH_LONG).show()
+            }
             return@withContext null
         } catch (e: Exception) {
             Log.e(TAG, "loadImageAsync: Generic Exception for URI: $uri", e)
-            launch(Dispatchers.Main) { Toast.makeText(context, "加载图片时发生未知错误", Toast.LENGTH_LONG).show() }
+            launch(Dispatchers.Main) {
+                Toast.makeText(
+                    context,
+                    "加载图片时发生未知错误",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
             return@withContext null
         } finally {
             try {
@@ -253,7 +329,12 @@ class FocusSelectionView @JvmOverloads constructor(
         if (width <= 0 || height <= 0 || p1PreviewRectView.isEmpty) {
             Log.w(TAG, "resetImageToFocusPoint: View or preview box not ready. Deferring.")
             // 可以post一个任务，或者依赖onSizeChanged之后的调用
-            post { if (width > 0 && height > 0 && !p1PreviewRectView.isEmpty) resetImageToFocusPoint(normFocusX, normFocusY) }
+            post {
+                if (width > 0 && height > 0 && !p1PreviewRectView.isEmpty) resetImageToFocusPoint(
+                    normFocusX,
+                    normFocusY
+                )
+            }
             return
         }
         Log.d(TAG, "resetImageToFocusPoint: Resetting to focus ($normFocusX, $normFocusY)")
@@ -274,7 +355,10 @@ class FocusSelectionView @JvmOverloads constructor(
         imageMatrix.postTranslate(translateX, translateY)
         applyMatrixBounds()
         invalidate()
-        Log.d(TAG, "resetImageToFocusPoint: Matrix reset. Scale: $initialActualScale, Translate: ($translateX, $translateY)")
+        Log.d(
+            TAG,
+            "resetImageToFocusPoint: Matrix reset. Scale: $initialActualScale, Translate: ($translateX, $translateY)"
+        )
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -286,7 +370,7 @@ class FocusSelectionView @JvmOverloads constructor(
             val targetBoxWidth: Float
             val targetBoxHeight: Float
 
-            if (p1PreviewAspectRatio <= 0f) p1PreviewAspectRatio = 16f/9f // 安全检查
+            if (p1PreviewAspectRatio <= 0f) p1PreviewAspectRatio = 16f / 9f // 安全检查
 
             // 假设我们希望预览框宽度占View宽度的85%
             targetBoxWidth = w * 0.85f
@@ -331,7 +415,10 @@ class FocusSelectionView @JvmOverloads constructor(
 
         val currentGlobalScale = getCurrentGlobalScale()
         if (currentGlobalScale <= 0f) { // 无效缩放，可能需要重置
-            Log.w(TAG, "applyMatrixBounds: Invalid currentGlobalScale: $currentGlobalScale. Resetting image state might be needed.")
+            Log.w(
+                TAG,
+                "applyMatrixBounds: Invalid currentGlobalScale: $currentGlobalScale. Resetting image state might be needed."
+            )
             // resetImageToFocusPoint(0.5f,0.5f) // 考虑是否需要强制重置
             return
         }
@@ -413,11 +500,35 @@ class FocusSelectionView @JvmOverloads constructor(
         val thirdHeight = rect.height() / 3f
 
         // 垂直线
-        canvas.drawLine(rect.left + thirdWidth, rect.top, rect.left + thirdWidth, rect.bottom, previewBoxGridPaint)
-        canvas.drawLine(rect.left + thirdWidth * 2, rect.top, rect.left + thirdWidth * 2, rect.bottom, previewBoxGridPaint)
+        canvas.drawLine(
+            rect.left + thirdWidth,
+            rect.top,
+            rect.left + thirdWidth,
+            rect.bottom,
+            previewBoxGridPaint
+        )
+        canvas.drawLine(
+            rect.left + thirdWidth * 2,
+            rect.top,
+            rect.left + thirdWidth * 2,
+            rect.bottom,
+            previewBoxGridPaint
+        )
         // 水平线
-        canvas.drawLine(rect.left, rect.top + thirdHeight, rect.right, rect.top + thirdHeight, previewBoxGridPaint)
-        canvas.drawLine(rect.left, rect.top + thirdHeight * 2, rect.right, rect.top + thirdHeight * 2, previewBoxGridPaint)
+        canvas.drawLine(
+            rect.left,
+            rect.top + thirdHeight,
+            rect.right,
+            rect.top + thirdHeight,
+            previewBoxGridPaint
+        )
+        canvas.drawLine(
+            rect.left,
+            rect.top + thirdHeight * 2,
+            rect.right,
+            rect.top + thirdHeight * 2,
+            previewBoxGridPaint
+        )
     }
 
 

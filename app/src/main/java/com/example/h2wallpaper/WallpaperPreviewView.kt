@@ -1,4 +1,3 @@
-// WallpaperPreviewView.kt
 package com.example.h2wallpaper
 
 import android.content.Context
@@ -20,37 +19,49 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
+// 导入 WallpaperConfigConstants 对象
+import com.example.h2wallpaper.WallpaperConfigConstants
+
 class WallpaperPreviewView @JvmOverloads constructor(
-    context: Context,
-    attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0
+    context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 ) : View(context, attrs) {
 
     private val TAG = "WallpaperPreviewView"
 
     // --- 可配置状态 (部分由 MainActivity 通过方法设置) ---
     private var imageUri: Uri? = null
-    private var selectedBackgroundColor: Int = Color.LTGRAY
-    private var page1ImageHeightRatio: Float = MainActivity.DEFAULT_HEIGHT_RATIO // 引用MainActivity的默认值
+    private var selectedBackgroundColor: Int = Color.LTGRAY // 这个通常由 MainActivity 直接设置，但初始可以有个值
+    private var page1ImageHeightRatio: Float = WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO // 使用常量
     private var currentNormalizedFocusX: Float = 0.5f
     private var currentNormalizedFocusY: Float = 0.5f
 
-    // 由 MainActivity 通过 setConfigValues 设置的参数
-    private var currentScrollSensitivity: Float = MainActivity.DEFAULT_SCROLL_SENSITIVITY
-    private var currentP1OverlayFadeRatio: Float = MainActivity.DEFAULT_P1_OVERLAY_FADE_RATIO
-    private var currentP2BackgroundFadeInRatio: Float = MainActivity.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
-    private var currentBackgroundBlurRadius: Float = MainActivity.DEFAULT_BACKGROUND_BLUR_RADIUS
-    private var currentBlurDownscaleFactor: Float = MainActivity.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT / 100.0f // 假设MainActivity有定义
-    private var currentBlurIterations: Int = MainActivity.DEFAULT_BLUR_ITERATIONS // 假设MainActivity有定义
-    private var currentSnapAnimationDurationMs: Long = MainActivity.DEFAULT_PREVIEW_SNAP_DURATION_MS
-    private var currentNormalizedInitialBgScrollOffset: Float = MainActivity.DEFAULT_BACKGROUND_INITIAL_OFFSET
+    // 由 MainActivity 通过 setConfigValues 设置的参数，这些是运行时从 SharedPreferences 加载的值，
+    // 但它们的初始/默认值（如果 MainActivity 没有立即设置它们）应该来自 WallpaperConfigConstants
+    private var currentScrollSensitivity: Float =
+        WallpaperConfigConstants.DEFAULT_SCROLL_SENSITIVITY
+    private var currentP1OverlayFadeRatio: Float =
+        WallpaperConfigConstants.DEFAULT_P1_OVERLAY_FADE_RATIO
+    private var currentP2BackgroundFadeInRatio: Float =
+        WallpaperConfigConstants.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
+    private var currentBackgroundBlurRadius: Float =
+        WallpaperConfigConstants.DEFAULT_BACKGROUND_BLUR_RADIUS
+
+    // DEFAULT_BLUR_DOWNSCALE_FACTOR_INT 是整数 (代表百分比的100倍)，转换为浮点数因子
+    private var currentBlurDownscaleFactor: Float =
+        WallpaperConfigConstants.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT / 100.0f
+    private var currentBlurIterations: Int = WallpaperConfigConstants.DEFAULT_BLUR_ITERATIONS
+    private var currentSnapAnimationDurationMs: Long =
+        WallpaperConfigConstants.DEFAULT_PREVIEW_SNAP_DURATION_MS
+    private var currentNormalizedInitialBgScrollOffset: Float =
+        WallpaperConfigConstants.DEFAULT_BACKGROUND_INITIAL_OFFSET
 
     // 新增的P1特效参数
-    private var currentP1ShadowRadius: Float = MainActivity.DEFAULT_P1_SHADOW_RADIUS
-    private var currentP1ShadowDx: Float = MainActivity.DEFAULT_P1_SHADOW_DX
-    private var currentP1ShadowDy: Float = MainActivity.DEFAULT_P1_SHADOW_DY // 确保这个变量存在
-    private var currentP1ShadowColor: Int = MainActivity.DEFAULT_P1_SHADOW_COLOR
-    private var currentP1ImageBottomFadeHeight: Float = MainActivity.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT
+    private var currentP1ShadowRadius: Float = WallpaperConfigConstants.DEFAULT_P1_SHADOW_RADIUS
+    private var currentP1ShadowDx: Float = WallpaperConfigConstants.DEFAULT_P1_SHADOW_DX
+    private var currentP1ShadowDy: Float = WallpaperConfigConstants.DEFAULT_P1_SHADOW_DY
+    private var currentP1ShadowColor: Int = WallpaperConfigConstants.DEFAULT_P1_SHADOW_COLOR
+    private var currentP1ImageBottomFadeHeight: Float =
+        WallpaperConfigConstants.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT
 
     private var wallpaperBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
 
@@ -58,7 +69,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
     private var viewWidth: Int = 0
     private var viewHeight: Int = 0
     private var currentPreviewXOffset: Float = 0f
-    private val numVirtualPages: Int = 3
+    private val numVirtualPages: Int = 3 // 这个预览视图固定为3页，与服务端的 launcher 报告页数分开
 
     // --- 滑动和惯性滚动 ---
     private var velocityTracker: VelocityTracker? = null
@@ -81,15 +92,25 @@ class WallpaperPreviewView @JvmOverloads constructor(
         val oldViewHeight = viewHeight
         viewWidth = w
         viewHeight = h
-        Log.d(TAG, "onSizeChanged: New $viewWidth x $viewHeight, Old $oldViewWidth x $oldViewHeight")
+        Log.d(
+            TAG, "onSizeChanged: New $viewWidth x $viewHeight, Old $oldViewWidth x $oldViewHeight"
+        )
 
         if (w > 0 && h > 0) {
             if (imageUri != null && (w != oldViewWidth || h != oldViewHeight || wallpaperBitmaps?.sourceSampledBitmap == null)) {
-                Log.d(TAG, "onSizeChanged: Triggering full bitmap reload due to size change or missing bitmaps.")
+                Log.d(
+                    TAG,
+                    "onSizeChanged: Triggering full bitmap reload due to size change or missing bitmaps."
+                )
                 loadFullBitmapsFromUri(this.imageUri)
             } else if (imageUri != null && wallpaperBitmaps?.sourceSampledBitmap != null && wallpaperBitmaps?.page1TopCroppedBitmap == null) {
-                Log.d(TAG, "onSizeChanged: Source bitmap exists, but P1 top cropped is missing. Updating P1 top cropped.")
-                updateOnlyPage1TopCroppedBitmap(this.page1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!)
+                Log.d(
+                    TAG,
+                    "onSizeChanged: Source bitmap exists, but P1 top cropped is missing. Updating P1 top cropped."
+                )
+                updateOnlyPage1TopCroppedBitmap(
+                    this.page1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!
+                )
             } else {
                 invalidate()
             }
@@ -113,17 +134,18 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 scrollSensitivityFactor = currentScrollSensitivity,
                 normalizedInitialBgScrollOffset = currentNormalizedInitialBgScrollOffset,
                 p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio,
-                // 新增P1特效参数传递
                 p1ShadowRadius = this.currentP1ShadowRadius,
                 p1ShadowDx = this.currentP1ShadowDx,
-                p1ShadowDy = this.currentP1ShadowDy, // <--- 这是你错误信息中指出的参数
+                p1ShadowDy = this.currentP1ShadowDy,
                 p1ShadowColor = this.currentP1ShadowColor,
                 p1ImageBottomFadeHeight = this.currentP1ImageBottomFadeHeight
             )
             SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps)
         } else {
             SharedWallpaperRenderer.drawPlaceholder(
-                canvas, viewWidth, viewHeight,
+                canvas,
+                viewWidth,
+                viewHeight,
                 if (imageUri != null && (fullBitmapLoadingJob?.isActive == true || topBitmapUpdateJob?.isActive == true)) "图片加载中..."
                 else "请选择图片"
             )
@@ -149,16 +171,14 @@ class WallpaperPreviewView @JvmOverloads constructor(
         snapAnimationDurationMs: Long,
         normalizedInitialBgScrollOffset: Float,
         p2BackgroundFadeInRatio: Float,
-        blurDownscaleFactor: Float, // 确保MainActivity会传递这个
-        blurIterations: Int,        // 确保MainActivity会传递这个
-        // 新增的P1特效参数
+        blurDownscaleFactor: Float,
+        blurIterations: Int,
         p1ShadowRadius: Float,
         p1ShadowDx: Float,
         p1ShadowDy: Float,
         p1ShadowColor: Int,
         p1ImageBottomFadeHeight: Float
     ) {
-        // 保存旧值
         val oldScrollSensitivity = this.currentScrollSensitivity
         val oldP1OverlayFadeRatio = this.currentP1OverlayFadeRatio
         val oldBackgroundBlurRadius = this.currentBackgroundBlurRadius
@@ -166,49 +186,42 @@ class WallpaperPreviewView @JvmOverloads constructor(
         val oldP2BackgroundFadeInRatio = this.currentP2BackgroundFadeInRatio
         val oldBlurDownscaleFactor = this.currentBlurDownscaleFactor
         val oldBlurIterations = this.currentBlurIterations
-
         val oldP1ShadowRadius = this.currentP1ShadowRadius
         val oldP1ShadowDx = this.currentP1ShadowDx
         val oldP1ShadowDy = this.currentP1ShadowDy
         val oldP1ShadowColor = this.currentP1ShadowColor
         val oldP1ImageBottomFadeHeight = this.currentP1ImageBottomFadeHeight
 
-        // 更新成员变量
         this.currentScrollSensitivity = scrollSensitivity.coerceIn(0.1f, 5.0f)
         this.currentP1OverlayFadeRatio = p1OverlayFadeRatio.coerceIn(0.01f, 1.0f)
         this.currentP2BackgroundFadeInRatio = p2BackgroundFadeInRatio.coerceIn(0.0f, 1.0f)
-        this.currentBackgroundBlurRadius = backgroundBlurRadius.coerceIn(0f, 50f)
+        this.currentBackgroundBlurRadius = backgroundBlurRadius.coerceIn(0f, 50f) // 实际模糊范围，和设置UI对应
         this.currentSnapAnimationDurationMs = snapAnimationDurationMs
-        this.currentNormalizedInitialBgScrollOffset = normalizedInitialBgScrollOffset.coerceIn(0f, 1f)
-        this.currentBlurDownscaleFactor = blurDownscaleFactor
-        this.currentBlurIterations = blurIterations
+        this.currentNormalizedInitialBgScrollOffset =
+            normalizedInitialBgScrollOffset.coerceIn(0f, 1f)
+        this.currentBlurDownscaleFactor = blurDownscaleFactor.coerceIn(0.05f, 1.0f) // 确保在合理范围
+        this.currentBlurIterations = blurIterations.coerceIn(1, 3) // 确保在合理范围
 
-        this.currentP1ShadowRadius = p1ShadowRadius
-        this.currentP1ShadowDx = p1ShadowDx
-        this.currentP1ShadowDy = p1ShadowDy
+        this.currentP1ShadowRadius = p1ShadowRadius.coerceIn(0f, 50f) // 假设合理范围
+        this.currentP1ShadowDx = p1ShadowDx.coerceIn(-50f, 50f) // 假设合理范围
+        this.currentP1ShadowDy = p1ShadowDy.coerceIn(-50f, 50f) // 假设合理范围
         this.currentP1ShadowColor = p1ShadowColor
-        this.currentP1ImageBottomFadeHeight = p1ImageBottomFadeHeight
+        this.currentP1ImageBottomFadeHeight = p1ImageBottomFadeHeight.coerceAtLeast(0f)
 
-        Log.d(TAG, "Preview Configs Updated: ScrollSens=$currentScrollSensitivity, P1FadeRatio=$currentP1OverlayFadeRatio, BgBlur=$currentBackgroundBlurRadius, BlurDownscale=$currentBlurDownscaleFactor, BlurIter=$currentBlurIterations, P1ShadowR=$currentP1ShadowRadius, P1FadeH=$currentP1ImageBottomFadeHeight")
+        Log.d(
+            TAG,
+            "Preview Configs Updated: ScrollSens=$currentScrollSensitivity, P1FadeRatio=$currentP1OverlayFadeRatio, BgBlur=$currentBackgroundBlurRadius, BlurDownscale=$currentBlurDownscaleFactor, BlurIter=$currentBlurIterations, P1ShadowR=$currentP1ShadowRadius, P1FadeH=$currentP1ImageBottomFadeHeight"
+        )
 
-        // 判断是否需要重绘或重载
-        val visualParamsChanged = oldScrollSensitivity != this.currentScrollSensitivity ||
-                oldP1OverlayFadeRatio != this.currentP1OverlayFadeRatio ||
-                oldP2BackgroundFadeInRatio != this.currentP2BackgroundFadeInRatio ||
-                oldNormalizedInitialBgScrollOffset != this.currentNormalizedInitialBgScrollOffset ||
-                oldP1ShadowRadius != this.currentP1ShadowRadius ||
-                oldP1ShadowDx != this.currentP1ShadowDx ||
-                oldP1ShadowDy != this.currentP1ShadowDy ||
-                oldP1ShadowColor != this.currentP1ShadowColor ||
-                oldP1ImageBottomFadeHeight != this.currentP1ImageBottomFadeHeight
+        val visualParamsChanged =
+            oldScrollSensitivity != this.currentScrollSensitivity || oldP1OverlayFadeRatio != this.currentP1OverlayFadeRatio || oldP2BackgroundFadeInRatio != this.currentP2BackgroundFadeInRatio || oldNormalizedInitialBgScrollOffset != this.currentNormalizedInitialBgScrollOffset || oldP1ShadowRadius != this.currentP1ShadowRadius || oldP1ShadowDx != this.currentP1ShadowDx || oldP1ShadowDy != this.currentP1ShadowDy || oldP1ShadowColor != this.currentP1ShadowColor || oldP1ImageBottomFadeHeight != this.currentP1ImageBottomFadeHeight
 
         if (visualParamsChanged) {
             invalidate()
         }
 
-        val blurConfigChanged = oldBackgroundBlurRadius != this.currentBackgroundBlurRadius ||
-                oldBlurDownscaleFactor != this.currentBlurDownscaleFactor ||
-                oldBlurIterations != this.currentBlurIterations
+        val blurConfigChanged =
+            oldBackgroundBlurRadius != this.currentBackgroundBlurRadius || oldBlurDownscaleFactor != this.currentBlurDownscaleFactor || oldBlurIterations != this.currentBlurIterations
 
         if (blurConfigChanged && this.imageUri != null) {
             Log.d(TAG, "Blur params changed for preview, forcing full bitmap reload.")
@@ -217,20 +230,22 @@ class WallpaperPreviewView @JvmOverloads constructor(
     }
 
     fun setImageUri(uri: Uri?, forceReload: Boolean = false) {
-        Log.d(TAG, "setImageUri called with new URI: $uri. Previous URI: ${this.imageUri}. ForceReload: $forceReload")
+        Log.d(
+            TAG,
+            "setImageUri called with new URI: $uri. Previous URI: ${this.imageUri}. ForceReload: $forceReload"
+        )
 
         if (!forceReload && this.imageUri == uri && uri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
-            Log.d(TAG, "setImageUri: URI unchanged and source bitmap exists. Applying current settings for P1 if needed.")
-            if (wallpaperBitmaps?.sourceSampledBitmap != null) { // Redundant check, but safe
-                // If focus or height ratio changed externally then this was called, P1 might need update
-                updateOnlyPage1TopCroppedBitmap(page1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!)
+            if (wallpaperBitmaps?.sourceSampledBitmap != null) {
+                updateOnlyPage1TopCroppedBitmap(
+                    page1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!
+                )
             } else {
-                invalidate() // Should not happen if sourceSampledBitmap is not null
+                invalidate()
             }
             return
         }
 
-        Log.d(TAG, "setImageUri: Proceeding with full bitmap update. ForceReload: $forceReload, URI changed: ${this.imageUri != uri}")
         fullBitmapLoadingJob?.cancel(); fullBitmapLoadingJob = null
         topBitmapUpdateJob?.cancel(); topBitmapUpdateJob = null
 
@@ -240,23 +255,21 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
 
         this.imageUri = uri
-        currentPreviewXOffset = 0f // Reset scroll on new image
+        currentPreviewXOffset = 0f
         if (!scroller.isFinished) scroller.abortAnimation()
 
         if (uri != null) {
-            invalidate() // Show loading placeholder
+            invalidate()
             loadFullBitmapsFromUri(uri)
         } else {
-            wallpaperBitmaps?.recycleInternals() // Ensure cleanup if URI becomes null
+            wallpaperBitmaps?.recycleInternals()
             wallpaperBitmaps = null
-            Log.d(TAG, "setImageUri: URI is null. Clearing bitmaps and invalidating.")
             invalidate()
         }
     }
 
     private fun loadFullBitmapsFromUri(uriToLoad: Uri?, forceInternalReload: Boolean = false) {
         if (uriToLoad == null || viewWidth <= 0 || viewHeight <= 0) {
-            Log.w(TAG, "loadFullBitmapsFromUri: Invalid URI or view dimensions. URI: $uriToLoad, View: ${viewWidth}x$viewHeight")
             if (!forceInternalReload) {
                 wallpaperBitmaps?.recycleInternals()
                 wallpaperBitmaps = null
@@ -268,12 +281,10 @@ class WallpaperPreviewView @JvmOverloads constructor(
         fullBitmapLoadingJob?.cancel()
         topBitmapUpdateJob?.cancel()
 
-        Log.d(TAG, "loadFullBitmapsFromUri: Starting for URI: $uriToLoad. Focus:($currentNormalizedFocusX, $currentNormalizedFocusY), BlurRadius:$currentBackgroundBlurRadius, BlurDownscale:$currentBlurDownscaleFactor, BlurIter:$currentBlurIterations")
-
         if (!forceInternalReload || wallpaperBitmaps == null) {
             wallpaperBitmaps?.recycleInternals()
             wallpaperBitmaps = null
-            invalidate() // Show loading placeholder
+            invalidate()
         }
 
         fullBitmapLoadingJob = viewScope.launch {
@@ -291,8 +302,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
                         currentNormalizedFocusX,
                         currentNormalizedFocusY,
                         currentBackgroundBlurRadius,
-                        currentBlurDownscaleFactor, // Pass new blur param
-                        currentBlurIterations       // Pass new blur param
+                        currentBlurDownscaleFactor,
+                        currentBlurIterations
                     )
                 }
                 ensureActive()
@@ -300,17 +311,13 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 if (this@WallpaperPreviewView.imageUri == uriToLoad) {
                     wallpaperBitmaps?.recycleInternals()
                     wallpaperBitmaps = newFullBitmaps
-                    Log.d(TAG, "Full bitmaps successfully loaded and applied for $uriToLoad.")
                 } else {
-                    Log.d(TAG, "URI changed during full bitmap load for $uriToLoad. Current: ${this@WallpaperPreviewView.imageUri}. Discarding.")
                     newFullBitmaps?.recycleInternals()
                     if (this@WallpaperPreviewView.imageUri == null) wallpaperBitmaps = null
                 }
             } catch (e: CancellationException) {
-                Log.d(TAG, "Full bitmap loading for $uriToLoad CANCELLED.")
                 newFullBitmaps?.recycleInternals()
             } catch (e: Exception) {
-                Log.e(TAG, "Error in loadFullBitmapsFromUri for $uriToLoad", e)
                 newFullBitmaps?.recycleInternals()
                 if (this@WallpaperPreviewView.imageUri == uriToLoad) wallpaperBitmaps = null
             } finally {
@@ -327,24 +334,25 @@ class WallpaperPreviewView @JvmOverloads constructor(
     fun setSelectedBackgroundColor(color: Int) {
         if (this.selectedBackgroundColor != color) {
             this.selectedBackgroundColor = color
-            Log.d(TAG, "Preview background color set to: $color")
             invalidate()
         }
     }
 
     fun setPage1ImageHeightRatio(ratio: Float) {
-        val clampedRatio = ratio.coerceIn(0.1f, 0.9f)
+        // 使用 WallpaperConfigConstants 中的 MIN_HEIGHT_RATIO 和 MAX_HEIGHT_RATIO
+        val clampedRatio = ratio.coerceIn(
+            WallpaperConfigConstants.MIN_HEIGHT_RATIO, WallpaperConfigConstants.MAX_HEIGHT_RATIO
+        )
         if (this.page1ImageHeightRatio != clampedRatio) {
-            val oldRatio = this.page1ImageHeightRatio
             this.page1ImageHeightRatio = clampedRatio
-            Log.d(TAG, "setPage1ImageHeightRatio: Ratio changed from $oldRatio to $clampedRatio.")
-
             if (imageUri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
-                updateOnlyPage1TopCroppedBitmap(clampedRatio, wallpaperBitmaps!!.sourceSampledBitmap!!)
+                updateOnlyPage1TopCroppedBitmap(
+                    clampedRatio, wallpaperBitmaps!!.sourceSampledBitmap!!
+                )
             } else if (imageUri != null) {
-                loadFullBitmapsFromUri(this.imageUri) // Full reload if source is missing
+                loadFullBitmapsFromUri(this.imageUri)
             } else {
-                invalidate() // No image, just redraw placeholder if needed
+                invalidate()
             }
         }
     }
@@ -356,26 +364,21 @@ class WallpaperPreviewView @JvmOverloads constructor(
         if (this.currentNormalizedFocusX != clampedFocusX || this.currentNormalizedFocusY != clampedFocusY) {
             this.currentNormalizedFocusX = clampedFocusX
             this.currentNormalizedFocusY = clampedFocusY
-            Log.d(TAG, "Normalized focus CHANGED to X: $currentNormalizedFocusX, Y: $currentNormalizedFocusY")
-
             if (imageUri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
-                updateOnlyPage1TopCroppedBitmap(this.page1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!)
+                updateOnlyPage1TopCroppedBitmap(
+                    this.page1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!
+                )
             } else if (imageUri != null && viewWidth > 0 && viewHeight > 0) {
-                loadFullBitmapsFromUri(this.imageUri) // Full reload if source is missing
+                loadFullBitmapsFromUri(this.imageUri)
             }
-        } else {
-            Log.d(TAG, "Normalized focus UNCHANGED.")
         }
     }
 
     private fun updateOnlyPage1TopCroppedBitmap(newRatio: Float, sourceBitmap: Bitmap) {
         if (viewWidth <= 0 || viewHeight <= 0) {
-            Log.w(TAG, "updateOnlyPage1TopCroppedBitmap: View not measured. Skipping update.")
             return
         }
         topBitmapUpdateJob?.cancel()
-        Log.d(TAG, "updateOnlyPage1TopCroppedBitmap: Updating P1 top for ratio: $newRatio. Focus: ($currentNormalizedFocusX, $currentNormalizedFocusY)")
-
         topBitmapUpdateJob = viewScope.launch {
             var newTopCroppedBitmap: Bitmap? = null
             try {
@@ -395,35 +398,29 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.sourceSampledBitmap == sourceBitmap) {
                     wallpaperBitmaps?.page1TopCroppedBitmap?.recycle()
                     wallpaperBitmaps?.page1TopCroppedBitmap = newTopCroppedBitmap
-                    Log.d(TAG, "P1 top cropped bitmap updated successfully.")
                 } else {
-                    Log.d(TAG, "State changed during P1 top bitmap update. Discarding new top bitmap.")
                     newTopCroppedBitmap?.recycle()
                 }
             } catch (e: CancellationException) {
-                Log.d(TAG, "P1 top bitmap update CANCELLED.")
                 newTopCroppedBitmap?.recycle()
             } catch (e: Exception) {
-                Log.e(TAG, "Error updating P1 top cropped bitmap", e)
                 newTopCroppedBitmap?.recycle()
-                // If it failed, and conditions still match, ensure old one is not used or set to null
                 if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.sourceSampledBitmap == sourceBitmap) {
-                    wallpaperBitmaps?.page1TopCroppedBitmap = null // Or re-try, or keep old one if safe
+                    wallpaperBitmaps?.page1TopCroppedBitmap = null
                 }
             } finally {
                 if (isActive && coroutineContext[Job] == topBitmapUpdateJob) {
                     topBitmapUpdateJob = null
                 }
-                if (isActive && this@WallpaperPreviewView.imageUri != null) { // Redraw if image still set
+                if (isActive && this@WallpaperPreviewView.imageUri != null) {
                     invalidate()
                 }
             }
         }
     }
 
-    // --- 滑动逻辑 ---
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (imageUri == null && wallpaperBitmaps == null) { // Only process touch if there's an image
+        if (imageUri == null && wallpaperBitmaps == null) {
             return super.onTouchEvent(event)
         }
         if (velocityTracker == null) {
@@ -432,7 +429,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
         velocityTracker!!.addMovement(event)
 
         val action = event.actionMasked
-        val x = event.x // current x
+        val x = event.x
 
         when (action) {
             MotionEvent.ACTION_DOWN -> {
@@ -443,16 +440,17 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 downTouchX = x
                 activePointerId = event.getPointerId(0)
                 isBeingDragged = false
-                parent?.requestDisallowInterceptTouchEvent(true) // Request parent not to intercept
+                parent?.requestDisallowInterceptTouchEvent(true)
                 return true
             }
+
             MotionEvent.ACTION_MOVE -> {
                 if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false
                 val pointerIndex = event.findPointerIndex(activePointerId)
-                if (pointerIndex < 0) return false // Should not happen
+                if (pointerIndex < 0) return false
 
                 val currentMoveX = event.getX(pointerIndex)
-                val deltaX = lastTouchX - currentMoveX //手指从右向左滑, deltaX为正; 手指从左向右滑, deltaX为负
+                val deltaX = lastTouchX - currentMoveX
 
                 if (!isBeingDragged && abs(currentMoveX - downTouchX) > touchSlop) {
                     isBeingDragged = true
@@ -461,26 +459,19 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
                 if (isBeingDragged) {
                     if (viewWidth > 0 && numVirtualPages > 1) {
-                        // Convert pixel scroll to normalized offset scroll (0 to 1)
-                        // The total normalized scroll range is 1 (from page 0 to page numVirtualPages-1)
-                        // The total pixel scroll range for this normalized 0-1 is effectively (numVirtualPages-1) * viewWidth
-                        // So, deltaX / ((numVirtualPages-1) * viewWidth) would be the normalized change.
-                        // However, currentPreviewXOffset is 0 for first page, 1 for last page.
-                        // A scroll of viewWidth should change currentPreviewXOffset by 1/(numVirtualPages-1)
-                        val scrollDeltaRatio = deltaX / (viewWidth.toFloat() * (numVirtualPages -1) ) // More direct mapping
-                        // Or, using your previous logic to maintain consistency if it worked:
-                        // val offsetPerViewWidthScroll = 1.0f / (numVirtualPages - 1).toFloat()
-                        // val scrollDeltaRatio = (deltaX / viewWidth.toFloat()) * offsetPerViewWidthScroll
-
-                        currentPreviewXOffset = (currentPreviewXOffset + scrollDeltaRatio).coerceIn(0f, 1f)
+                        val scrollDeltaRatio =
+                            deltaX / (viewWidth.toFloat() * (numVirtualPages - 1))
+                        currentPreviewXOffset =
+                            (currentPreviewXOffset + scrollDeltaRatio).coerceIn(0f, 1f)
                     } else {
-                        currentPreviewXOffset = 0f // No scroll if single page or no width
+                        currentPreviewXOffset = 0f
                     }
                     lastTouchX = currentMoveX
                     invalidate()
                 }
                 return true
             }
+
             MotionEvent.ACTION_UP -> {
                 if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false
                 if (isBeingDragged) {
@@ -494,10 +485,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
                         snapToNearestPage(currentPreviewXOffset)
                     }
                 } else {
-                    // Not a drag, check for click
-                    if (abs(x - downTouchX) < touchSlop) { // It's a click
+                    if (abs(x - downTouchX) < touchSlop) {
                         performClick()
-                    } else { // It was a small, unintentional drag below slop, snap anyway
+                    } else {
                         snapToNearestPage(currentPreviewXOffset)
                     }
                 }
@@ -506,9 +496,10 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 isBeingDragged = false
                 return true
             }
+
             MotionEvent.ACTION_CANCEL -> {
                 if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false
-                if (isBeingDragged) { // If drag was cancelled, snap to nearest
+                if (isBeingDragged) {
                     snapToNearestPage(currentPreviewXOffset)
                 }
                 recycleVelocityTracker()
@@ -523,7 +514,6 @@ class WallpaperPreviewView @JvmOverloads constructor(
     override fun performClick(): Boolean {
         super.performClick()
         Log.d(TAG, "performClick called on WallpaperPreviewView")
-        // Toggle UI visibility or other click actions here
         return true
     }
 
@@ -532,53 +522,53 @@ class WallpaperPreviewView @JvmOverloads constructor(
             animateToOffset(0f)
             return
         }
-        // Calculate current page index based on offset
         val currentEffectivePageIndex = currentPreviewXOffset * (numVirtualPages - 1)
         var targetPageIndex: Int
 
-        if (velocityX < -minFlingVelocity) { // Fling left (to next page)
+        if (velocityX < -minFlingVelocity) {
             targetPageIndex = ceil(currentEffectivePageIndex).toInt()
-            // If already very close to targetPageIndex and not the last page, go one further
             if (targetPageIndex <= currentEffectivePageIndex + 0.05f && targetPageIndex < numVirtualPages - 1) {
                 targetPageIndex++
             }
-        } else if (velocityX > minFlingVelocity) { // Fling right (to previous page)
+        } else if (velocityX > minFlingVelocity) {
             targetPageIndex = floor(currentEffectivePageIndex).toInt()
-            // If already very close to targetPageIndex and not the first page, go one further
             if (targetPageIndex >= currentEffectivePageIndex - 0.05f && targetPageIndex > 0) {
                 targetPageIndex--
             }
-        } else { // Velocity not high enough for a fling, just snap
+        } else {
             snapToNearestPage(currentPreviewXOffset)
             return
         }
         targetPageIndex = targetPageIndex.coerceIn(0, numVirtualPages - 1)
-        val targetXOffset = if (numVirtualPages > 1) targetPageIndex.toFloat() / (numVirtualPages - 1).toFloat() else 0f
+        val targetXOffset =
+            if (numVirtualPages > 1) targetPageIndex.toFloat() / (numVirtualPages - 1).toFloat() else 0f
         animateToOffset(targetXOffset)
     }
 
     private fun snapToNearestPage(currentOffset: Float) {
         if (numVirtualPages <= 1) {
-            animateToOffset(0f) // Snap to 0 if single page
+            animateToOffset(0f)
             return
         }
         val pageIndexFloat = currentOffset * (numVirtualPages - 1)
         val targetPageIndex = pageIndexFloat.roundToInt().coerceIn(0, numVirtualPages - 1)
-        val targetXOffset = if (numVirtualPages > 1) targetPageIndex.toFloat() / (numVirtualPages - 1).toFloat() else 0f
+        val targetXOffset =
+            if (numVirtualPages > 1) targetPageIndex.toFloat() / (numVirtualPages - 1).toFloat() else 0f
         animateToOffset(targetXOffset)
     }
 
     private fun animateToOffset(targetXOffset: Float) {
-        // Scroller works with pixels, so we need a virtual pixel range for our normalized offset
         val currentPixelOffset = (currentPreviewXOffset * getScrollRange()).toInt()
         val targetPixelOffset = (targetXOffset * getScrollRange()).toInt()
         val dx = targetPixelOffset - currentPixelOffset
 
         if (dx != 0) {
-            scroller.startScroll(currentPixelOffset, 0, dx, 0, currentSnapAnimationDurationMs.toInt())
+            // currentSnapAnimationDurationMs 已经从 WallpaperConfigConstants 初始化
+            scroller.startScroll(
+                currentPixelOffset, 0, dx, 0, currentSnapAnimationDurationMs.toInt()
+            )
             postInvalidateOnAnimation()
         } else {
-            // Already at target, ensure offset is exact and redraw if needed
             this.currentPreviewXOffset = targetXOffset.coerceIn(0f, 1f)
             invalidate()
         }
@@ -589,19 +579,17 @@ class WallpaperPreviewView @JvmOverloads constructor(
             val currentPixelOffset = scroller.currX
             val scrollRange = getScrollRange()
             if (scrollRange > 0) {
-                currentPreviewXOffset = (currentPixelOffset.toFloat() / scrollRange.toFloat()).coerceIn(0f, 1f)
+                currentPreviewXOffset =
+                    (currentPixelOffset.toFloat() / scrollRange.toFloat()).coerceIn(0f, 1f)
             } else {
-                currentPreviewXOffset = 0f // Avoid division by zero
+                currentPreviewXOffset = 0f
             }
             invalidate()
         }
     }
 
-    // A virtual large range for scroller to operate on, as our offset is normalized (0-1)
     private fun getScrollRange(): Int {
-        // This can be any large enough number.
-        // The actual scroll distance is determined by how currentPreviewXOffset is used.
-        return (numVirtualPages -1) * 10000 // Or viewWidth * (numVirtualPages -1) if mapping directly to pixels
+        return (numVirtualPages - 1) * 10000
     }
 
     private fun recycleVelocityTracker() {

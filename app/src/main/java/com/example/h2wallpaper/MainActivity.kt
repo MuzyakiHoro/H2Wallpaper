@@ -41,7 +41,12 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import kotlin.math.roundToInt // 确保导入 roundToInt
+import kotlin.math.roundToInt
+
+// 显式导入 WallpaperConfigConstants 对象本身
+import com.example.h2wallpaper.WallpaperConfigConstants
+// 显式导入 FocusParams 嵌套对象
+import com.example.h2wallpaper.WallpaperConfigConstants.FocusParams
 
 class MainActivity : AppCompatActivity() {
 
@@ -61,26 +66,34 @@ class MainActivity : AppCompatActivity() {
 
     // 状态变量
     private var selectedImageUri: Uri? = null
-    private var selectedBackgroundColor: Int = Color.LTGRAY
+    private var selectedBackgroundColor: Int = WallpaperConfigConstants.DEFAULT_BACKGROUND_COLOR
     private var originalBitmapForColorExtraction: Bitmap? = null
-    var page1ImageHeightRatio: Float = DEFAULT_HEIGHT_RATIO
-    private var currentP1FocusX: Float = 0.5f
-    private var currentP1FocusY: Float = 0.5f
+    var page1ImageHeightRatio: Float = WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO
+    private var currentP1FocusX: Float = WallpaperConfigConstants.DEFAULT_P1_FOCUS_X
+    private var currentP1FocusY: Float = WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y
 
-    // 配置参数变量 (程序内部逻辑使用 Float，但与 SharedPreferences 交互时，部分参数会转为 Int)
-    private var currentScrollSensitivity: Float = DEFAULT_SCROLL_SENSITIVITY
-    private var currentP1OverlayFadeRatio: Float = DEFAULT_P1_OVERLAY_FADE_RATIO
-    private var currentBackgroundBlurRadius: Float = DEFAULT_BACKGROUND_BLUR_RADIUS
-    private var currentBackgroundInitialOffset: Float = DEFAULT_BACKGROUND_INITIAL_OFFSET
-    private var currentP2BackgroundFadeInRatio: Float = DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
-    private var currentBlurDownscaleFactorInt: Int = DEFAULT_BLUR_DOWNSCALE_FACTOR_INT // 这个本身就是Int
-    private var currentBlurIterations: Int = DEFAULT_BLUR_ITERATIONS // 这个本身就是Int
-    private var currentP1ShadowRadius: Float = DEFAULT_P1_SHADOW_RADIUS
-    private var currentP1ShadowDx: Float = DEFAULT_P1_SHADOW_DX
-    private var currentP1ShadowDy: Float = DEFAULT_P1_SHADOW_DY
-    private var currentP1ShadowColor: Int = DEFAULT_P1_SHADOW_COLOR // 颜色是 Int
-    private var currentP1ImageBottomFadeHeight: Float = DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT
-    private var currentImageContentVersion: Long = DEFAULT_IMAGE_CONTENT_VERSION
+    // 配置参数变量
+    private var currentScrollSensitivity: Float =
+        WallpaperConfigConstants.DEFAULT_SCROLL_SENSITIVITY
+    private var currentP1OverlayFadeRatio: Float =
+        WallpaperConfigConstants.DEFAULT_P1_OVERLAY_FADE_RATIO
+    private var currentBackgroundBlurRadius: Float =
+        WallpaperConfigConstants.DEFAULT_BACKGROUND_BLUR_RADIUS
+    private var currentBackgroundInitialOffset: Float =
+        WallpaperConfigConstants.DEFAULT_BACKGROUND_INITIAL_OFFSET
+    private var currentP2BackgroundFadeInRatio: Float =
+        WallpaperConfigConstants.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
+    private var currentBlurDownscaleFactorInt: Int =
+        WallpaperConfigConstants.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT
+    private var currentBlurIterations: Int = WallpaperConfigConstants.DEFAULT_BLUR_ITERATIONS
+    private var currentP1ShadowRadius: Float = WallpaperConfigConstants.DEFAULT_P1_SHADOW_RADIUS
+    private var currentP1ShadowDx: Float = WallpaperConfigConstants.DEFAULT_P1_SHADOW_DX
+    private var currentP1ShadowDy: Float = WallpaperConfigConstants.DEFAULT_P1_SHADOW_DY
+    private var currentP1ShadowColor: Int = WallpaperConfigConstants.DEFAULT_P1_SHADOW_COLOR
+    private var currentP1ImageBottomFadeHeight: Float =
+        WallpaperConfigConstants.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT
+    private var currentImageContentVersion: Long =
+        WallpaperConfigConstants.DEFAULT_IMAGE_CONTENT_VERSION
 
 
     private val INTERNAL_IMAGE_FILENAME = "h2_wallpaper_internal_image.jpg"
@@ -95,7 +108,11 @@ class MainActivity : AppCompatActivity() {
                     copyImageToInternalStorage(externalUri)
                 } ?: run {
                     btnCustomizeForeground.isEnabled = (this.selectedImageUri != null)
-                    Toast.makeText(this, getString(R.string.image_selection_failed_toast) + " (No data URI)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        this,
+                        getString(R.string.image_selection_failed_toast) + " (No data URI)",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             } else {
                 Log.d(TAG, "Image selection cancelled or failed, resultCode: ${result.resultCode}")
@@ -106,16 +123,22 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
                 val data = result.data
-                currentP1FocusX = data?.getFloatExtra(FocusParams.RESULT_FOCUS_X, 0.5f) ?: 0.5f
-                currentP1FocusY = data?.getFloatExtra(FocusParams.RESULT_FOCUS_Y, 0.5f) ?: 0.5f
+                currentP1FocusX = data?.getFloatExtra(
+                    FocusParams.RESULT_FOCUS_X, WallpaperConfigConstants.DEFAULT_P1_FOCUS_X
+                ) ?: WallpaperConfigConstants.DEFAULT_P1_FOCUS_X
+                currentP1FocusY = data?.getFloatExtra(
+                    FocusParams.RESULT_FOCUS_Y, WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y
+                ) ?: WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y
 
-                savePreferences() // 保存更新后的焦点
+                savePreferences()
                 wallpaperPreviewView.setNormalizedFocus(currentP1FocusX, currentP1FocusY)
 
                 Toast.makeText(
-                    this,
-                    "焦点已更新: X=${"%.2f".format(currentP1FocusX)}, Y=${"%.2f".format(currentP1FocusY)}",
-                    Toast.LENGTH_LONG
+                    this, "焦点已更新: X=${"%.2f".format(currentP1FocusX)}, Y=${
+                        "%.2f".format(
+                            currentP1FocusY
+                        )
+                    }", Toast.LENGTH_LONG
                 ).show()
 
             } else if (result.resultCode == Activity.RESULT_CANCELED) {
@@ -124,71 +147,27 @@ class MainActivity : AppCompatActivity() {
         }
 
     companion object {
-        const val PREFS_NAME = "H2WallpaperPrefs"
-        const val KEY_IMAGE_URI = "internalImageUri"
-        const val KEY_BACKGROUND_COLOR = "backgroundColor" // Int
-        const val KEY_IMAGE_HEIGHT_RATIO = "imageHeightRatio" // Float
-        const val KEY_P1_FOCUS_X = "p1FocusX" // Float
-        const val KEY_P1_FOCUS_Y = "p1FocusY" // Float
-
-        // 参数定义 (KEYs)
-        const val KEY_SCROLL_SENSITIVITY = "scrollSensitivity"         // Stored as Int (scaled)
-        const val KEY_P1_OVERLAY_FADE_RATIO = "p1OverlayFadeRatio"     // Stored as Int (scaled)
-        const val KEY_BACKGROUND_BLUR_RADIUS = "backgroundBlurRadius"  // Stored as Int
-        const val KEY_BACKGROUND_INITIAL_OFFSET = "backgroundInitialOffset" // Stored as Int (scaled)
-        const val KEY_P2_BACKGROUND_FADE_IN_RATIO = "p2BackgroundFadeInRatio" // Stored as Int (scaled)
-        const val KEY_BLUR_DOWNSCALE_FACTOR = "blurDownscaleFactor"    // Stored as Int
-        const val KEY_BLUR_ITERATIONS = "blurIterations"               // Stored as Int
-        const val KEY_P1_SHADOW_RADIUS = "p1ShadowRadius"              // Stored as Int
-        const val KEY_P1_SHADOW_DX = "p1ShadowDx"                      // Stored as Int
-        const val KEY_P1_SHADOW_DY = "p1ShadowDy"                      // Stored as Int
-        const val KEY_P1_SHADOW_COLOR = "p1ShadowColor"                // Stored as Int
-        const val KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT = "p1ImageBottomFadeHeight" // Stored as Int
-        const val KEY_IMAGE_CONTENT_VERSION = "imageContentVersion" // 图片时间戳
-
-        // 默认值 (Float 或 Int，根据内部逻辑使用类型)
-        const val DEFAULT_HEIGHT_RATIO = 1f / 3f
-        const val DEFAULT_SCROLL_SENSITIVITY = 1.0f
-        const val DEFAULT_P1_OVERLAY_FADE_RATIO = 0.5f
-        const val DEFAULT_P2_BACKGROUND_FADE_IN_RATIO = 0.8f
-        const val DEFAULT_BACKGROUND_BLUR_RADIUS = 25f // 将其视为 Float，保存时转 Int
-        const val DEFAULT_PREVIEW_SNAP_DURATION_MS: Long = 700L
-        const val DEFAULT_BACKGROUND_INITIAL_OFFSET = 0.2f // 1f/5f
-        const val DEFAULT_BLUR_DOWNSCALE_FACTOR_INT = 25 // 直接是 Int (代表0.25f)
-        const val DEFAULT_BLUR_ITERATIONS = 1          // Int
-
-        const val DEFAULT_P1_SHADOW_RADIUS = 0f
-        const val DEFAULT_P1_SHADOW_DX = 0f
-        const val DEFAULT_P1_SHADOW_DY = 0f
-        val DEFAULT_P1_SHADOW_COLOR = Color.argb(180, 0, 0, 0) // Int
-        const val DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT = 0f // Float, 保存时转 Int
-        const val DEFAULT_IMAGE_CONTENT_VERSION = 0L // 初始版本或时间戳
-
         private const val PERMISSION_REQUEST_READ_MEDIA_IMAGES = 1001
         private const val TAG = "H2WallpaperMain"
-        private const val HEIGHT_RATIO_STEP = 0.02f
-        private const val MIN_HEIGHT_RATIO = 0.15f
-        private const val MAX_HEIGHT_RATIO = 0.75f
-
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // ... (Window setup code remains the same) ...
         WindowCompat.setDecorFitsSystemWindows(window, false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             window.statusBarColor = Color.TRANSPARENT
             window.navigationBarColor = Color.TRANSPARENT
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            window.decorView.systemUiVisibility =
+                window.decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            window.decorView.systemUiVisibility =
+                window.decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         }
 
         setContentView(R.layout.activity_main)
-        // ... (findViewById calls remain the same) ...
         btnSelectImage = findViewById(R.id.btnSelectImage)
         colorPaletteContainer = findViewById(R.id.colorPaletteContainer)
         btnSetWallpaper = findViewById(R.id.btnSetWallpaper)
@@ -205,7 +184,6 @@ class MainActivity : AppCompatActivity() {
 
         loadAndApplyPreferencesAndInitState()
 
-        // ... (WindowInsetsListener and button click listeners remain largely the same) ...
         val rootLayoutForInsets: View = findViewById(android.R.id.content)
         ViewCompat.setOnApplyWindowInsetsListener(rootLayoutForInsets) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -223,16 +201,18 @@ class MainActivity : AppCompatActivity() {
                 savePreferences()
                 promptToSetWallpaper()
             } else {
-                Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT
+                ).show()
             }
         }
         btnAdvancedSettings.setOnClickListener {
             val intent = Intent(this, SettingsActivity::class.java)
             startActivity(intent)
         }
-        btnHeightReset.setOnClickListener { updatePage1ImageHeightRatio(DEFAULT_HEIGHT_RATIO) }
-        btnHeightIncrease.setOnClickListener { updatePage1ImageHeightRatio((page1ImageHeightRatio + HEIGHT_RATIO_STEP)) }
-        btnHeightDecrease.setOnClickListener { updatePage1ImageHeightRatio((page1ImageHeightRatio - HEIGHT_RATIO_STEP)) }
+        btnHeightReset.setOnClickListener { updatePage1ImageHeightRatio(WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO) }
+        btnHeightIncrease.setOnClickListener { updatePage1ImageHeightRatio((page1ImageHeightRatio + WallpaperConfigConstants.HEIGHT_RATIO_STEP)) }
+        btnHeightDecrease.setOnClickListener { updatePage1ImageHeightRatio((page1ImageHeightRatio - WallpaperConfigConstants.HEIGHT_RATIO_STEP)) }
 
 
         btnCustomizeForeground.setOnClickListener {
@@ -242,13 +222,18 @@ class MainActivity : AppCompatActivity() {
                 val intent = Intent(this, FocusActivity::class.java).apply {
                     putExtra(FocusParams.EXTRA_IMAGE_URI, selectedImageUri)
 
-                    val previewWidth = wallpaperPreviewView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
-                    val previewHeight = wallpaperPreviewView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+                    val previewWidth = wallpaperPreviewView.width.takeIf { it > 0 }
+                        ?: resources.displayMetrics.widthPixels
+                    val previewHeight = wallpaperPreviewView.height.takeIf { it > 0 }
+                        ?: resources.displayMetrics.heightPixels
                     val currentP1Height = (previewHeight * page1ImageHeightRatio)
                     val currentP1AspectRatio = if (previewWidth > 0 && currentP1Height > 0) {
                         previewWidth.toFloat() / currentP1Height.toFloat()
                     } else {
-                        Log.w("MainActivityFocus", "PreviewView not measured or p1Height is 0, using default aspect ratio 16/9")
+                        Log.w(
+                            "MainActivityFocus",
+                            "PreviewView not measured or p1Height is 0, using default aspect ratio 16/9"
+                        )
                         16f / 9f
                     }
                     putExtra(FocusParams.EXTRA_ASPECT_RATIO, currentP1AspectRatio)
@@ -285,41 +270,93 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadAndApplyPreferencesAndInitState() {
-        val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        selectedBackgroundColor = prefs.getInt(KEY_BACKGROUND_COLOR, Color.LTGRAY)
-        page1ImageHeightRatio = prefs.getFloat(KEY_IMAGE_HEIGHT_RATIO, DEFAULT_HEIGHT_RATIO)
-        currentP1FocusX = prefs.getFloat(KEY_P1_FOCUS_X, 0.5f)
-        currentP1FocusY = prefs.getFloat(KEY_P1_FOCUS_Y, 0.5f)
+        val prefs: SharedPreferences =
+            getSharedPreferences(WallpaperConfigConstants.PREFS_NAME, Context.MODE_PRIVATE)
+        selectedBackgroundColor = prefs.getInt(
+            WallpaperConfigConstants.KEY_BACKGROUND_COLOR,
+            WallpaperConfigConstants.DEFAULT_BACKGROUND_COLOR
+        )
+        page1ImageHeightRatio = prefs.getFloat(
+            WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO,
+            WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO
+        )
+        currentP1FocusX = prefs.getFloat(
+            WallpaperConfigConstants.KEY_P1_FOCUS_X, WallpaperConfigConstants.DEFAULT_P1_FOCUS_X
+        )
+        currentP1FocusY = prefs.getFloat(
+            WallpaperConfigConstants.KEY_P1_FOCUS_Y, WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y
+        )
 
-        // 加载由 SeekBarPreference (Int) 控制的参数，并转换为 Float 成员变量
-        currentScrollSensitivity = prefs.getInt(KEY_SCROLL_SENSITIVITY, (DEFAULT_SCROLL_SENSITIVITY * 10).toInt()) / 10.0f
-        currentP1OverlayFadeRatio = prefs.getInt(KEY_P1_OVERLAY_FADE_RATIO, (DEFAULT_P1_OVERLAY_FADE_RATIO * 100).toInt()) / 100.0f
-        currentBackgroundBlurRadius = prefs.getInt(KEY_BACKGROUND_BLUR_RADIUS, DEFAULT_BACKGROUND_BLUR_RADIUS.roundToInt()).toFloat()
-        currentBackgroundInitialOffset = prefs.getInt(KEY_BACKGROUND_INITIAL_OFFSET, (DEFAULT_BACKGROUND_INITIAL_OFFSET * 10).toInt()) / 10.0f
-        currentP2BackgroundFadeInRatio = prefs.getInt(KEY_P2_BACKGROUND_FADE_IN_RATIO, (DEFAULT_P2_BACKGROUND_FADE_IN_RATIO * 100).toInt()) / 100.0f
-        currentBlurDownscaleFactorInt = prefs.getInt(KEY_BLUR_DOWNSCALE_FACTOR, DEFAULT_BLUR_DOWNSCALE_FACTOR_INT)
-        currentBlurIterations = prefs.getInt(KEY_BLUR_ITERATIONS, DEFAULT_BLUR_ITERATIONS)
+        currentScrollSensitivity = prefs.getInt(
+            WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY,
+            WallpaperConfigConstants.DEFAULT_SCROLL_SENSITIVITY_INT
+        ) / 10.0f
+        currentP1OverlayFadeRatio = prefs.getInt(
+            WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO,
+            WallpaperConfigConstants.DEFAULT_P1_OVERLAY_FADE_RATIO_INT
+        ) / 100.0f
+        currentBackgroundBlurRadius = prefs.getInt(
+            WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS,
+            WallpaperConfigConstants.DEFAULT_BACKGROUND_BLUR_RADIUS_INT
+        ).toFloat()
+        currentBackgroundInitialOffset = prefs.getInt(
+            WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET,
+            WallpaperConfigConstants.DEFAULT_BACKGROUND_INITIAL_OFFSET_INT
+        ) / 10.0f
+        currentP2BackgroundFadeInRatio = prefs.getInt(
+            WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO,
+            WallpaperConfigConstants.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO_INT
+        ) / 100.0f
+        currentBlurDownscaleFactorInt = prefs.getInt(
+            WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR,
+            WallpaperConfigConstants.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT
+        )
+        currentBlurIterations = prefs.getInt(
+            WallpaperConfigConstants.KEY_BLUR_ITERATIONS,
+            WallpaperConfigConstants.DEFAULT_BLUR_ITERATIONS
+        )
 
-        currentP1ShadowRadius = prefs.getInt(KEY_P1_SHADOW_RADIUS, DEFAULT_P1_SHADOW_RADIUS.roundToInt()).toFloat()
-        currentP1ShadowDx = prefs.getInt(KEY_P1_SHADOW_DX, DEFAULT_P1_SHADOW_DX.roundToInt()).toFloat()
-        currentP1ShadowDy = prefs.getInt(KEY_P1_SHADOW_DY, DEFAULT_P1_SHADOW_DY.roundToInt()).toFloat()
-        currentP1ShadowColor = prefs.getInt(KEY_P1_SHADOW_COLOR, DEFAULT_P1_SHADOW_COLOR) // Color is Int
-        currentP1ImageBottomFadeHeight = prefs.getInt(KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT, DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT.roundToInt()).toFloat()
-        currentImageContentVersion = prefs.getLong(KEY_IMAGE_CONTENT_VERSION, DEFAULT_IMAGE_CONTENT_VERSION)
+        currentP1ShadowRadius = prefs.getInt(
+            WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS,
+            WallpaperConfigConstants.DEFAULT_P1_SHADOW_RADIUS_INT
+        ).toFloat()
+        currentP1ShadowDx = prefs.getInt(
+            WallpaperConfigConstants.KEY_P1_SHADOW_DX,
+            WallpaperConfigConstants.DEFAULT_P1_SHADOW_DX_INT
+        ).toFloat()
+        currentP1ShadowDy = prefs.getInt(
+            WallpaperConfigConstants.KEY_P1_SHADOW_DY,
+            WallpaperConfigConstants.DEFAULT_P1_SHADOW_DY_INT
+        ).toFloat()
+        currentP1ShadowColor = prefs.getInt(
+            WallpaperConfigConstants.KEY_P1_SHADOW_COLOR,
+            WallpaperConfigConstants.DEFAULT_P1_SHADOW_COLOR
+        )
+        currentP1ImageBottomFadeHeight = prefs.getInt(
+            WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT,
+            WallpaperConfigConstants.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT_INT
+        ).toFloat()
+        currentImageContentVersion = prefs.getLong(
+            WallpaperConfigConstants.KEY_IMAGE_CONTENT_VERSION,
+            WallpaperConfigConstants.DEFAULT_IMAGE_CONTENT_VERSION
+        )
 
 
-        val internalImageUriString = prefs.getString(KEY_IMAGE_URI, null)
-        Log.i(TAG, "Loaded preferences: InternalURI=$internalImageUriString, ... P1ShadowRadius=$currentP1ShadowRadius, ...")
+        val internalImageUriString = prefs.getString(WallpaperConfigConstants.KEY_IMAGE_URI, null)
+        Log.i(
+            TAG,
+            "Loaded preferences: InternalURI=$internalImageUriString, ... P1ShadowRadius=$currentP1ShadowRadius, ..."
+        )
 
 
         wallpaperPreviewView.setConfigValues(
             scrollSensitivity = currentScrollSensitivity,
             p1OverlayFadeRatio = currentP1OverlayFadeRatio,
             backgroundBlurRadius = currentBackgroundBlurRadius,
-            snapAnimationDurationMs = DEFAULT_PREVIEW_SNAP_DURATION_MS,
+            snapAnimationDurationMs = WallpaperConfigConstants.DEFAULT_PREVIEW_SNAP_DURATION_MS,
             normalizedInitialBgScrollOffset = currentBackgroundInitialOffset,
             p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio,
-            blurDownscaleFactor = currentBlurDownscaleFactorInt / 100.0f, // 从Int转换为Float
+            blurDownscaleFactor = currentBlurDownscaleFactorInt / 100.0f,
             blurIterations = currentBlurIterations,
             p1ShadowRadius = currentP1ShadowRadius,
             p1ShadowDx = currentP1ShadowDx,
@@ -330,7 +367,7 @@ class MainActivity : AppCompatActivity() {
 
         wallpaperPreviewView.setPage1ImageHeightRatio(page1ImageHeightRatio)
         wallpaperPreviewView.setNormalizedFocus(currentP1FocusX, currentP1FocusY)
-        wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor) // 确保调用这个
+        wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
 
 
         if (internalImageUriString != null) {
@@ -366,38 +403,66 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun savePreferences() {
-        val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs: SharedPreferences =
+            getSharedPreferences(WallpaperConfigConstants.PREFS_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit()
-        editor.putInt(KEY_BACKGROUND_COLOR, selectedBackgroundColor)
-        editor.putFloat(KEY_IMAGE_HEIGHT_RATIO, page1ImageHeightRatio) // 保持 Float
-        editor.putFloat(KEY_P1_FOCUS_X, currentP1FocusX)             // 保持 Float
-        editor.putFloat(KEY_P1_FOCUS_Y, currentP1FocusY)             // 保持 Float
+        editor.putInt(WallpaperConfigConstants.KEY_BACKGROUND_COLOR, selectedBackgroundColor)
+        editor.putFloat(WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO, page1ImageHeightRatio)
+        editor.putFloat(WallpaperConfigConstants.KEY_P1_FOCUS_X, currentP1FocusX)
+        editor.putFloat(WallpaperConfigConstants.KEY_P1_FOCUS_Y, currentP1FocusY)
 
-        // 对于由 SeekBarPreference 控制的参数，统一存为 Int
-        editor.putInt(KEY_SCROLL_SENSITIVITY, (currentScrollSensitivity * 10).toInt())
-        editor.putInt(KEY_P1_OVERLAY_FADE_RATIO, (currentP1OverlayFadeRatio * 100).toInt())
-        editor.putInt(KEY_BACKGROUND_BLUR_RADIUS, currentBackgroundBlurRadius.roundToInt())
-        editor.putInt(KEY_BACKGROUND_INITIAL_OFFSET, (currentBackgroundInitialOffset * 10).toInt())
-        editor.putInt(KEY_P2_BACKGROUND_FADE_IN_RATIO, (currentP2BackgroundFadeInRatio * 100).toInt())
-        editor.putInt(KEY_BLUR_DOWNSCALE_FACTOR, currentBlurDownscaleFactorInt) // 本身就是Int
-        editor.putInt(KEY_BLUR_ITERATIONS, currentBlurIterations)         // 本身就是Int
+        editor.putInt(
+            WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY, (currentScrollSensitivity * 10).toInt()
+        )
+        editor.putInt(
+            WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO,
+            (currentP1OverlayFadeRatio * 100).toInt()
+        )
+        editor.putInt(
+            WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS,
+            currentBackgroundBlurRadius.roundToInt()
+        )
+        editor.putInt(
+            WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET,
+            (currentBackgroundInitialOffset * 10).toInt()
+        )
+        editor.putInt(
+            WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO,
+            (currentP2BackgroundFadeInRatio * 100).toInt()
+        )
+        editor.putInt(
+            WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR, currentBlurDownscaleFactorInt
+        )
+        editor.putInt(WallpaperConfigConstants.KEY_BLUR_ITERATIONS, currentBlurIterations)
 
-        // 新增的 P1 特效参数也存为 Int
-        editor.putInt(KEY_P1_SHADOW_RADIUS, currentP1ShadowRadius.roundToInt())
-        editor.putInt(KEY_P1_SHADOW_DX, currentP1ShadowDx.roundToInt())
-        editor.putInt(KEY_P1_SHADOW_DY, currentP1ShadowDy.roundToInt())
-        editor.putInt(KEY_P1_SHADOW_COLOR, currentP1ShadowColor) // Color is Int
-        editor.putInt(KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT, currentP1ImageBottomFadeHeight.roundToInt())
+        editor.putInt(
+            WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS, currentP1ShadowRadius.roundToInt()
+        )
+        editor.putInt(WallpaperConfigConstants.KEY_P1_SHADOW_DX, currentP1ShadowDx.roundToInt())
+        editor.putInt(WallpaperConfigConstants.KEY_P1_SHADOW_DY, currentP1ShadowDy.roundToInt())
+        editor.putInt(WallpaperConfigConstants.KEY_P1_SHADOW_COLOR, currentP1ShadowColor)
+        editor.putInt(
+            WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT,
+            currentP1ImageBottomFadeHeight.roundToInt()
+        )
 
 
-        selectedImageUri?.let { editor.putString(KEY_IMAGE_URI, it.toString()) } ?: editor.remove(KEY_IMAGE_URI)
-        editor.putLong(KEY_IMAGE_CONTENT_VERSION, System.currentTimeMillis()) // 存入当前时间戳作为版本
+        selectedImageUri?.let {
+            editor.putString(
+                WallpaperConfigConstants.KEY_IMAGE_URI, it.toString()
+            )
+        } ?: editor.remove(WallpaperConfigConstants.KEY_IMAGE_URI)
+        editor.putLong(
+            WallpaperConfigConstants.KEY_IMAGE_CONTENT_VERSION, System.currentTimeMillis()
+        )
 
         editor.apply()
-        Log.d(TAG, "Preferences saved: ... P1ShadowRadius (as Int)=${currentP1ShadowRadius.roundToInt()}, P1BottomFadeHeight (as Int)=${currentP1ImageBottomFadeHeight.roundToInt()} ...")
+        Log.d(
+            TAG,
+            "Preferences saved: ... P1ShadowRadius (as Int)=${currentP1ShadowRadius.roundToInt()}, P1BottomFadeHeight (as Int)=${currentP1ImageBottomFadeHeight.roundToInt()} ..."
+        )
     }
 
-    // ... (copyImageToInternalStorage, saveImageToInternalAppStorage, deleteInternalImage, animateViewVisibility, updatePage1ImageHeightRatio, permission methods, openGallery, handleFailedImageAccess, color extraction, promptToSetWallpaper methods remain the same) ...
     private fun copyImageToInternalStorage(sourceUri: Uri) {
         imageLoadingProgressBar.visibility = View.VISIBLE
         btnSelectImage.isEnabled = false
@@ -413,9 +478,9 @@ class MainActivity : AppCompatActivity() {
                     deleteInternalImage(selectedImageUri!!)
                 }
                 selectedImageUri = internalFileUri
-                currentP1FocusX = 0.5f
-                currentP1FocusY = 0.5f
-                savePreferences() // 保存新的URI和重置后的焦点及其他当前设置
+                currentP1FocusX = WallpaperConfigConstants.DEFAULT_P1_FOCUS_X
+                currentP1FocusY = WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y
+                savePreferences()
 
                 wallpaperPreviewView.setNormalizedFocus(currentP1FocusX, currentP1FocusY)
                 wallpaperPreviewView.setImageUri(selectedImageUri, true)
@@ -430,44 +495,47 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun saveImageToInternalAppStorage(sourceUri: Uri): Uri? = withContext(Dispatchers.IO) {
-        var inputStream: InputStream? = null
-        var outputStream: OutputStream? = null
-        try {
-            inputStream = contentResolver.openInputStream(sourceUri)
-            if (inputStream == null) {
-                Log.e(TAG, "Failed to open input stream from source URI: $sourceUri")
-                return@withContext null
-            }
-            val imageDir = File(filesDir, INTERNAL_IMAGE_FOLDER)
-            if (!imageDir.exists()) {
-                imageDir.mkdirs()
-            }
-            val internalFile = File(imageDir, INTERNAL_IMAGE_FILENAME)
-            if (internalFile.exists()) {
-                internalFile.delete()
-            }
-            outputStream = FileOutputStream(internalFile)
-            val buffer = ByteArray(4 * 1024)
-            var read: Int
-            while (inputStream.read(buffer).also { read = it } != -1) {
-                outputStream.write(buffer, 0, read)
-            }
-            outputStream.flush()
-            Log.i(TAG, "Image saved to internal file: ${internalFile.absolutePath}")
-            return@withContext FileProvider.getUriForFile(applicationContext, "${applicationContext.packageName}.provider", internalFile)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error saving image to internal storage", e)
-            return@withContext null
-        } finally {
+    private suspend fun saveImageToInternalAppStorage(sourceUri: Uri): Uri? =
+        withContext(Dispatchers.IO) {
+            var inputStream: InputStream? = null
+            var outputStream: OutputStream? = null
             try {
-                inputStream?.close()
-                outputStream?.close()
-            } catch (ioe: IOException) {
-                Log.e(TAG, "Error closing streams", ioe)
+                inputStream = contentResolver.openInputStream(sourceUri)
+                if (inputStream == null) {
+                    Log.e(TAG, "Failed to open input stream from source URI: $sourceUri")
+                    return@withContext null
+                }
+                val imageDir = File(filesDir, INTERNAL_IMAGE_FOLDER)
+                if (!imageDir.exists()) {
+                    imageDir.mkdirs()
+                }
+                val internalFile = File(imageDir, INTERNAL_IMAGE_FILENAME)
+                if (internalFile.exists()) {
+                    internalFile.delete()
+                }
+                outputStream = FileOutputStream(internalFile)
+                val buffer = ByteArray(4 * 1024)
+                var read: Int
+                while (inputStream.read(buffer).also { read = it } != -1) {
+                    outputStream.write(buffer, 0, read)
+                }
+                outputStream.flush()
+                Log.i(TAG, "Image saved to internal file: ${internalFile.absolutePath}")
+                return@withContext FileProvider.getUriForFile(
+                    applicationContext, "${applicationContext.packageName}.provider", internalFile
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Error saving image to internal storage", e)
+                return@withContext null
+            } finally {
+                try {
+                    inputStream?.close()
+                    outputStream?.close()
+                } catch (ioe: IOException) {
+                    Log.e(TAG, "Error closing streams", ioe)
+                }
             }
         }
-    }
 
     private fun deleteInternalImage(internalFileUri: Uri?) {
         internalFileUri ?: return
@@ -475,7 +543,9 @@ class MainActivity : AppCompatActivity() {
             val imageDir = File(filesDir, INTERNAL_IMAGE_FOLDER)
             val internalFile = File(imageDir, INTERNAL_IMAGE_FILENAME)
             if (internalFile.exists()) {
-                if (internalFile.delete()) Log.i(TAG, "Deleted old internal image file: ${internalFile.path}")
+                if (internalFile.delete()) Log.i(
+                    TAG, "Deleted old internal image file: ${internalFile.path}"
+                )
                 else Log.w(TAG, "Failed to delete old internal image file: ${internalFile.path}")
             }
         } else if (internalFileUri.scheme == "file") {
@@ -486,7 +556,10 @@ class MainActivity : AppCompatActivity() {
                     if (file.delete()) Log.i(TAG, "Deleted old internal image file: $filePath")
                     else Log.w(TAG, "Failed to delete old internal image file: $filePath")
                 } else {
-                    Log.w(TAG, "Old internal image file path is not as expected or does not exist: $filePath")
+                    Log.w(
+                        TAG,
+                        "Old internal image file path is not as expected or does not exist: $filePath"
+                    )
                 }
             }
         }
@@ -497,19 +570,17 @@ class MainActivity : AppCompatActivity() {
             view.alpha = 0f
             view.visibility = View.VISIBLE
         }
-        view.animate()
-            .alpha(targetAlpha)
-            .setDuration(200)
-            .withEndAction {
-                if (targetAlpha == 0f) {
-                    view.visibility = targetVisibilityIfGone
-                }
+        view.animate().alpha(targetAlpha).setDuration(200).withEndAction {
+            if (targetAlpha == 0f) {
+                view.visibility = targetVisibilityIfGone
             }
-            .start()
+        }.start()
     }
 
     private fun updatePage1ImageHeightRatio(newRatio: Float) {
-        val clampedRatio = newRatio.coerceIn(MIN_HEIGHT_RATIO, MAX_HEIGHT_RATIO)
+        val clampedRatio = newRatio.coerceIn(
+            WallpaperConfigConstants.MIN_HEIGHT_RATIO, WallpaperConfigConstants.MAX_HEIGHT_RATIO
+        )
         if (page1ImageHeightRatio == clampedRatio) return
 
         page1ImageHeightRatio = clampedRatio
@@ -524,20 +595,28 @@ class MainActivity : AppCompatActivity() {
         } else {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
-        if (ContextCompat.checkSelfPermission(this, permissionToRequest) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(permissionToRequest), PERMISSION_REQUEST_READ_MEDIA_IMAGES)
+        if (ContextCompat.checkSelfPermission(
+                this, permissionToRequest
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this, arrayOf(permissionToRequest), PERMISSION_REQUEST_READ_MEDIA_IMAGES
+            )
         } else {
             openGallery()
         }
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_READ_MEDIA_IMAGES) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 openGallery()
             } else {
-                Toast.makeText(this, getString(R.string.permission_needed_toast), Toast.LENGTH_LONG).show()
+                Toast.makeText(this, getString(R.string.permission_needed_toast), Toast.LENGTH_LONG)
+                    .show()
             }
         }
     }
@@ -548,7 +627,9 @@ class MainActivity : AppCompatActivity() {
             pickImageLauncher.launch(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch gallery picker", e)
-            Toast.makeText(this, getString(R.string.image_selection_failed_toast), Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this, getString(R.string.image_selection_failed_toast), Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
@@ -556,8 +637,9 @@ class MainActivity : AppCompatActivity() {
         Log.e(TAG, "Failed to access internal URI: $uriFailed. Clearing it. Message: $message")
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
         selectedImageUri = null
-        val prefs: SharedPreferences = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().remove(KEY_IMAGE_URI).apply()
+        val prefs: SharedPreferences =
+            getSharedPreferences(WallpaperConfigConstants.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().remove(WallpaperConfigConstants.KEY_IMAGE_URI).apply()
         wallpaperPreviewView.setImageUri(null)
         btnCustomizeForeground.isEnabled = false
         originalBitmapForColorExtraction?.recycle()
@@ -571,18 +653,30 @@ class MainActivity : AppCompatActivity() {
             val options = BitmapFactory.Options()
             options.inSampleSize = 2
             originalBitmapForColorExtraction?.recycle()
-            originalBitmapForColorExtraction = BitmapFactory.decodeStream(inputStream, null, options)
+            originalBitmapForColorExtraction =
+                BitmapFactory.decodeStream(inputStream, null, options)
             inputStream?.close()
 
             originalBitmapForColorExtraction?.let { bitmap ->
                 extractColorsFromLoadedBitmap(bitmap, isNewImage)
             } ?: run {
-                Log.e(TAG, "Failed to decode bitmap for color extraction from internal URI: $internalUri")
-                handleFailedImageAccess(internalUri, getString(R.string.image_load_failed_toast) + " (内部图片解码失败)")
+                Log.e(
+                    TAG,
+                    "Failed to decode bitmap for color extraction from internal URI: $internalUri"
+                )
+                handleFailedImageAccess(
+                    internalUri, getString(R.string.image_load_failed_toast) + " (内部图片解码失败)"
+                )
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Exception loading image for color extraction from internal URI: $internalUri", e)
-            handleFailedImageAccess(internalUri, getString(R.string.image_load_failed_toast) + " (内部图片加载异常)")
+            Log.e(
+                TAG,
+                "Exception loading image for color extraction from internal URI: $internalUri",
+                e
+            )
+            handleFailedImageAccess(
+                internalUri, getString(R.string.image_load_failed_toast) + " (内部图片加载异常)"
+            )
         }
     }
 
@@ -602,7 +696,10 @@ class MainActivity : AppCompatActivity() {
             val oldSelectedColor = selectedBackgroundColor
             if (colors.isNotEmpty()) {
                 populateColorPaletteView(colors)
-                if (isNewImage || selectedBackgroundColor == Color.LTGRAY || !colors.contains(selectedBackgroundColor) || colors.size == 1) {
+                if (isNewImage || selectedBackgroundColor == WallpaperConfigConstants.DEFAULT_BACKGROUND_COLOR || !colors.contains(
+                        selectedBackgroundColor
+                    ) || colors.size == 1
+                ) {
                     selectedBackgroundColor = colors[0]
                 }
             } else {
@@ -612,7 +709,10 @@ class MainActivity : AppCompatActivity() {
             if (oldSelectedColor != selectedBackgroundColor || isNewImage) {
                 wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
                 savePreferences()
-            } else if (selectedBackgroundColor != Color.LTGRAY && colors.contains(selectedBackgroundColor)) {
+            } else if (selectedBackgroundColor != WallpaperConfigConstants.DEFAULT_BACKGROUND_COLOR && colors.contains(
+                    selectedBackgroundColor
+                )
+            ) {
                 wallpaperPreviewView.setSelectedBackgroundColor(selectedBackgroundColor)
             }
         }
@@ -624,10 +724,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setDefaultColorPalette() {
-        val defaultColors = listOf(Color.GRAY, Color.DKGRAY, Color.LTGRAY, Color.WHITE, Color.BLACK)
+        val defaultColors = listOf(
+            Color.GRAY,
+            Color.DKGRAY,
+            WallpaperConfigConstants.DEFAULT_BACKGROUND_COLOR,
+            Color.WHITE,
+            Color.BLACK
+        )
         populateColorPaletteView(defaultColors)
         if (!defaultColors.contains(selectedBackgroundColor) || selectedImageUri == null) {
-            selectedBackgroundColor = Color.LTGRAY
+            selectedBackgroundColor = WallpaperConfigConstants.DEFAULT_BACKGROUND_COLOR
         }
     }
 
@@ -653,8 +759,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        // originalBitmapForColorExtraction?.recycle() // Consider lifecycle
-        // originalBitmapForColorExtraction = null
     }
 
     override fun onDestroy() {
@@ -670,10 +774,15 @@ class MainActivity : AppCompatActivity() {
             val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER)
             intent.putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, componentName)
             startActivity(intent)
-            Toast.makeText(this, getString(R.string.wallpaper_set_prompt_toast), Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.wallpaper_set_prompt_toast), Toast.LENGTH_LONG)
+                .show()
         } catch (e: Exception) {
             Log.e(TAG, "Error trying to set wallpaper", e)
-            Toast.makeText(this, getString(R.string.wallpaper_set_failed_toast, e.message ?: "Unknown error"), Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this,
+                getString(R.string.wallpaper_set_failed_toast, e.message ?: "Unknown error"),
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 

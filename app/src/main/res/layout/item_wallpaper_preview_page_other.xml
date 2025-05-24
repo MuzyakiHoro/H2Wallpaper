@@ -7,5 +7,6 @@
         android:id="@+id/previewPageOther_imageView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:scaleType="centerInside" android:contentDescription="@string/image_preview_description_page_other" />
+        android:contentDescription="@string/image_preview_description_page_other"
+        android:scaleType="centerInside" />
 </FrameLayout>

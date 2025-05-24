@@ -1,5 +1,6 @@
 <resources>
-    <string name="app_name">H2Wallpaper</string> <string name="wallpaper_service_label">H2 定制壁纸</string>
+    <string name="app_name">H2Wallpaper</string>
+    <string name="wallpaper_service_label">H2 定制壁纸</string>
 
     <string name="wallpaper_description">自定义图片和颜色的动态壁纸</string>
 

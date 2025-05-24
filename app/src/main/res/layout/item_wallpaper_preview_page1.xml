@@ -6,9 +6,12 @@
     <View
         android:id="@+id/previewPage1_bottomColorView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" /> <ImageView
-    android:id="@+id/previewPage1_topImageView"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent" android:scaleType="centerCrop"
-    android:contentDescription="@string/image_preview_description_page1" />
+        android:layout_height="match_parent" />
+
+    <ImageView
+        android:id="@+id/previewPage1_topImageView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@string/image_preview_description_page1"
+        android:scaleType="centerCrop" />
 </FrameLayout>
