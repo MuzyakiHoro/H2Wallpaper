@@ -50,10 +50,10 @@ class WallpaperPreviewView @JvmOverloads constructor(
     // --- 可配置状态 ---
     private var imageUri: Uri? = null
     private var selectedBackgroundColor: Int = Color.LTGRAY
-    var nonEditModePage1ImageHeightRatio: Float = WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO // Made public for MainActivity to set
-    var currentNormalizedFocusX: Float = WallpaperConfigConstants.DEFAULT_P1_FOCUS_X // Made public
-    var currentNormalizedFocusY: Float = WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y // Made public
-    var currentP1ContentScaleFactor: Float = WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR // Made public
+    var nonEditModePage1ImageHeightRatio: Float = WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO
+    var currentNormalizedFocusX: Float = WallpaperConfigConstants.DEFAULT_P1_FOCUS_X
+    var currentNormalizedFocusY: Float = WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y
+    var currentP1ContentScaleFactor: Float = WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR
 
     private var currentScrollSensitivity: Float = WallpaperConfigConstants.DEFAULT_SCROLL_SENSITIVITY
     private var currentP1OverlayFadeRatio: Float = WallpaperConfigConstants.DEFAULT_P1_OVERLAY_FADE_RATIO
@@ -79,7 +79,11 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
     // --- 滑动和惯性滚动 ---
     private var velocityTracker: VelocityTracker? = null
-    private var scroller: OverScroller
+    private lateinit var pageScroller: OverScroller // 重命名，用于页面整体横向滚动
+    private lateinit var p1ContentScroller: OverScroller // 新增，用于P1内容拖拽后的惯性滚动
+    private var lastP1ScrollerX: Int = 0
+    private var lastP1ScrollerY: Int = 0
+
     private var lastTouchX: Float = 0f
     private var downTouchX: Float = 0f
     private var isPageSwiping: Boolean = false
@@ -107,7 +111,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
     private var p1HeightResizeStartRatio: Float = 0f
 
     private val p1HeightResizeHandlePaint = Paint().apply {
-        color = Color.argb(200, 255, 223, 0) // Gold-ish color for handle
+        color = Color.argb(200, 255, 223, 0)
         style = Paint.Style.FILL
     }
     private val p1HeightResizeHandleRect = RectF()
@@ -132,11 +136,11 @@ class WallpaperPreviewView @JvmOverloads constructor(
     private val p1EditBorderPaint = Paint().apply {
         color = Color.YELLOW
         style = Paint.Style.STROKE
-        strokeWidth = 3f * resources.displayMetrics.density // More visible border
+        strokeWidth = 3f * resources.displayMetrics.density
         alpha = 220
         pathEffect = DashPathEffect(floatArrayOf(8f * resources.displayMetrics.density, 4f * resources.displayMetrics.density), 0f)
     }
-    private val p1OverlayBgPaint = Paint() // Used for bg color below P1 image
+    private val p1OverlayBgPaint = Paint()
 
     // Flicker fix: Transition state
     private var isTransitioningFromEditMode: Boolean = false
@@ -147,7 +151,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
         touchSlop = viewConfig.scaledTouchSlop
         minFlingVelocity = viewConfig.scaledMinimumFlingVelocity
         maxFlingVelocity = viewConfig.scaledMaximumFlingVelocity
-        scroller = OverScroller(context)
+        pageScroller = OverScroller(context)
+        p1ContentScroller = OverScroller(context)
         initializeP1GestureDetectors()
     }
 
@@ -177,10 +182,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         Log.d(TAG, "onSizeChanged: New $viewWidth x $viewHeight. EditMode: $isInP1EditMode, Transitioning: $isTransitioningFromEditMode")
 
         if (w > 0 && h > 0) {
-            calculateP1DisplayRectView() // This will use currentEffectiveP1HeightRatio
+            calculateP1DisplayRectView()
 
             if (isInP1EditMode && wallpaperBitmaps?.sourceSampledBitmap != null) {
-                // If already in edit mode and size changes, re-center/re-scale
                 resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY)
             }
 
@@ -199,7 +203,6 @@ class WallpaperPreviewView @JvmOverloads constructor(
             p1DisplayRectView.setEmpty()
             return
         }
-        // Use the P1 height ratio that is currently relevant (edit or non-edit)
         val p1ActualHeight = viewHeight * currentEffectiveP1HeightRatio
         p1DisplayRectView.set(0f, 0f, viewWidth.toFloat(), p1ActualHeight)
 
@@ -222,7 +225,6 @@ class WallpaperPreviewView @JvmOverloads constructor(
     ) {
         val wasEditing = this.isInP1EditMode
 
-        // Handle calls that don't change the mode but might sync parameters (e.g., onResume while already in edit mode)
         if (wasEditing && isEditing) {
             Log.d(TAG, "setP1FocusEditMode: Staying in edit mode. Syncing params if provided.")
             currentEditP1HeightRatio = initialHeightRatio ?: currentEditP1HeightRatio
@@ -230,34 +232,27 @@ class WallpaperPreviewView @JvmOverloads constructor(
             this.currentNormalizedFocusY = initialNormFocusY ?: this.currentNormalizedFocusY
             currentEditP1ContentScaleFactor = initialContentScale ?: currentEditP1ContentScaleFactor
 
-            calculateP1DisplayRectView() // Based on currentEditP1HeightRatio
+            calculateP1DisplayRectView()
             if (wallpaperBitmaps?.sourceSampledBitmap != null) {
                 resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY)
             }
-            this.isTransitioningFromEditMode = false // Not transitioning
+            this.isTransitioningFromEditMode = false
             invalidate()
             return
         }
 
-        // Actual mode switch
         this.isInP1EditMode = isEditing
 
         if (wasEditing && !isEditing) { // Exiting edit mode (true -> false)
             Log.d(TAG, "setP1FocusEditMode: Exiting edit mode. Capturing last matrix and starting transition.")
             this.isTransitioningFromEditMode = true
-            this.transitionMatrix.set(p1EditMatrix) // Capture the last matrix state
+            this.transitionMatrix.set(p1EditMatrix)
 
             parent?.requestDisallowInterceptTouchEvent(false)
-
-            // IMPORTANT: For the transition frame, p1DisplayRectView needs to use the final non-edit height.
-            // nonEditModePage1ImageHeightRatio should have been updated by MainActivity *before* this call.
-            // So, currentEditP1HeightRatio is set to nonEditModePage1ImageHeightRatio for consistent p1DisplayRectView calculation during transition.
-            currentEditP1HeightRatio = nonEditModePage1ImageHeightRatio // Use the target height for display rect
-            calculateP1DisplayRectView() // Recalculate p1DisplayRectView for the transition frame
+            currentEditP1HeightRatio = nonEditModePage1ImageHeightRatio
+            calculateP1DisplayRectView()
 
             if (imageUri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
-                // Use the View's nonEditModePage1ImageHeightRatio and currentP1ContentScaleFactor,
-                // which should have been updated by MainActivity from ViewModel.
                 updateOnlyPage1TopCroppedBitmap(
                     heightRatioToUse = nonEditModePage1ImageHeightRatio,
                     sourceBitmap = wallpaperBitmaps!!.sourceSampledBitmap!!,
@@ -265,50 +260,51 @@ class WallpaperPreviewView @JvmOverloads constructor(
                     onComplete = {
                         Log.d(TAG, "setP1FocusEditMode: P1 top cropped bitmap update complete (on exit). Ending transition.")
                         this.isTransitioningFromEditMode = false
-                        invalidate() // Trigger a draw with the new non-edit bitmap
+                        invalidate()
                     }
                 )
             } else {
-                this.isTransitioningFromEditMode = false // No bitmap to update, clear flag
-                invalidate() // Still need to redraw in non-edit mode (e.g. placeholder)
+                this.isTransitioningFromEditMode = false
+                invalidate()
             }
-            if (!scroller.isFinished) scroller.abortAnimation()
+            if (!pageScroller.isFinished) pageScroller.abortAnimation()
+            if (!p1ContentScroller.isFinished) p1ContentScroller.forceFinished(true)
+
 
         } else if (!wasEditing && isEditing) { // Entering edit mode (false -> true)
             Log.d(TAG, "setP1FocusEditMode: Entering edit mode.")
-            this.isTransitioningFromEditMode = false // Not transitioning
+            this.isTransitioningFromEditMode = false
 
             if (wallpaperBitmaps?.sourceSampledBitmap == null) {
                 Log.w(TAG, "P1EditMode: No source bitmap. Requesting cancel.")
-                this.isInP1EditMode = false; // Force back to non-edit
+                this.isInP1EditMode = false;
                 onRequestActionCallback?.invoke(PreviewViewAction.REQUEST_CANCEL_P1_EDIT_MODE)
                 invalidate()
                 return
             }
 
-            // Use initial parameters if provided, otherwise use current non-edit mode values as starting point
             currentEditP1HeightRatio = initialHeightRatio ?: nonEditModePage1ImageHeightRatio
             this.currentNormalizedFocusX = initialNormFocusX ?: this.currentNormalizedFocusX
             this.currentNormalizedFocusY = initialNormFocusY ?: this.currentNormalizedFocusY
             currentEditP1ContentScaleFactor = initialContentScale ?: this.currentP1ContentScaleFactor
 
-            calculateP1DisplayRectView() // Based on currentEditP1HeightRatio
+            calculateP1DisplayRectView()
             resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY)
 
             parent?.requestDisallowInterceptTouchEvent(true)
             isPageSwiping = false
-            if (!scroller.isFinished) scroller.abortAnimation()
-            invalidate() // Trigger edit mode draw
+            if (!pageScroller.isFinished) pageScroller.abortAnimation()
+            if (!p1ContentScroller.isFinished) p1ContentScroller.forceFinished(true) // Stop P1 fling too
+            invalidate()
 
-        } else { // Mode not changing (e.g., false -> false, or initial setup)
+        } else { // Mode not changing
             Log.d(TAG, "setP1FocusEditMode: Mode not changing or initial call. current isEditing: $isEditing")
             this.isTransitioningFromEditMode = false
             calculateP1DisplayRectView()
             if (!this.isInP1EditMode && imageUri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
-                // If not in edit mode and image exists, ensure P1 top is up-to-date
                 updateOnlyPage1TopCroppedBitmap(nonEditModePage1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!, this.currentP1ContentScaleFactor)
             } else {
-                invalidate() // Draw placeholder or current state
+                invalidate()
             }
         }
     }
@@ -320,9 +316,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
             p1EditMatrix.reset(); invalidate(); return
         }
 
-        // p1DisplayRectView is based on currentEditP1HeightRatio when in edit mode.
         val baseFillScale = calculateP1BaseFillScale(source, p1DisplayRectView)
-        val totalEffectiveScale = baseFillScale * currentEditP1ContentScaleFactor // Use edit mode scale factor
+        val totalEffectiveScale = baseFillScale * currentEditP1ContentScaleFactor
 
         p1EditMatrix.reset()
         if (totalEffectiveScale > 0.00001f) {
@@ -330,7 +325,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
         } else {
             Log.w(TAG, "resetP1EditMatrixToFocus: totalEffectiveScale ($totalEffectiveScale) is invalid, using baseFillScale ($baseFillScale). currentEditP1ContentScaleFactor was $currentEditP1ContentScaleFactor")
             if (baseFillScale > 0.00001f) p1EditMatrix.setScale(baseFillScale, baseFillScale)
-            else p1EditMatrix.setScale(1.0f, 1.0f) // Absolute fallback
+            else p1EditMatrix.setScale(1.0f, 1.0f)
         }
 
         val currentActualScaleApplied = getCurrentP1EditMatrixScale()
@@ -455,21 +450,71 @@ class WallpaperPreviewView @JvmOverloads constructor(
     }
 
     private inner class P1ContentGestureListener : GestureDetector.SimpleOnGestureListener() {
-        override fun onDown(e: MotionEvent): Boolean = isInP1EditMode && wallpaperBitmaps?.sourceSampledBitmap != null && p1DisplayRectView.contains(e.x, e.y) && !isP1HeightResizing
+        override fun onDown(e: MotionEvent): Boolean {
+            if (isInP1EditMode && wallpaperBitmaps?.sourceSampledBitmap != null && p1DisplayRectView.contains(e.x, e.y) && !isP1HeightResizing) {
+                if (!p1ContentScroller.isFinished) {
+                    p1ContentScroller.forceFinished(true)
+                }
+                return true
+            }
+            return false
+        }
+
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
-            if (e1==null || !isInP1EditMode || isP1HeightResizing || wallpaperBitmaps?.sourceSampledBitmap == null || !p1DisplayRectView.contains(e1.x,e1.y)) return false
-            p1EditMatrix.postTranslate(-distanceX, -distanceY); applyP1EditMatrixBounds(); attemptThrottledP1ConfigUpdate(); invalidate()
+            if (e1 == null || !isInP1EditMode || isP1HeightResizing || wallpaperBitmaps?.sourceSampledBitmap == null || !p1DisplayRectView.contains(e1.x, e1.y)) {
+                return false
+            }
+            p1EditMatrix.postTranslate(-distanceX, -distanceY)
+            applyP1EditMatrixBounds()
+            attemptThrottledP1ConfigUpdate()
+            invalidate()
+            return true
+        }
+
+        override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+            if (!isInP1EditMode || isP1HeightResizing || wallpaperBitmaps?.sourceSampledBitmap == null || e1 == null || !p1DisplayRectView.contains(e1.x, e1.y)) {
+                return false
+            }
+
+            val source = wallpaperBitmaps!!.sourceSampledBitmap!!
+            if (source.isRecycled || source.width == 0 || source.height == 0) return false
+
+            p1ContentScroller.forceFinished(true)
+            lastP1ScrollerX = 0
+            lastP1ScrollerY = 0
+
+            p1ContentScroller.fling(
+                0, 0,
+                velocityX.toInt(), velocityY.toInt(),
+                Int.MIN_VALUE, Int.MAX_VALUE,
+                Int.MIN_VALUE, Int.MAX_VALUE,
+                (p1DisplayRectView.width() / 4).toInt().coerceAtLeast(1),
+                (p1DisplayRectView.height() / 4).toInt().coerceAtLeast(1)
+            )
+            postInvalidateOnAnimation()
             return true
         }
     }
+
     private inner class P1ContentScaleListener : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean = isInP1EditMode && !isP1HeightResizing && wallpaperBitmaps?.sourceSampledBitmap != null && p1DisplayRectView.contains(detector.focusX, detector.focusY)
+        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+            if (isInP1EditMode && !isP1HeightResizing && wallpaperBitmaps?.sourceSampledBitmap != null && p1DisplayRectView.contains(detector.focusX, detector.focusY)) {
+                if (!p1ContentScroller.isFinished) {
+                    p1ContentScroller.forceFinished(true)
+                }
+                return true
+            }
+            return false
+        }
+
         override fun onScale(detector: ScaleGestureDetector): Boolean {
             if (!isInP1EditMode || isP1HeightResizing || wallpaperBitmaps?.sourceSampledBitmap == null) return false
             val scaleFactor = detector.scaleFactor
             if (scaleFactor != 0f && abs(scaleFactor - 1.0f) > 0.0001f) {
                 p1EditMatrix.postScale(scaleFactor, scaleFactor, detector.focusX, detector.focusY)
-                applyP1EditMatrixBounds(); attemptThrottledP1ConfigUpdate(); invalidate()
+                applyP1EditMatrixBounds()
+                attemptThrottledP1ConfigUpdate()
+                invalidate()
             }
             return true
         }
@@ -478,65 +523,79 @@ class WallpaperPreviewView @JvmOverloads constructor(
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (isInP1EditMode && wallpaperBitmaps?.sourceSampledBitmap != null) {
-            var handledByEdit = false; val touchX = event.x; val touchY = event.y
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    val effectiveTouchSlop = touchSlop * p1HeightResizeTouchSlopFactor
-                    val heightHandleHotZone = RectF( p1DisplayRectView.left, p1DisplayRectView.bottom - effectiveTouchSlop, p1DisplayRectView.right, p1DisplayRectView.bottom + effectiveTouchSlop)
-                    if (p1DisplayRectView.height() > effectiveTouchSlop * 1.5f && heightHandleHotZone.contains(touchX, touchY)) {
-                        isP1HeightResizing = true; p1HeightResizeStartRawY = event.rawY; p1HeightResizeStartRatio = currentEditP1HeightRatio
-                        handledByEdit = true; parent?.requestDisallowInterceptTouchEvent(true)
+            var handledByP1SpecificInteraction = false
+            val touchX = event.x; val touchY = event.y
+
+            // Handle height resizing first, as it's a specific interaction area
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                val effectiveTouchSlop = touchSlop * p1HeightResizeTouchSlopFactor
+                val heightHandleHotZone = RectF( p1DisplayRectView.left, p1DisplayRectView.bottom - effectiveTouchSlop, p1DisplayRectView.right, p1DisplayRectView.bottom + effectiveTouchSlop)
+                if (p1DisplayRectView.height() > effectiveTouchSlop * 1.5f && heightHandleHotZone.contains(touchX, touchY)) {
+                    if (!p1ContentScroller.isFinished) { // Stop fling if starting height resize
+                        p1ContentScroller.forceFinished(true)
                     }
+                    isP1HeightResizing = true
+                    p1HeightResizeStartRawY = event.rawY
+                    p1HeightResizeStartRatio = currentEditP1HeightRatio
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    handledByP1SpecificInteraction = true
                 }
-                MotionEvent.ACTION_MOVE -> {
-                    if (isP1HeightResizing) {
-                        val dy = event.rawY - p1HeightResizeStartRawY; val deltaRatio = dy / viewHeight.toFloat()
+            }
+
+            if (isP1HeightResizing) {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_MOVE -> {
+                        val dy = event.rawY - p1HeightResizeStartRawY
+                        val deltaRatio = dy / viewHeight.toFloat()
                         var newRatio = p1HeightResizeStartRatio + deltaRatio
                         newRatio = newRatio.coerceIn(WallpaperConfigConstants.MIN_HEIGHT_RATIO, WallpaperConfigConstants.MAX_HEIGHT_RATIO)
                         if (abs(newRatio - currentEditP1HeightRatio) > 0.002f) {
-                            currentEditP1HeightRatio = newRatio; calculateP1DisplayRectView()
-                            resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY) // Use current view focus for re-centering after height change
-                            attemptThrottledP1ConfigUpdate() // Height change is a config update
+                            currentEditP1HeightRatio = newRatio
+                            calculateP1DisplayRectView()
+                            resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY)
+                            attemptThrottledP1ConfigUpdate()
                         }
-                        handledByEdit = true
+                        handledByP1SpecificInteraction = true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        executeP1ConfigUpdate() // Save final height
+                        isP1HeightResizing = false
+                        parent?.requestDisallowInterceptTouchEvent(false)
+                        handledByP1SpecificInteraction = true
+                        // No return here, let gesture detectors run if this wasn't the primary handler for up/cancel
                     }
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    var needsImmediateUpdate = false
-                    if (isP1HeightResizing) { isP1HeightResizing = false; handledByEdit = true; needsImmediateUpdate = true }
-
-                    if (handledByEdit || isThrottledP1ConfigUpdatePending) {
-                        throttledP1ConfigUpdateRunnable?.let { mainHandler.removeCallbacks(it) }
-                        throttledP1ConfigUpdateRunnable = null
-                        if (needsImmediateUpdate || isThrottledP1ConfigUpdatePending) {
-                            executeP1ConfigUpdate() // Ensure final state is pushed
-                        }
-                    }
-                    // Only re-enable parent interception if not handled by other gestures below
-                    // if (handledByEdit) parent?.requestDisallowInterceptTouchEvent(false) // This might be too broad
-                }
-            }
-            // If height resizing handled it, it's done.
-            if (handledByEdit && event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                parent?.requestDisallowInterceptTouchEvent(false) // Re-enable parent interception on UP/CANCEL if handled.
-            }
-            if (handledByEdit) return true
-
-
-            // If not height resizing, pass to other gesture detectors
-            if (!isP1HeightResizing) {
-                val handledByScale = p1ContentScaleGestureDetector.onTouchEvent(event)
-                val handledByDrag = p1ContentDragGestureDetector.onTouchEvent(event)
-                handledByEdit = handledByScale || handledByDrag // Update handledByEdit
+                if (handledByP1SpecificInteraction) return true // If height resize is active, it consumes the event
             }
 
-            if (handledByEdit) {
+            // If not handled by height resizing, pass to drag/scale detectors
+            var handledByGestureDetectors = false
+            val handledByScale = p1ContentScaleGestureDetector.onTouchEvent(event) // onScaleBegin stops scroller
+            val handledByDrag = p1ContentDragGestureDetector.onTouchEvent(event)  // onDown/onFling handles scroller
+
+            handledByGestureDetectors = handledByScale || handledByDrag
+
+            if (handledByGestureDetectors) {
                 if (event.actionMasked != MotionEvent.ACTION_UP && event.actionMasked != MotionEvent.ACTION_CANCEL) {
                     parent?.requestDisallowInterceptTouchEvent(true)
                 } else {
-                    parent?.requestDisallowInterceptTouchEvent(false) // Re-enable on UP/CANCEL
+                    // For UP/CANCEL after drag/scale, ensure final update if pending
+                    if (isThrottledP1ConfigUpdatePending) {
+                        executeP1ConfigUpdate()
+                    }
+                    parent?.requestDisallowInterceptTouchEvent(false)
                 }
                 return true
+            }
+            // If no P1 gesture handled it, allow fall-through for other general view behavior if any.
+            // However, usually in edit mode, P1 interactions are primary.
+            if (p1DisplayRectView.contains(touchX, touchY)) { // If touch is within P1 bounds, consume it.
+                if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                } else {
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                return true // Consume event within P1 bounds even if no specific gesture matched
             }
         }
 
@@ -545,10 +604,34 @@ class WallpaperPreviewView @JvmOverloads constructor(
         if (velocityTracker == null) velocityTracker = VelocityTracker.obtain(); velocityTracker!!.addMovement(event)
         val action = event.actionMasked; val x = event.x
         when (action) {
-            MotionEvent.ACTION_DOWN -> { if (!scroller.isFinished) scroller.abortAnimation(); lastTouchX = x; downTouchX = x; activePointerId = event.getPointerId(0); isPageSwiping = false; parent?.requestDisallowInterceptTouchEvent(true); return true }
-            MotionEvent.ACTION_MOVE -> { if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false; val pIdx = event.findPointerIndex(activePointerId); if (pIdx < 0) return false; val cMx = event.getX(pIdx); val dX = lastTouchX - cMx; if (!isPageSwiping && abs(cMx - downTouchX) > touchSlop) isPageSwiping = true; if (isPageSwiping) { currentPreviewXOffset = if (viewWidth > 0 && numVirtualPages > 1) (currentPreviewXOffset + dX / (viewWidth.toFloat() * (numVirtualPages - 1))).coerceIn(0f, 1f) else 0f; lastTouchX = cMx; invalidate() }; return true }
-            MotionEvent.ACTION_UP -> { if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false; if (isPageSwiping) { val vt = velocityTracker!!; vt.computeCurrentVelocity(1000, maxFlingVelocity.toFloat()); val velX = vt.getXVelocity(activePointerId); if (abs(velX) > minFlingVelocity && numVirtualPages > 1) flingPage(velX) else snapToNearestPage(currentPreviewXOffset) } else { if (abs(x - downTouchX) < touchSlop) performClick() else snapToNearestPage(currentPreviewXOffset) }; recycleVelocityTracker(); activePointerId = MotionEvent.INVALID_POINTER_ID; isPageSwiping = false; parent?.requestDisallowInterceptTouchEvent(false); return true }
-            MotionEvent.ACTION_CANCEL -> { if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false; if (isPageSwiping) snapToNearestPage(currentPreviewXOffset); recycleVelocityTracker(); activePointerId = MotionEvent.INVALID_POINTER_ID; isPageSwiping = false; parent?.requestDisallowInterceptTouchEvent(false); return true }
+            MotionEvent.ACTION_DOWN -> {
+                if (!pageScroller.isFinished) pageScroller.abortAnimation()
+                lastTouchX = x; downTouchX = x; activePointerId = event.getPointerId(0); isPageSwiping = false; parent?.requestDisallowInterceptTouchEvent(true); return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false
+                val pIdx = event.findPointerIndex(activePointerId); if (pIdx < 0) return false
+                val cMx = event.getX(pIdx); val dX = lastTouchX - cMx
+                if (!isPageSwiping && abs(cMx - downTouchX) > touchSlop) isPageSwiping = true
+                if (isPageSwiping) { currentPreviewXOffset = if (viewWidth > 0 && numVirtualPages > 1) (currentPreviewXOffset + dX / (viewWidth.toFloat() * (numVirtualPages - 1))).coerceIn(0f, 1f) else 0f; lastTouchX = cMx; invalidate() }; return true
+            }
+            MotionEvent.ACTION_UP -> {
+                if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false
+                if (isPageSwiping) {
+                    val vt = velocityTracker!!; vt.computeCurrentVelocity(1000, maxFlingVelocity.toFloat()); val velX = vt.getXVelocity(activePointerId)
+                    if (abs(velX) > minFlingVelocity && numVirtualPages > 1) flingPage(velX)
+                    else snapToNearestPage(currentPreviewXOffset)
+                } else {
+                    if (abs(x - downTouchX) < touchSlop) performClick()
+                    else snapToNearestPage(currentPreviewXOffset)
+                }
+                recycleVelocityTracker(); activePointerId = MotionEvent.INVALID_POINTER_ID; isPageSwiping = false; parent?.requestDisallowInterceptTouchEvent(false); return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false
+                if (isPageSwiping) snapToNearestPage(currentPreviewXOffset)
+                recycleVelocityTracker(); activePointerId = MotionEvent.INVALID_POINTER_ID; isPageSwiping = false; parent?.requestDisallowInterceptTouchEvent(false); return true
+            }
         }
         return super.onTouchEvent(event)
     }
@@ -557,31 +640,24 @@ class WallpaperPreviewView @JvmOverloads constructor(
         if (viewWidth <= 0 || viewHeight <= 0) return
         val cWBM = wallpaperBitmaps
 
-        // Priority to transitioning state
         if (isTransitioningFromEditMode && cWBM?.sourceSampledBitmap != null) {
             val sourceToDraw = cWBM.sourceSampledBitmap!!
-            canvas.drawColor(Color.DKGRAY) // Base background for P1 area
+            canvas.drawColor(Color.DKGRAY)
             canvas.save()
-            // p1DisplayRectView should be based on nonEditModePage1ImageHeightRatio
-            // as set before calling setP1FocusEditMode(false)
             canvas.clipRect(p1DisplayRectView)
-            canvas.concat(transitionMatrix) // Use the captured matrix from edit mode's end
+            canvas.concat(transitionMatrix)
             canvas.drawBitmap(sourceToDraw, 0f, 0f, p1EditContentPaint)
             canvas.restore()
-
-            // Draw the area below P1 with selected background color
             p1OverlayBgPaint.color = selectedBackgroundColor
             if (p1DisplayRectView.bottom < viewHeight) {
                 canvas.drawRect(0f, p1DisplayRectView.bottom, viewWidth.toFloat(), viewHeight.toFloat(), p1OverlayBgPaint)
             }
-            // No edit mode adornments (border, handle) during transition
         } else if (isInP1EditMode && cWBM?.sourceSampledBitmap != null) {
-            // Standard P1 Edit Mode drawing
             val sTD = cWBM.sourceSampledBitmap!!
             canvas.drawColor(Color.DKGRAY)
             canvas.save()
-            canvas.clipRect(p1DisplayRectView) // Based on currentEditP1HeightRatio
-            canvas.concat(p1EditMatrix) // Live edit matrix
+            canvas.clipRect(p1DisplayRectView)
+            canvas.concat(p1EditMatrix)
             canvas.drawBitmap(sTD, 0f, 0f, p1EditContentPaint)
             canvas.restore()
             canvas.drawRect(p1DisplayRectView, p1EditBorderPaint)
@@ -592,11 +668,11 @@ class WallpaperPreviewView @JvmOverloads constructor(
             if (p1DisplayRectView.bottom < viewHeight) {
                 canvas.drawRect(0f, p1DisplayRectView.bottom, viewWidth.toFloat(), viewHeight.toFloat(), p1OverlayBgPaint)
             }
-        } else { // Standard Non-Edit Mode drawing
+        } else {
             if (cWBM?.sourceSampledBitmap != null) {
                 val cfg = SharedWallpaperRenderer.WallpaperConfig(
                     viewWidth, viewHeight, selectedBackgroundColor,
-                    nonEditModePage1ImageHeightRatio, // Use non-edit mode height
+                    nonEditModePage1ImageHeightRatio,
                     currentPreviewXOffset, numVirtualPages, currentP1OverlayFadeRatio,
                     currentScrollSensitivity, currentNormalizedInitialBgScrollOffset,
                     currentP2BackgroundFadeInRatio, currentP1ShadowRadius, currentP1ShadowDx,
@@ -630,11 +706,11 @@ class WallpaperPreviewView @JvmOverloads constructor(
         this.currentScrollSensitivity = scrollSensitivity.coerceIn(0.1f, 5.0f)
         this.currentP1OverlayFadeRatio = p1OverlayFadeRatio.coerceIn(0.01f, 1.0f)
         this.currentP2BackgroundFadeInRatio = p2BackgroundFadeInRatio.coerceIn(0.0f, 1.0f)
-        this.currentBackgroundBlurRadius = backgroundBlurRadius.coerceIn(0f, 50f) // Max 50f for RenderScript
+        this.currentBackgroundBlurRadius = backgroundBlurRadius.coerceIn(0f, 50f)
         this.currentSnapAnimationDurationMs = snapAnimationDurationMs
         this.currentNormalizedInitialBgScrollOffset = normalizedInitialBgScrollOffset.coerceIn(0f, 1f)
         this.currentBlurDownscaleFactor = blurDownscaleFactor.coerceIn(0.05f, 1.0f)
-        this.currentBlurIterations = blurIterations.coerceIn(1, 3) // Sensible iteration limit
+        this.currentBlurIterations = blurIterations.coerceIn(1, 3)
         this.currentP1ShadowRadius = p1ShadowRadius.coerceIn(0f, 50f)
         this.currentP1ShadowDx = p1ShadowDx.coerceIn(-50f, 50f)
         this.currentP1ShadowDy = p1ShadowDy.coerceIn(-50f, 50f)
@@ -646,10 +722,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 oldBgBlurIt != this.currentBlurIterations
 
         if (blurChanged && this.imageUri != null) {
-            // Blur params affect P2 (scrolling background), requires full reload.
             loadFullBitmapsFromUri(this.imageUri, true)
         } else {
-            invalidate() // Other non-bitmap changes only need redraw
+            invalidate()
         }
     }
 
@@ -660,7 +735,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
 
         if (!forceReload && this.imageUri == uri && uri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
-            if (!isInP1EditMode && !isTransitioningFromEditMode) { // Only update P1 top if not in edit or transition
+            if (!isInP1EditMode && !isTransitioningFromEditMode) {
                 updateOnlyPage1TopCroppedBitmap(nonEditModePage1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!, this.currentP1ContentScaleFactor)
             } else {
                 invalidate()
@@ -677,14 +752,18 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
 
         this.imageUri = uri
-        currentPreviewXOffset = 0f // Reset preview page
-        if (!scroller.isFinished) {
-            scroller.abortAnimation()
+        currentPreviewXOffset = 0f
+        if (!pageScroller.isFinished) {
+            pageScroller.abortAnimation()
+        }
+        if (!p1ContentScroller.isFinished) {
+            p1ContentScroller.forceFinished(true)
         }
 
+
         if (uri != null) {
-            invalidate() // Show placeholder or old state briefly
-            loadFullBitmapsFromUri(uri, true) // New image always needs full load
+            invalidate()
+            loadFullBitmapsFromUri(uri, true)
         } else {
             wallpaperBitmaps?.recycleInternals()
             wallpaperBitmaps = null
@@ -708,7 +787,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
         if (forceInternalReload || wallpaperBitmaps?.sourceSampledBitmap == null) {
             wallpaperBitmaps?.recycleInternals()
             wallpaperBitmaps = null
-            invalidate() // Show loading
+            invalidate()
         }
 
         fullBitmapLoadingJob = viewScope.launch {
@@ -717,8 +796,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 ensureActive()
                 newWpBitmaps = withContext(Dispatchers.IO) {
                     ensureActive()
-                    // Use properties that would be set by MainActivity from ViewModel for consistency
-                    val heightToUse = nonEditModePage1ImageHeightRatio // Use non-edit mode default or saved value
+                    val heightToUse = nonEditModePage1ImageHeightRatio
                     val focusXToUse = this@WallpaperPreviewView.currentNormalizedFocusX
                     val focusYToUse = this@WallpaperPreviewView.currentNormalizedFocusY
                     val scaleToUse = this@WallpaperPreviewView.currentP1ContentScaleFactor
@@ -739,12 +817,11 @@ class WallpaperPreviewView @JvmOverloads constructor(
                     if (isInP1EditMode && wallpaperBitmaps?.sourceSampledBitmap != null) {
                         resetP1EditMatrixToFocus(this@WallpaperPreviewView.currentNormalizedFocusX, this@WallpaperPreviewView.currentNormalizedFocusY)
                     } else if (!isInP1EditMode && !isTransitioningFromEditMode && wallpaperBitmaps?.sourceSampledBitmap != null) {
-                        // Ensure P1 top is also updated based on new source and current non-edit params
                         updateOnlyPage1TopCroppedBitmap(nonEditModePage1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!, this@WallpaperPreviewView.currentP1ContentScaleFactor)
                     } else if (isTransitioningFromEditMode) {
-                        // If transitioning when full load finishes, the onComplete of the transition's P1 update will handle next step
+                        // Transition will handle its own completion and redraw
                     } else {
-                        invalidate() // Fallback invalidate if no specific mode action
+                        invalidate()
                     }
                 } else {
                     newWpBitmaps?.recycleInternals()
@@ -774,21 +851,18 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
-    // Setter for nonEditModePage1ImageHeightRatio (called by MainActivity from ViewModel)
     fun setPage1ImageHeightRatio(newRatio: Float) {
         val clampedRatio = newRatio.coerceIn(WallpaperConfigConstants.MIN_HEIGHT_RATIO, WallpaperConfigConstants.MAX_HEIGHT_RATIO)
         if (abs(nonEditModePage1ImageHeightRatio - clampedRatio) > 0.001f) {
             nonEditModePage1ImageHeightRatio = clampedRatio
-            if (!isInP1EditMode && !isTransitioningFromEditMode) { // Only update if not in edit/transition
-                calculateP1DisplayRectView() // Recalculate for non-edit mode
+            if (!isInP1EditMode && !isTransitioningFromEditMode) {
+                calculateP1DisplayRectView()
                 if (imageUri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
                     updateOnlyPage1TopCroppedBitmap(nonEditModePage1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!, this.currentP1ContentScaleFactor)
                 } else {
                     invalidate()
                 }
             } else if (isInP1EditMode) {
-                // If in edit mode and MainActivity tries to set this, it means ViewModel state changed.
-                // We should probably update currentEditP1HeightRatio as well if it's a "reset" or external change.
                 currentEditP1HeightRatio = clampedRatio
                 calculateP1DisplayRectView()
                 resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY)
@@ -797,7 +871,6 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
-    // Setter for currentNormalizedFocusX and currentNormalizedFocusY (called by MainActivity)
     fun setNormalizedFocus(focusX: Float, focusY: Float) {
         val clampedFocusX = focusX.coerceIn(0f, 1f)
         val clampedFocusY = focusY.coerceIn(0f, 1f)
@@ -813,15 +886,12 @@ class WallpaperPreviewView @JvmOverloads constructor(
                     invalidate()
                 }
             } else if (isInP1EditMode) {
-                // If in edit mode, this means ViewModel state changed, possibly due to external action.
-                // Re-apply to edit matrix and notify.
                 resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY)
                 attemptThrottledP1ConfigUpdate()
             }
         }
     }
 
-    // Setter for currentP1ContentScaleFactor (called by MainActivity)
     fun setP1ContentScaleFactor(scale: Float) {
         val clampedScale = scale.coerceIn(WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR, p1UserMaxScaleFactorRelativeToCover)
         if (abs(this.currentP1ContentScaleFactor - clampedScale) > 0.001f) {
@@ -833,7 +903,6 @@ class WallpaperPreviewView @JvmOverloads constructor(
                     invalidate()
                 }
             } else if (isInP1EditMode) {
-                // If in edit mode, ViewModel state changed. Update edit state.
                 currentEditP1ContentScaleFactor = clampedScale
                 resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY)
                 attemptThrottledP1ConfigUpdate()
@@ -851,8 +920,6 @@ class WallpaperPreviewView @JvmOverloads constructor(
             mainScopeLaunch { onComplete?.invoke() }
             return
         }
-        // If in edit mode AND not transitioning, this P1 top bitmap is not for immediate display.
-        // However, if transitioning, this IS the target bitmap.
         if (isInP1EditMode && !isTransitioningFromEditMode) {
             mainScopeLaunch { onComplete?.invoke() }
             return
@@ -891,14 +958,11 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 if (isActive && coroutineContext[Job] == topBitmapUpdateJob) {
                     topBitmapUpdateJob = null
                 }
-                mainScopeLaunch { // Ensure onComplete is on main thread
-                    if (isActive) { // Double check isActive within main thread launch
+                mainScopeLaunch {
+                    if (isActive) {
                         onComplete?.invoke()
                     }
                 }
-
-                // If onComplete is null (meaning this wasn't a transition-ending call),
-                // and we are not in edit mode or transitioning, then invalidate.
                 if (onComplete == null && isActive && this@WallpaperPreviewView.imageUri != null &&
                     !this@WallpaperPreviewView.isInP1EditMode && !this@WallpaperPreviewView.isTransitioningFromEditMode) {
                     invalidate()
@@ -907,14 +971,13 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
-    // Helper to launch on main scope safely
     private fun mainScopeLaunch(block: suspend CoroutineScope.() -> Unit) {
         if (viewScope.isActive) {
             viewScope.launch {
                 block()
             }
         } else {
-            Log.w(TAG, "ViewScope not active, cannot launch on main for onComplete.")
+            Log.w(TAG, "ViewScope not active for mainScopeLaunch.")
         }
     }
 
@@ -935,7 +998,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
     private fun flingPage(velocityX: Float) {
         if (isInP1EditMode || numVirtualPages <= 1) {
-            animateToOffset(0f)
+            if (!pageScroller.isFinished) pageScroller.abortAnimation()
+            currentPreviewXOffset = 0f
+            invalidate()
             return
         }
         val currentEffectivePageIndex = currentPreviewXOffset * (numVirtualPages - 1)
@@ -961,7 +1026,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
     private fun snapToNearestPage(currentOffset: Float) {
         if (isInP1EditMode || numVirtualPages <= 1) {
-            animateToOffset(0f)
+            if (!pageScroller.isFinished) pageScroller.abortAnimation()
+            currentPreviewXOffset = 0f
+            invalidate()
             return
         }
         val pageIndexFloat = currentOffset * (numVirtualPages - 1)
@@ -976,7 +1043,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
         val dx = targetPixelOffset - currentPixelOffset
 
         if (dx != 0) {
-            scroller.startScroll(currentPixelOffset, 0, dx, 0, currentSnapAnimationDurationMs.toInt())
+            pageScroller.startScroll(currentPixelOffset, 0, dx, 0, currentSnapAnimationDurationMs.toInt())
             postInvalidateOnAnimation()
         } else {
             this.currentPreviewXOffset = targetXOffset.coerceIn(0f,1f)
@@ -985,21 +1052,54 @@ class WallpaperPreviewView @JvmOverloads constructor(
     }
 
     override fun computeScroll() {
-        if (isInP1EditMode && !scroller.isFinished) {
-            scroller.abortAnimation()
-            return
-        }
-        if (scroller.computeScrollOffset()) {
-            val currentPixelOffset = scroller.currX
-            val scrollRange = getScrollRange()
-            currentPreviewXOffset = if (scrollRange > 0) {
-                (currentPixelOffset.toFloat() / scrollRange.toFloat()).coerceIn(0f, 1f)
-            } else {
-                0f
+        var triggerInvalidate = false
+
+        if (pageScroller.computeScrollOffset()) {
+            if (isInP1EditMode && !pageScroller.isFinished) {
+                pageScroller.abortAnimation()
+            } else if (!isInP1EditMode || isTransitioningFromEditMode) { // Allow page scroll if transitioning or not in edit mode
+                val currentPixelOffset = pageScroller.currX
+                val scrollRange = getScrollRange()
+                currentPreviewXOffset = if (scrollRange > 0) {
+                    (currentPixelOffset.toFloat() / scrollRange.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                triggerInvalidate = true
             }
-            invalidate() // invalidate() is fine here, postInvalidateOnAnimation() if from non-UI thread
+        }
+
+        if (p1ContentScroller.computeScrollOffset()) {
+            if (isInP1EditMode) {
+                val newX = p1ContentScroller.currX
+                val newY = p1ContentScroller.currY
+
+                val dx = newX - lastP1ScrollerX
+                val dy = newY - lastP1ScrollerY
+
+                if (dx != 0 || dy != 0) {
+                    p1EditMatrix.postTranslate(dx.toFloat(), dy.toFloat())
+                    applyP1EditMatrixBounds()
+                    attemptThrottledP1ConfigUpdate()
+                }
+
+                lastP1ScrollerX = newX
+                lastP1ScrollerY = newY
+                triggerInvalidate = true
+
+                if (p1ContentScroller.isFinished) {
+                    executeP1ConfigUpdate()
+                }
+            } else {
+                p1ContentScroller.forceFinished(true)
+            }
+        }
+
+        if (triggerInvalidate) {
+            postInvalidateOnAnimation()
         }
     }
+
 
     private fun getScrollRange(): Int = (numVirtualPages - 1) * 10000
 
