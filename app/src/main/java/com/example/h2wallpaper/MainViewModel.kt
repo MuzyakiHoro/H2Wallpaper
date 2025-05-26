@@ -73,6 +73,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     open fun toggleConfigSheetVisibility() {
         _showConfigSheet.update { currentState -> !currentState }
     }
+    // --- 新增：BottomSheet 选择状态 ---
+    private val _selectedMainCategoryIdInSheet = MutableStateFlow(mainCategoriesData.firstOrNull()?.id)
+    val selectedMainCategoryIdInSheet: StateFlow<String?> = _selectedMainCategoryIdInSheet
+
+    private val _subCategoryForAdjustmentIdInSheet = MutableStateFlow<String?>(null)
+    val subCategoryForAdjustmentIdInSheet: StateFlow<String?> = _subCategoryForAdjustmentIdInSheet
+
 
     // openConfigSheet 和 closeConfigSheet 也可以保留，如果其他地方明确需要打开或关闭
     open fun openConfigSheet() {
@@ -82,6 +89,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     open fun closeConfigSheet() {
         _showConfigSheet.value = false
     }
+
 
 
     private fun loadInitialPreferences() {
@@ -371,5 +379,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         super.onCleared()
         originalBitmapForColorExtraction?.recycle(); originalBitmapForColorExtraction = null
         Log.d("MainViewModel", "ViewModel cleared.")
+    }
+    // --- 新增：更新 BottomSheet 选择状态的方法 ---
+    fun onMainCategorySelectedInSheet(categoryId: String?) {
+        _selectedMainCategoryIdInSheet.value = categoryId
+        // 当主分类切换时，也应该清除子分类的调整项
+        _subCategoryForAdjustmentIdInSheet.value = null
+    }
+
+    fun onSubCategoryForAdjustmentSelectedInSheet(subCategoryId: String?) {
+        // 如果点击的是当前已选中的，则取消；否则设为新的
+        if (_subCategoryForAdjustmentIdInSheet.value == subCategoryId) {
+            _subCategoryForAdjustmentIdInSheet.value = null
+        } else {
+            _subCategoryForAdjustmentIdInSheet.value = subCategoryId
+        }
     }
 }
