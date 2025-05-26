@@ -7,52 +7,51 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
+import android.graphics.Color // Android Graphics Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Log
 import android.view.View
-import android.widget.Button
-import android.widget.LinearLayout
+// import android.widget.Button // 旧的Button引用可能不再需要，取决于你是否全部移除
+// import android.widget.LinearLayout // 旧的LinearLayout引用可能不再需要
 import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.compose.ui.platform.ComposeView // 必须导入
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.lifecycle.Observer
+// LiveData Observer 通常在 androidx.lifecycle.Observer，但我们这里主要通过 ViewModel 的 LiveData.observe()
+import com.example.h2wallpaper.ui.theme.H2WallpaperTheme // 你的 Compose 主题
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 
 
-// 导入 WallpaperConfigConstants 对象
-import com.example.h2wallpaper.WallpaperConfigConstants
+class MainActivity : AppCompatActivity(), MainActivityActions { // 实现接口
 
-class MainActivity : AppCompatActivity() {
-
-    // UI 控件声明
-    private lateinit var btnSelectImage: Button
-    private lateinit var colorPaletteContainer: LinearLayout
-    private lateinit var btnSetWallpaper: Button
+    // --- UI 控件声明 ---
+    // 旧的控件，按需保留或移除其成员变量声明
+    // private lateinit var btnSelectImage: Button
+    // private lateinit var colorPaletteContainer: LinearLayout // 改用Compose实现
+    // private lateinit var btnSetWallpaper: Button // XML中已隐藏，功能移至BottomSheet
     private lateinit var wallpaperPreviewView: WallpaperPreviewView
-    private lateinit var controlsContainer: LinearLayout // 包含选择图片、高级设置、自定义前景的容器
-    private lateinit var heightControlsContainer: LinearLayout // 包含旧的高度控制按钮的容器
-    private lateinit var btnHeightReset: Button
-    private lateinit var btnHeightIncrease: Button
-    private lateinit var btnHeightDecrease: Button
-    private lateinit var btnCustomizeForeground: Button
+    // private lateinit var controlsContainer: LinearLayout // XML中已隐藏
+    // private lateinit var heightControlsContainer: LinearLayout // XML中已隐藏
+    // private lateinit var btnHeightReset: Button
+    // private lateinit var btnHeightIncrease: Button
+    // private lateinit var btnHeightDecrease: Button
+    // private lateinit var btnCustomizeForeground: Button
     private lateinit var imageLoadingProgressBar: ProgressBar
-    private lateinit var btnAdvancedSettings: Button
+    // private lateinit var btnAdvancedSettings: Button
 
-    // P1 编辑模式相关UI不再需要单独的“应用/取消”按钮容器和按钮
-    // private lateinit var p1EditControlsContainer: LinearLayout // 已移除
-    // private lateinit var btnApplyP1Changes: Button // 已移除
-    // private lateinit var btnCancelP1Changes: Button // 已移除
+    // 新增 ComposeView 和触发按钮的成员变量
+    private lateinit var fabOpenConfigPanel: FloatingActionButton
+    private lateinit var configBottomSheetComposeView: ComposeView
 
     // 获取 ViewModel 实例
     private val mainViewModel: MainViewModel by viewModels()
@@ -62,25 +61,25 @@ class MainActivity : AppCompatActivity() {
             if (result.resultCode == Activity.RESULT_OK) {
                 mainViewModel.handleImageSelectionResult(result.data?.data)
             } else {
-                Log.d(TAG, "Image selection cancelled or failed, resultCode: ${result.resultCode}")
+                Log.d(TAG, "Image selection cancelled or failed, resultCode: ${result.resultCode}") //
                 if (result.resultCode != Activity.RESULT_CANCELED) { // 如果不是用户主动取消
-                    Toast.makeText(this, getString(R.string.image_selection_failed_toast), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, getString(R.string.image_selection_failed_toast), Toast.LENGTH_SHORT).show() //
                 }
             }
         }
 
     companion object {
-        private const val PERMISSION_REQUEST_READ_MEDIA_IMAGES = 1001
-        private const val TAG = "H2WallpaperMain"
+        private const val PERMISSION_REQUEST_READ_MEDIA_IMAGES = 1001 //
+        private const val TAG = "H2WallpaperMain" //
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
+        // ... 窗口设置代码 ...
         WindowCompat.setDecorFitsSystemWindows(window, false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            window.statusBarColor = Color.TRANSPARENT
-            window.navigationBarColor = Color.TRANSPARENT
+            window.statusBarColor = android.graphics.Color.TRANSPARENT
+            window.navigationBarColor = android.graphics.Color.TRANSPARENT
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             window.decorView.systemUiVisibility =
@@ -93,233 +92,42 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(R.layout.activity_main)
 
-        // 初始化UI控件
-        btnSelectImage = findViewById(R.id.btnSelectImage)
-        colorPaletteContainer = findViewById(R.id.colorPaletteContainer)
-        btnSetWallpaper = findViewById(R.id.btnSetWallpaper)
-        wallpaperPreviewView = findViewById(R.id.wallpaperPreviewView)
-        controlsContainer = findViewById(R.id.controlsContainer)
-        heightControlsContainer = findViewById(R.id.heightControlsContainer)
-        btnHeightReset = findViewById(R.id.btnHeightReset)
-        btnHeightIncrease = findViewById(R.id.btnHeightIncrease)
-        btnHeightDecrease = findViewById(R.id.btnHeightDecrease)
-        btnCustomizeForeground = findViewById(R.id.btnCustomizeForeground)
         imageLoadingProgressBar = findViewById(R.id.imageLoadingProgressBar)
-        btnAdvancedSettings = findViewById(R.id.btnAdvancedSettings)
+        wallpaperPreviewView = findViewById(R.id.wallpaperPreviewView)
+        fabOpenConfigPanel = findViewById(R.id.fabOpenConfigPanel)
+        configBottomSheetComposeView = findViewById(R.id.configBottomSheetComposeView)
 
-        // 移除对 p1EditControlsContainer, btnApplyP1Changes, btnCancelP1Changes 的 findViewById
-
-        setupButtonClickListeners()
-        observeViewModel()
-        setupWindowInsets()
-
-        Log.d(TAG, "onCreate: Activity setup complete.")
-    }
-
-    private fun setupButtonClickListeners() {
-        btnSelectImage.setOnClickListener {
-            if (mainViewModel.isP1EditMode.value == true) {
-                Toast.makeText(this, "请先完成P1编辑", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
+        configBottomSheetComposeView.setContent {
+            H2WallpaperTheme {
+                ConfigBottomSheetContainer(
+                    viewModel = mainViewModel,
+                    activityActions = this@MainActivity
+                )
             }
-            checkAndRequestReadMediaImagesPermission()
         }
 
-        btnSetWallpaper.setOnClickListener {
-            if (mainViewModel.isP1EditMode.value == true) {
-                Toast.makeText(this, "请先完成P1编辑", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            if (mainViewModel.selectedImageUri.value != null) {
-                mainViewModel.saveNonBitmapConfigAndUpdateVersion()
-                promptToSetWallpaper()
+        // FAB（或其他你指定的XML按钮）的点击事件：打开 BottomSheet
+        fabOpenConfigPanel.setOnClickListener {
+            // 如果 BottomSheet 已经是打开的，再次点击 FAB 可以选择关闭它，或者什么都不做
+            // mainViewModel.openConfigSheet() // 或者 mainViewModel.toggleConfigSheetVisibility()
+            if (mainViewModel.showConfigSheet.value) { // 如果想让FAB也能关闭
+                mainViewModel.closeConfigSheet()
             } else {
-                Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
+                mainViewModel.openConfigSheet()
             }
         }
 
-        btnAdvancedSettings.setOnClickListener {
-            if (mainViewModel.isP1EditMode.value == true) {
-                Toast.makeText(this, "请先完成P1编辑", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            val intent = Intent(this, SettingsActivity::class.java)
-            startActivity(intent)
-        }
-
-        btnCustomizeForeground.setOnClickListener {
-            if (mainViewModel.selectedImageUri.value != null) {
-                mainViewModel.toggleP1EditMode() // 仅切换模式
-            } else {
-                Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        // 移除 btnApplyP1Changes 和 btnCancelP1Changes 的监听器
-
-        btnHeightReset.setOnClickListener {
-            if (mainViewModel.isP1EditMode.value == true) {
-                Toast.makeText(this, "P1编辑模式下请使用手势调整", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            mainViewModel.updatePage1ImageHeightRatio(WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO)
-        }
-        btnHeightIncrease.setOnClickListener {
-            if (mainViewModel.isP1EditMode.value == true) {
-                Toast.makeText(this, "P1编辑模式下请使用手势调整", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            val currentRatio = mainViewModel.page1ImageHeightRatio.value ?: WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO
-            mainViewModel.updatePage1ImageHeightRatio(currentRatio + WallpaperConfigConstants.HEIGHT_RATIO_STEP)
-        }
-        btnHeightDecrease.setOnClickListener {
-            if (mainViewModel.isP1EditMode.value == true) {
-                Toast.makeText(this, "P1编辑模式下请使用手势调整", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            val currentRatio = mainViewModel.page1ImageHeightRatio.value ?: WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO
-            mainViewModel.updatePage1ImageHeightRatio(currentRatio - WallpaperConfigConstants.HEIGHT_RATIO_STEP)
-        }
-
-        var controlsAreVisible = true
+        // WallpaperPreviewView 的单击事件：现在总是尝试切换 BottomSheet 的显示/隐藏
+        // 由 WallpaperPreviewView 内部的 onSingleTapUp 来决定是否在 P1 编辑模式下触发 performClick()
         wallpaperPreviewView.setOnClickListener {
-            if (mainViewModel.isP1EditMode.value == true) {
-                return@setOnClickListener
-            }
-            controlsAreVisible = !controlsAreVisible
-            val targetAlpha = if (controlsAreVisible) 1f else 0f
-            animateViewVisibility(controlsContainer, targetAlpha, if (controlsAreVisible) View.VISIBLE else View.GONE)
-            animateViewVisibility(heightControlsContainer, targetAlpha, if (controlsAreVisible) View.VISIBLE else View.GONE)
-            animateViewVisibility(btnSetWallpaper, targetAlpha, if (controlsAreVisible) View.VISIBLE else View.GONE)
-        }
-    }
-
-    private fun observeViewModel() {
-        mainViewModel.selectedImageUri.observe(this) { uri ->
-            wallpaperPreviewView.setImageUri(uri, true)
-            val isLoading = mainViewModel.isLoading.value ?: false
-            val isEditing = mainViewModel.isP1EditMode.value ?: false
-            btnCustomizeForeground.isEnabled = !isLoading && !isEditing && (uri != null)
-            if (uri == null && isEditing) {
-                mainViewModel.toggleP1EditMode()
-            }
+            // 不再需要在这里判断 isP1EditMode，因为如果是在P1编辑模式下的有效单击，
+            // 我们希望 WallpaperPreviewView 内部的 onSingleTapUp 已经调用了 performClick()。
+            // 如果是P1编辑手势（非单击），事件应该被消费，不会走到这里。
+            Log.d(TAG, "WallpaperPreviewView clicked (MainActivity OnClickListener), toggling config sheet.")
+            mainViewModel.toggleConfigSheetVisibility()
         }
 
-        mainViewModel.selectedBackgroundColor.observe(this) { color ->
-            wallpaperPreviewView.setSelectedBackgroundColor(color)
-        }
-
-        mainViewModel.page1ImageHeightRatio.observe(this) { ratio ->
-            if (mainViewModel.isP1EditMode.value != true) {
-                wallpaperPreviewView.setPage1ImageHeightRatio(ratio)
-            }
-        }
-        mainViewModel.p1FocusX.observe(this) { focusX ->
-            if (mainViewModel.isP1EditMode.value != true) {
-                mainViewModel.p1FocusY.value?.let { focusY ->
-                    wallpaperPreviewView.setNormalizedFocus(focusX, focusY)
-                }
-            }
-        }
-        mainViewModel.p1FocusY.observe(this) { focusY ->
-            if (mainViewModel.isP1EditMode.value != true) {
-                mainViewModel.p1FocusX.value?.let { focusX ->
-                    wallpaperPreviewView.setNormalizedFocus(focusX, focusY)
-                }
-            }
-        }
-        mainViewModel.p1ContentScaleFactor.observe(this) { scale ->
-            if (mainViewModel.isP1EditMode.value != true) {
-                wallpaperPreviewView.setP1ContentScaleFactor(scale) // 确保View有此方法
-                wallpaperPreviewView.invalidate()
-            }
-        }
-
-        mainViewModel.isLoading.observe(this) { isLoading ->
-            Log.d(TAG, "isLoading Observer: isLoading = $isLoading")
-            imageLoadingProgressBar.visibility = if (isLoading) View.VISIBLE else View.GONE
-            val currentEditMode = mainViewModel.isP1EditMode.value ?: false
-            btnSelectImage.isEnabled = !isLoading && !currentEditMode
-            // 更新其他按钮的可用性，因为isLoading变化了
-            val imageSelected = mainViewModel.selectedImageUri.value != null
-            btnSetWallpaper.isEnabled = !isLoading && !currentEditMode && imageSelected
-            btnAdvancedSettings.isEnabled = !isLoading && !currentEditMode
-            btnCustomizeForeground.isEnabled = !isLoading && !currentEditMode && imageSelected || currentEditMode
-            btnHeightReset.isEnabled = !isLoading && !currentEditMode
-            btnHeightIncrease.isEnabled = !isLoading && !currentEditMode
-            btnHeightDecrease.isEnabled = !isLoading && !currentEditMode
-
-            Log.d(TAG, "isLoading Observer: btnSelectImage.isEnabled set to ${btnSelectImage.isEnabled}, alpha: ${btnSelectImage.alpha}, visibility: ${btnSelectImage.visibility}")
-        }
-
-        mainViewModel.toastMessage.observe(this) { event ->
-            val msgContent: String? = event.getContentIfNotHandled()
-            if (msgContent != null) {
-                Log.d(TAG, "Toast message content: $msgContent")
-                Toast.makeText(this, msgContent, Toast.LENGTH_LONG).show()
-            }
-        }
-
-        mainViewModel.colorPalette.observe(this) { colors -> populateColorPaletteView(colors) }
-
-        mainViewModel.isP1EditMode.observe(this) { isEditing ->
-            Log.d(TAG, "isP1EditMode Observer: isEditing = $isEditing")
-
-            val enableNonEditControls = !isEditing
-            val currentLoadingState = mainViewModel.isLoading.value ?: false
-            val imageSelected = mainViewModel.selectedImageUri.value != null
-
-            // 更新按钮可用状态等UI元素 (这部分逻辑保持)
-            btnSelectImage.isEnabled = enableNonEditControls && !currentLoadingState
-            btnSetWallpaper.isEnabled = enableNonEditControls && !currentLoadingState && imageSelected
-            // ... (其他按钮状态更新) ...
-            btnCustomizeForeground.text = if(isEditing) "完成编辑" else "自定义前景" //
-
-            colorPaletteContainer.alpha = if (isEditing) 0.3f else 1.0f //
-            for (i in 0 until colorPaletteContainer.childCount) {
-                colorPaletteContainer.getChildAt(i).isClickable = enableNonEditControls //
-            }
-            controlsContainer.alpha = if(isEditing) 0.3f else 1.0f //
-
-
-            if (isEditing) {
-                if (imageSelected) {
-                    wallpaperPreviewView.setP1FocusEditMode(true,
-                        mainViewModel.p1FocusX.value, mainViewModel.p1FocusY.value,
-                        mainViewModel.page1ImageHeightRatio.value, mainViewModel.p1ContentScaleFactor.value
-                    ) //
-                    Toast.makeText(this, "P1编辑已开启", Toast.LENGTH_SHORT).show() //
-                } else {
-                    mainViewModel.toggleP1EditMode() // 立即退出
-                    Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show() //
-                }
-            } else { // 退出编辑模式
-                // 1. 首先从ViewModel获取最终的P1参数并更新到WallpaperPreviewView的属性中
-                //    这些setter方法内部会更新 nonEditModePage1ImageHeightRatio 等属性
-                mainViewModel.page1ImageHeightRatio.value?.let { wallpaperPreviewView.setPage1ImageHeightRatio(it) }
-                mainViewModel.p1FocusX.value?.let { fx ->
-                    mainViewModel.p1FocusY.value?.let { fy -> wallpaperPreviewView.setNormalizedFocus(fx, fy) }
-                }
-                mainViewModel.p1ContentScaleFactor.value?.let { wallpaperPreviewView.setP1ContentScaleFactor(it) }
-
-                // 2. 然后再调用 setP1FocusEditMode(false)，它将使用已更新的属性来启动 page1TopCroppedBitmap 的生成
-                wallpaperPreviewView.setP1FocusEditMode(false)
-
-                // 3. 确保视图重绘。通常 setP1FocusEditMode(false) 内部的 onComplete 回调会处理重绘。
-                //    如果 onComplete 中的 invalidate() 不足以触发所有场景，可以保留此处的 invalidate，
-                //    但优先依赖 onComplete 中的 invalidate。
-                // wallpaperPreviewView.invalidate() // 可能可以移除，依赖于下面方案中 onComplete 的 invalidate
-            }
-            // 注意：原先在 isEditing=false 分支末尾的 wallpaperPreviewView.invalidate() 可能需要调整或移除，
-            // 以依赖于新方案中 onComplete 回调里的 invalidate()。
-            // 对于进入编辑模式，原有的 invalidate() 可以保留。
-            // 如果上面没有 wallpaperPreviewView.invalidate()，需要确保在 isEditing=true 分支有 invalidate
-            if (isEditing && imageSelected) { // 确保进入编辑模式时有刷新
-                wallpaperPreviewView.invalidate()
-            }
-        }
-
-
+        // 确保 WallpaperPreviewView 的其他回调仍然设置
         wallpaperPreviewView.setOnP1ConfigEditedListener { normX, normY, heightRatio, contentScale ->
             mainViewModel.updateP1ConfigRealtime(normX, normY, heightRatio, contentScale)
         }
@@ -331,42 +139,183 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        observeViewModel()
+        setupWindowInsets()
+    }
+
+    // --- 实现 MainActivityActions 接口方法 ---
+    override fun requestReadMediaImagesPermission() {
+        checkAndRequestReadMediaImagesPermission() // 调用你已有的权限请求方法
+    }
+
+    override fun startSettingsActivity() {
+        if (mainViewModel.isP1EditMode.value == true) { //
+            Toast.makeText(this, "请先完成P1编辑", Toast.LENGTH_SHORT).show() //
+            return
+        }
+        val intent = Intent(this, SettingsActivity::class.java) //
+        startActivity(intent)
+    }
+
+    override fun promptToSetWallpaper() {
+        if (mainViewModel.isP1EditMode.value == true) { //
+            Toast.makeText(this, "请先完成P1编辑", Toast.LENGTH_SHORT).show() //
+            return
+        }
+        if (mainViewModel.selectedImageUri.value != null) { //
+            mainViewModel.saveNonBitmapConfigAndUpdateVersion() //
+            try {
+                val cn = ComponentName(packageName, H2WallpaperService::class.java.name) //
+                val i = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER) //
+                i.putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, cn) //
+                startActivity(i) //
+                Toast.makeText(this, getString(R.string.wallpaper_set_prompt_toast), Toast.LENGTH_LONG).show() //
+            } catch (e: Exception) {
+                Log.e(TAG, "Error trying to set wallpaper", e) //
+                Toast.makeText(this, getString(R.string.wallpaper_set_failed_toast, e.message ?: "Unknown error"), Toast.LENGTH_LONG).show() //
+            }
+        } else {
+            Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show() //
+        }
+    }
+
+    private fun observeViewModel() {
+        mainViewModel.selectedImageUri.observe(this) { uri ->
+            wallpaperPreviewView.setImageUri(uri, true) //
+            val isLoading = mainViewModel.isLoading.value ?: false //
+            val isEditing = mainViewModel.isP1EditMode.value ?: false //
+            // fabOpenConfigPanel.isEnabled = !isLoading // FAB的可用性可能需要更复杂的逻辑
+
+            if (uri == null && isEditing) {
+                mainViewModel.toggleP1EditMode() //
+            }
+        }
+
+        mainViewModel.selectedBackgroundColor.observe(this) { color ->
+            wallpaperPreviewView.setSelectedBackgroundColor(color) //
+        }
+
+        mainViewModel.page1ImageHeightRatio.observe(this) { ratio ->
+            if (mainViewModel.isP1EditMode.value != true) {
+                wallpaperPreviewView.setPage1ImageHeightRatio(ratio) //
+            }
+        }
+        mainViewModel.p1FocusX.observe(this) { focusX ->
+            if (mainViewModel.isP1EditMode.value != true) { //
+                mainViewModel.p1FocusY.value?.let { focusY ->
+                    wallpaperPreviewView.setNormalizedFocus(focusX, focusY) //
+                }
+            }
+        }
+        mainViewModel.p1FocusY.observe(this) { focusY ->
+            if (mainViewModel.isP1EditMode.value != true) { //
+                mainViewModel.p1FocusX.value?.let { focusX ->
+                    wallpaperPreviewView.setNormalizedFocus(focusX, focusY) //
+                }
+            }
+        }
+        mainViewModel.p1ContentScaleFactor.observe(this) { scale ->
+            if (mainViewModel.isP1EditMode.value != true) { //
+                wallpaperPreviewView.setP1ContentScaleFactor(scale)
+                wallpaperPreviewView.invalidate() //
+            }
+        }
+
+        mainViewModel.isLoading.observe(this) { isLoading ->
+            Log.d(TAG, "isLoading Observer: isLoading = $isLoading") //
+            imageLoadingProgressBar.visibility = if (isLoading) View.VISIBLE else View.GONE //
+            fabOpenConfigPanel.isEnabled = !isLoading // 加载时禁用打开配置按钮
+        }
+
+        mainViewModel.toastMessage.observe(this) { event ->
+            event.getContentIfNotHandled()?.let { msgContent -> //
+                Log.d(TAG, "Toast message content: $msgContent") //
+                Toast.makeText(this, msgContent, Toast.LENGTH_LONG).show() //
+            }
+        }
+
+        // mainViewModel.colorPalette.observe(this) { colors -> populateColorPaletteView(colors) } // 移除，颜色选择在Compose中
+
+        mainViewModel.isP1EditMode.observe(this) { isEditing ->
+            Log.d(TAG, "isP1EditMode Observer: isEditing = $isEditing") //
+
+            // P1编辑模式改变时，fabOpenConfigPanel 的可用性通常不受影响，因为BottomSheet中的"完成编辑"需要它
+            // fabOpenConfigPanel.isEnabled = !(mainViewModel.isLoading.value ?: false)
+
+            val imageSelected = mainViewModel.selectedImageUri.value != null //
+            if (isEditing) {
+                if (imageSelected) {
+                    wallpaperPreviewView.setP1FocusEditMode(true,
+                        mainViewModel.p1FocusX.value, mainViewModel.p1FocusY.value,
+                        mainViewModel.page1ImageHeightRatio.value, mainViewModel.p1ContentScaleFactor.value
+                    ) //
+                } else {
+                    mainViewModel.toggleP1EditMode() // 立即退出，因为没有图片无法编辑
+                    Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show() //
+                }
+            } else { // 退出编辑模式
+                mainViewModel.page1ImageHeightRatio.value?.let { wallpaperPreviewView.setPage1ImageHeightRatio(it) } //
+                mainViewModel.p1FocusX.value?.let { fx ->
+                    mainViewModel.p1FocusY.value?.let { fy -> wallpaperPreviewView.setNormalizedFocus(fx, fy) } //
+                }
+                mainViewModel.p1ContentScaleFactor.value?.let { wallpaperPreviewView.setP1ContentScaleFactor(it) } //
+                wallpaperPreviewView.setP1FocusEditMode(false) //
+            }
+            if (isEditing && imageSelected) {
+                wallpaperPreviewView.invalidate() //
+            }
+        }
+
+        wallpaperPreviewView.setOnP1ConfigEditedListener { normX, normY, heightRatio, contentScale ->
+            mainViewModel.updateP1ConfigRealtime(normX, normY, heightRatio, contentScale) //
+        }
+        wallpaperPreviewView.setOnRequestActionCallback { action ->
+            when (action) {
+                WallpaperPreviewView.PreviewViewAction.REQUEST_CANCEL_P1_EDIT_MODE -> {
+                    if (mainViewModel.isP1EditMode.value == true) mainViewModel.toggleP1EditMode() //
+                    Toast.makeText(this, "P1编辑已退出", Toast.LENGTH_SHORT).show() //
+                }
+            }
+        }
     }
 
     private fun setupWindowInsets() {
-        val rootLayoutForInsets: View = findViewById(android.R.id.content)
+        val rootLayoutForInsets: View = findViewById(android.R.id.content) //
         ViewCompat.setOnApplyWindowInsetsListener(rootLayoutForInsets) { _, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            (controlsContainer.layoutParams as? ConstraintLayout.LayoutParams)?.let {
-                it.bottomMargin = systemBars.bottom + (8 * resources.displayMetrics.density).toInt()
-                controlsContainer.requestLayout()
-            }
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars()) //
+            // 如果 fabOpenConfigPanel 或其他XML控件需要根据导航栏调整边距，可以在这里设置
+            // 例如: (fabOpenConfigPanel.layoutParams as? ConstraintLayout.LayoutParams)?.let {
+            // it.bottomMargin = systemBars.bottom + (16 * resources.displayMetrics.density).toInt()
+            // fabOpenConfigPanel.requestLayout()
+            // }
+            // 对于 ComposeView 内部的 ModalBottomSheet，可以使用 .navigationBarsPadding() 修饰符来处理底部 insets
             insets
         }
     }
 
     override fun onResume() {
         super.onResume()
-        Log.d(TAG, "MainActivity onResume.")
-        val prefs = getSharedPreferences(WallpaperConfigConstants.PREFS_NAME, Context.MODE_PRIVATE)
-        val scrollSensitivity = prefs.getInt(WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY, WallpaperConfigConstants.DEFAULT_SCROLL_SENSITIVITY_INT) / 10.0f
-        val p1OverlayFadeRatio = prefs.getInt(WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO, WallpaperConfigConstants.DEFAULT_P1_OVERLAY_FADE_RATIO_INT) / 100.0f
-        val backgroundBlurRadius = prefs.getInt(WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS, WallpaperConfigConstants.DEFAULT_BACKGROUND_BLUR_RADIUS_INT).toFloat()
-        val backgroundInitialOffset = prefs.getInt(WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET, WallpaperConfigConstants.DEFAULT_BACKGROUND_INITIAL_OFFSET_INT) / 10.0f
-        val p2BackgroundFadeInRatio = prefs.getInt(WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO, WallpaperConfigConstants.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO_INT) / 100.0f
-        val blurDownscaleFactorInt = prefs.getInt(WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR, WallpaperConfigConstants.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT)
-        val blurIterations = prefs.getInt(WallpaperConfigConstants.KEY_BLUR_ITERATIONS, WallpaperConfigConstants.DEFAULT_BLUR_ITERATIONS)
-        val p1ShadowRadius = prefs.getInt(WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS, WallpaperConfigConstants.DEFAULT_P1_SHADOW_RADIUS_INT).toFloat()
-        val p1ShadowDx = prefs.getInt(WallpaperConfigConstants.KEY_P1_SHADOW_DX, WallpaperConfigConstants.DEFAULT_P1_SHADOW_DX_INT).toFloat()
-        val p1ShadowDy = prefs.getInt(WallpaperConfigConstants.KEY_P1_SHADOW_DY, WallpaperConfigConstants.DEFAULT_P1_SHADOW_DY_INT).toFloat()
-        val p1ShadowColor = prefs.getInt(WallpaperConfigConstants.KEY_P1_SHADOW_COLOR, WallpaperConfigConstants.DEFAULT_P1_SHADOW_COLOR)
-        val p1ImageBottomFadeHeight = prefs.getInt(WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT, WallpaperConfigConstants.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT_INT).toFloat()
+        Log.d(TAG, "MainActivity onResume.") //
+        val prefs = getSharedPreferences(WallpaperConfigConstants.PREFS_NAME, Context.MODE_PRIVATE) //
+        val scrollSensitivity = prefs.getInt(WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY, WallpaperConfigConstants.DEFAULT_SCROLL_SENSITIVITY_INT) / 10.0f //
+        val p1OverlayFadeRatio = prefs.getInt(WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO, WallpaperConfigConstants.DEFAULT_P1_OVERLAY_FADE_RATIO_INT) / 100.0f //
+        val backgroundBlurRadius = prefs.getInt(WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS, WallpaperConfigConstants.DEFAULT_BACKGROUND_BLUR_RADIUS_INT).toFloat() //
+        val backgroundInitialOffset = prefs.getInt(WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET, WallpaperConfigConstants.DEFAULT_BACKGROUND_INITIAL_OFFSET_INT) / 10.0f //
+        val p2BackgroundFadeInRatio = prefs.getInt(WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO, WallpaperConfigConstants.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO_INT) / 100.0f //
+        val blurDownscaleFactorInt = prefs.getInt(WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR, WallpaperConfigConstants.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT) //
+        val blurIterations = prefs.getInt(WallpaperConfigConstants.KEY_BLUR_ITERATIONS, WallpaperConfigConstants.DEFAULT_BLUR_ITERATIONS) //
+        val p1ShadowRadius = prefs.getInt(WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS, WallpaperConfigConstants.DEFAULT_P1_SHADOW_RADIUS_INT).toFloat() //
+        val p1ShadowDx = prefs.getInt(WallpaperConfigConstants.KEY_P1_SHADOW_DX, WallpaperConfigConstants.DEFAULT_P1_SHADOW_DX_INT).toFloat() //
+        val p1ShadowDy = prefs.getInt(WallpaperConfigConstants.KEY_P1_SHADOW_DY, WallpaperConfigConstants.DEFAULT_P1_SHADOW_DY_INT).toFloat() //
+        val p1ShadowColor = prefs.getInt(WallpaperConfigConstants.KEY_P1_SHADOW_COLOR, WallpaperConfigConstants.DEFAULT_P1_SHADOW_COLOR) //
+        val p1ImageBottomFadeHeight = prefs.getInt(WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT, WallpaperConfigConstants.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT_INT).toFloat() //
 
         wallpaperPreviewView.setConfigValues(
             scrollSensitivity = scrollSensitivity,
             p1OverlayFadeRatio = p1OverlayFadeRatio,
             backgroundBlurRadius = backgroundBlurRadius,
-            snapAnimationDurationMs = WallpaperConfigConstants.DEFAULT_PREVIEW_SNAP_DURATION_MS,
+            snapAnimationDurationMs = WallpaperConfigConstants.DEFAULT_PREVIEW_SNAP_DURATION_MS, //
             normalizedInitialBgScrollOffset = backgroundInitialOffset,
             p2BackgroundFadeInRatio = p2BackgroundFadeInRatio,
             blurDownscaleFactor = blurDownscaleFactorInt / 100.0f,
@@ -376,48 +325,63 @@ class MainActivity : AppCompatActivity() {
             p1ShadowDy = p1ShadowDy,
             p1ShadowColor = p1ShadowColor,
             p1ImageBottomFadeHeight = p1ImageBottomFadeHeight
-        )
+        ) //
 
+        // 确保 WallpaperPreviewView 的状态在 onResume 时与 ViewModel 同步
         if (mainViewModel.isP1EditMode.value == true) {
             wallpaperPreviewView.setP1FocusEditMode( true,
                 mainViewModel.p1FocusX.value, mainViewModel.p1FocusY.value,
                 mainViewModel.page1ImageHeightRatio.value, mainViewModel.p1ContentScaleFactor.value
-            )
+            ) //
         } else {
-            wallpaperPreviewView.setP1FocusEditMode(false)
-            mainViewModel.selectedImageUri.value?.let { wallpaperPreviewView.setImageUri(it, false) } ?: wallpaperPreviewView.setImageUri(null, false)
-            mainViewModel.page1ImageHeightRatio.value?.let { wallpaperPreviewView.setPage1ImageHeightRatio(it) }
+            wallpaperPreviewView.setP1FocusEditMode(false) //
+            mainViewModel.selectedImageUri.value?.let { wallpaperPreviewView.setImageUri(it, false) } ?: wallpaperPreviewView.setImageUri(null, false) //
+            mainViewModel.page1ImageHeightRatio.value?.let { wallpaperPreviewView.setPage1ImageHeightRatio(it) } //
             mainViewModel.p1FocusX.value?.let { fx ->
-                mainViewModel.p1FocusY.value?.let { fy -> wallpaperPreviewView.setNormalizedFocus(fx, fy) }
+                mainViewModel.p1FocusY.value?.let { fy -> wallpaperPreviewView.setNormalizedFocus(fx, fy) } //
             }
-            mainViewModel.p1ContentScaleFactor.value?.let { wallpaperPreviewView.setP1ContentScaleFactor(it) }
-            mainViewModel.selectedBackgroundColor.value?.let { wallpaperPreviewView.setSelectedBackgroundColor(it) }
+            mainViewModel.p1ContentScaleFactor.value?.let { wallpaperPreviewView.setP1ContentScaleFactor(it) } //
+            mainViewModel.selectedBackgroundColor.value?.let { wallpaperPreviewView.setSelectedBackgroundColor(it) } //
         }
-        wallpaperPreviewView.invalidate()
+        wallpaperPreviewView.invalidate() //
     }
 
-    private fun checkAndRequestReadMediaImagesPermission() { /* ... (保持不变) ... */ val permissionToRequest = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE; if (ContextCompat.checkSelfPermission(this, permissionToRequest) != PackageManager.PERMISSION_GRANTED) ActivityCompat.requestPermissions(this, arrayOf(permissionToRequest), PERMISSION_REQUEST_READ_MEDIA_IMAGES) else openGallery() }
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) { /* ... (保持不变) ... */ super.onRequestPermissionsResult(requestCode, permissions, grantResults); if (requestCode == PERMISSION_REQUEST_READ_MEDIA_IMAGES) { if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) openGallery() else Toast.makeText(this, getString(R.string.permission_needed_toast), Toast.LENGTH_LONG).show() } }
-    private fun openGallery() { /* ... (保持不变) ... */ val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI); try { pickImageLauncher.launch(intent) } catch (e: Exception) { Log.e(TAG, "Failed to launch gallery picker", e); Toast.makeText(this, getString(R.string.image_selection_failed_toast), Toast.LENGTH_SHORT).show() } }
-    private fun populateColorPaletteView(colors: List<Int>) { /* ... (保持不变，但内部的isClickable受isP1EditMode影响) ... */ colorPaletteContainer.removeAllViews(); if (colors.isEmpty()) return; val cs = resources.getDimensionPixelSize(R.dimen.palette_color_view_size); val m = resources.getDimensionPixelSize(R.dimen.palette_color_view_margin); for (c in colors) { val v = View(this); val p = LinearLayout.LayoutParams(cs, cs); p.setMargins(m,m,m,m); v.layoutParams = p; v.setBackgroundColor(c); v.setOnClickListener { if (mainViewModel.isP1EditMode.value == true) { Toast.makeText(this, "P1编辑模式下不能更改背景色", Toast.LENGTH_SHORT).show(); return@setOnClickListener }; mainViewModel.updateSelectedBackgroundColor(c) }; v.isClickable = mainViewModel.isP1EditMode.value != true; colorPaletteContainer.addView(v) } }
-    private fun animateViewVisibility(view: View, targetAlpha: Float, targetVisibility: Int) {
-        /* ... (保持不变) ... */
-        if (targetAlpha == 1f && view.visibility != View.VISIBLE) {
-            view.alpha = 0f;
-            view.visibility = View.VISIBLE
-        } else if (targetAlpha == 0f && view.visibility == View.VISIBLE) {
-            /* no op before anim */
+    private fun checkAndRequestReadMediaImagesPermission() {
+        val permissionToRequest = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE //
+        if (ContextCompat.checkSelfPermission(this, permissionToRequest) != PackageManager.PERMISSION_GRANTED) { //
+            ActivityCompat.requestPermissions(this, arrayOf(permissionToRequest), PERMISSION_REQUEST_READ_MEDIA_IMAGES) //
+        } else {
+            openGallery() //
         }
-        view.animate().alpha(targetAlpha).setDuration(200).withEndAction {
-            view.visibility = targetVisibility
-        }.start()
     }
 
-    private fun promptToSetWallpaper() { /* ... (保持不变) ... */ try { val cn = ComponentName(packageName, H2WallpaperService::class.java.name); val i = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER); i.putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, cn); startActivity(i); Toast.makeText(this, getString(R.string.wallpaper_set_prompt_toast), Toast.LENGTH_LONG).show() } catch (e: Exception) { Log.e(TAG, "Error trying to set wallpaper", e); Toast.makeText(this, getString(R.string.wallpaper_set_failed_toast, e.message ?: "Unknown error"), Toast.LENGTH_LONG).show() } }
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults) //
+        if (requestCode == PERMISSION_REQUEST_READ_MEDIA_IMAGES) { //
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) { //
+                openGallery() //
+            } else {
+                Toast.makeText(this, getString(R.string.permission_needed_toast), Toast.LENGTH_LONG).show() //
+            }
+        }
+    }
+
+    private fun openGallery() {
+        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI) //
+        try {
+            pickImageLauncher.launch(intent) //
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch gallery picker", e) //
+            Toast.makeText(this, getString(R.string.image_selection_failed_toast), Toast.LENGTH_SHORT).show() //
+        }
+    }
 
     override fun onBackPressed() {
-        if (mainViewModel.isP1EditMode.value == true) {
-            mainViewModel.toggleP1EditMode() // 退出编辑模式，因为更改是实时保存的
+        // 如果 BottomSheet 是打开的，优先关闭 BottomSheet
+        if (mainViewModel.showConfigSheet.value) {
+            mainViewModel.closeConfigSheet()
+        } else if (mainViewModel.isP1EditMode.value == true) {
+            mainViewModel.toggleP1EditMode()
             Toast.makeText(this, "已退出P1编辑", Toast.LENGTH_SHORT).show()
         } else {
             super.onBackPressed()

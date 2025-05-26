@@ -21,22 +21,25 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import com.example.h2wallpaper.WallpaperConfigConstants
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.abs // 确保导入
+import kotlinx.coroutines.flow.update
 
-class MainViewModel(application: Application) : AndroidViewModel(application) {
+open class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val preferencesRepository: WallpaperPreferencesRepository =
         WallpaperPreferencesRepository(application)
 
     // --- LiveData for UI State (主配置值) ---
     private val _selectedImageUri = MutableLiveData<Uri?>()
-    val selectedImageUri: LiveData<Uri?> get() = _selectedImageUri
+    open val selectedImageUri: LiveData<Uri?> get() = _selectedImageUri
 
     private val _selectedBackgroundColor = MutableLiveData<Int>()
-    val selectedBackgroundColor: LiveData<Int> get() = _selectedBackgroundColor
+    open val selectedBackgroundColor: LiveData<Int> get() = _selectedBackgroundColor
 
     private val _page1ImageHeightRatio = MutableLiveData<Float>()
-    val page1ImageHeightRatio: LiveData<Float> get() = _page1ImageHeightRatio
+    open val page1ImageHeightRatio: LiveData<Float> get() = _page1ImageHeightRatio
 
     private val _p1FocusX = MutableLiveData<Float>()
     val p1FocusX: LiveData<Float> get() = _p1FocusX
@@ -53,18 +56,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isLoading: LiveData<Boolean> get() = _isLoading
 
     private val _colorPalette = MutableLiveData<List<Int>>()
-    val colorPalette: LiveData<List<Int>> get() = _colorPalette
+    open val colorPalette: LiveData<List<Int>> get() = _colorPalette
 
     private var originalBitmapForColorExtraction: Bitmap? = null
 
     // --- P1编辑模式状态 ---
     private val _isP1EditMode = MutableLiveData<Boolean>(false)
-    val isP1EditMode: LiveData<Boolean> get() = _isP1EditMode
+    open val isP1EditMode: LiveData<Boolean> get() = _isP1EditMode
     // --- 移除了 originalEdit... 和 tempP1... 变量 ---
 
-    init {
-        loadInitialPreferences()
+    // 新增: 控制配置 BottomSheet 的显示状态
+    protected val _showConfigSheet = MutableStateFlow(false) // 之前添加的
+    open val showConfigSheet: StateFlow<Boolean> get() = _showConfigSheet // 之前添加的
+
+    // 新增：切换 BottomSheet 显示状态的方法
+    open fun toggleConfigSheetVisibility() {
+        _showConfigSheet.update { currentState -> !currentState }
     }
+
+    // openConfigSheet 和 closeConfigSheet 也可以保留，如果其他地方明确需要打开或关闭
+    open fun openConfigSheet() {
+        _showConfigSheet.value = true
+    }
+
+    open fun closeConfigSheet() {
+        _showConfigSheet.value = false
+    }
+
 
     private fun loadInitialPreferences() {
         _selectedImageUri.value = preferencesRepository.getSelectedImageUri()
@@ -89,7 +107,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun toggleP1EditMode() {
+    open fun toggleP1EditMode() {
         val currentlyEditing = _isP1EditMode.value ?: false
         _isP1EditMode.value = !currentlyEditing
         if (currentlyEditing) {
@@ -177,7 +195,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateSelectedBackgroundColor(color: Int) {
+    open fun updateSelectedBackgroundColor(color: Int) {
         if (_selectedBackgroundColor.value != color) {
             _selectedBackgroundColor.value = color
             preferencesRepository.setSelectedBackgroundColor(color)
@@ -345,7 +363,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveNonBitmapConfigAndUpdateVersion() {
+    open fun saveNonBitmapConfigAndUpdateVersion() {
         preferencesRepository.updateImageContentVersion()
     }
 
