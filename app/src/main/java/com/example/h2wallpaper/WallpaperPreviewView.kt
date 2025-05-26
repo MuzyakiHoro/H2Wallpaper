@@ -95,6 +95,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
     private val viewScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var fullBitmapLoadingJob: Job? = null
     private var topBitmapUpdateJob: Job? = null
+    private var blurUpdateJob: Job? = null // 新增
 
     // --- P1 编辑模式相关 ---
     private var isInP1EditMode: Boolean = false
@@ -797,14 +798,88 @@ class WallpaperPreviewView @JvmOverloads constructor(
         this.currentP1ShadowColor = p1ShadowColor
         this.currentP1ImageBottomFadeHeight = p1ImageBottomFadeHeight.coerceAtLeast(0f)
 
-        val blurChanged = oldBgBlurR != this.currentBackgroundBlurRadius ||
+        val blurParamsChanged = oldBgBlurR != this.currentBackgroundBlurRadius ||
                 oldBgBlurDF != this.currentBlurDownscaleFactor ||
                 oldBgBlurIt != this.currentBlurIterations
 
-        if (blurChanged && this.imageUri != null) {
-            loadFullBitmapsFromUri(this.imageUri, true)
+        if (this.imageUri != null) {
+            if (blurParamsChanged && wallpaperBitmaps?.scrollingBackgroundBitmap != null) {
+                // 如果只有模糊参数变了，并且我们有未模糊的滚动背景图，尝试只更新模糊
+                Log.d(TAG, "setConfigValues: Only blur params changed, attempting to update blur for preview.")
+                updateOnlyBlurredBackgroundForPreviewAsync()
+            } else if (wallpaperBitmaps?.sourceSampledBitmap == null || blurParamsChanged /*如果其他参数也可能触发重载*/) {
+                // 如果没有源图，或者其他参数也变了，或者无法单独更新模糊，则完整重载
+                Log.d(TAG, "setConfigValues: Conditions require full bitmap reload for preview.")
+                loadFullBitmapsFromUri(this.imageUri, true) // forceInternalReload = true
+            } else {
+                // 其他参数变了，但可能只需要重绘或更新P1顶图
+                if (!isInP1EditMode && !isTransitioningFromEditMode && wallpaperBitmaps?.sourceSampledBitmap != null) {
+                    updateOnlyPage1TopCroppedBitmap(nonEditModePage1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!, this.currentP1ContentScaleFactor)
+                } else {
+                    invalidate()
+                }
+            }
         } else {
-            invalidate()
+            invalidate() // 没有图片，只重绘占位符
+        }
+    }
+
+    private fun updateOnlyBlurredBackgroundForPreviewAsync() {
+        blurUpdateJob?.cancel()
+        fullBitmapLoadingJob?.cancel() // 取消可能正在进行的完整加载
+
+        val baseForBlur = wallpaperBitmaps?.scrollingBackgroundBitmap
+        if (baseForBlur == null || viewWidth <= 0 || viewHeight <= 0 || imageUri == null) {
+            if (imageUri != null) {
+                Log.w(TAG, "updateOnlyBlurredBackgroundForPreviewAsync: Base scrolling bitmap is null. Attempting full reload.")
+                loadFullBitmapsFromUri(this.imageUri, true)
+            } else {
+                invalidate()
+            }
+            return
+        }
+
+        Log.d(TAG, "updateOnlyBlurredBackgroundForPreviewAsync: R=$currentBackgroundBlurRadius, DF=$currentBlurDownscaleFactor, It=$currentBlurIterations")
+
+        blurUpdateJob = viewScope.launch {
+            var newBlurredBitmap: Bitmap? = null
+            try {
+                ensureActive()
+                newBlurredBitmap = withContext(Dispatchers.IO) { // 使用 Dispatchers.IO 或 Default
+                    ensureActive()
+                    SharedWallpaperRenderer.regenerateBlurredBitmap(
+                        context, // WallpaperPreviewView 的 context
+                        baseForBlur,
+                        baseForBlur.width, // 目标尺寸与原滚动图一致
+                        baseForBlur.height,
+                        currentBackgroundBlurRadius,
+                        currentBlurDownscaleFactor,
+                        currentBlurIterations
+                    )
+                }
+                ensureActive()
+                val oldBlurred = wallpaperBitmaps?.blurredScrollingBackgroundBitmap
+                if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.scrollingBackgroundBitmap == baseForBlur) {
+                    wallpaperBitmaps?.blurredScrollingBackgroundBitmap = newBlurredBitmap
+                    if (oldBlurred != newBlurredBitmap) oldBlurred?.recycle()
+                } else {
+                    newBlurredBitmap?.recycle()
+                }
+            } catch (e: CancellationException) {
+                Log.d(TAG, "Preview blur update cancelled.")
+                newBlurredBitmap?.recycle()
+            } catch (e: Exception) {
+                Log.e(TAG, "Preview blur update failed", e)
+                newBlurredBitmap?.recycle()
+                if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.scrollingBackgroundBitmap == baseForBlur) {
+                    wallpaperBitmaps?.blurredScrollingBackgroundBitmap = null
+                }
+            } finally {
+                if (isActive && coroutineContext[Job] == blurUpdateJob) blurUpdateJob = null
+                if (isActive && this@WallpaperPreviewView.imageUri != null) {
+                    invalidate()
+                }
+            }
         }
     }
 

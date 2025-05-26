@@ -43,7 +43,7 @@ import com.example.h2wallpaper.WallpaperConfigConstants.PREFS_NAME
 
 class WallpaperPreferencesRepository(context: Context) {
 
-    private val prefs: SharedPreferences =
+    internal  val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     // --- Getters ---
@@ -139,6 +139,20 @@ class WallpaperPreferencesRepository(context: Context) {
 
     fun updateImageContentVersion() {
         prefs.edit().putLong(KEY_IMAGE_CONTENT_VERSION, System.currentTimeMillis()).apply()
+    }
+
+    /**
+     * 新增: 通用方法，用于保存整数类型的设置项
+     */
+    fun saveIntSetting(key: String, value: Int) {
+        prefs.edit().putInt(key, value).apply()
+    }
+
+    /**
+     * 新增: 如果有直接保存Float的需求（虽然当前ViewModel都转成了Int）
+     */
+    fun saveFloatSetting(key: String, value: Float) {
+        prefs.edit().putFloat(key, value).apply()
     }
 
     fun resetSettingsForNewImage(newImageUri: Uri) {

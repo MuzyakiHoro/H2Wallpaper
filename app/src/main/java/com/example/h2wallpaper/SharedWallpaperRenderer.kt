@@ -140,6 +140,75 @@ object SharedWallpaperRenderer {
         }
     }
 
+    /**
+     * 仅根据已有的基础Bitmap和新的模糊参数重新生成模糊后的Bitmap。
+     *
+     * @param context Context
+     * @param baseBitmap 要应用模糊效果的基础Bitmap (例如，未模糊的滚动背景图)
+     * @param targetWidth 最终模糊图的目标宽度 (通常与baseBitmap宽度一致)
+     * @param targetHeight 最终模糊图的目标高度 (通常与baseBitmap高度一致)
+     * @param blurRadius 模糊半径
+     * @param blurDownscaleFactor 模糊前的降采样因子
+     * @param blurIterations 模糊迭代次数
+     * @return 新的模糊后的Bitmap，如果失败则返回null
+     */
+    fun regenerateBlurredBitmap(
+        context: Context,
+        baseBitmap: Bitmap?,
+        targetWidth: Int,
+        targetHeight: Int,
+        blurRadius: Float,
+        blurDownscaleFactor: Float,
+        blurIterations: Int
+    ): Bitmap? {
+        if (baseBitmap == null || baseBitmap.isRecycled || targetWidth <= 0 || targetHeight <= 0) {
+            Log.w(TAG, "regenerateBlurredBitmap: Invalid baseBitmap or target dimensions.")
+            return null
+        }
+        if (blurRadius <= 0.01f) { // 如果不需要模糊，可以返回null或baseBitmap的副本
+            return null // 或者 baseBitmap.copy(baseBitmap.config, true) 如果希望返回一个未模糊的图
+        }
+
+        var downscaledForBlur: Bitmap? = null
+        var blurredDownscaled: Bitmap? = null
+        var upscaledBlurredBitmap: Bitmap? = null
+
+        try {
+            val sourceForActualBlur = baseBitmap
+            val actualDownscaleFactor = blurDownscaleFactor.coerceIn(0.05f, 1.0f)
+            val downscaledWidth = (sourceForActualBlur.width * actualDownscaleFactor).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
+            val downscaledHeight = (sourceForActualBlur.height * actualDownscaleFactor).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
+
+            if (actualDownscaleFactor < 0.99f && (downscaledWidth < sourceForActualBlur.width || downscaledHeight < sourceForActualBlur.height)) {
+                downscaledForBlur = Bitmap.createScaledBitmap(sourceForActualBlur, downscaledWidth, downscaledHeight, true)
+                blurredDownscaled = blurBitmapUsingRenderScript(context, downscaledForBlur, blurRadius.coerceIn(0.1f, 25.0f), blurIterations)
+                if (blurredDownscaled != null) {
+                    // 放大回目标尺寸 (通常是 baseBitmap 的原始尺寸)
+                    upscaledBlurredBitmap = Bitmap.createScaledBitmap(blurredDownscaled, targetWidth, targetHeight, true)
+                } else {
+                    Log.w(TAG, "regenerateBlurredBitmap: Blurred downscaled bitmap is null, falling back to blur on base bitmap.")
+                    upscaledBlurredBitmap = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
+                    // 如果fallback也需要缩放到targetWidth/Height，但通常sourceForActualBlur已经是正确尺寸了
+                }
+            } else {
+                // 不需要降采样，直接模糊
+                upscaledBlurredBitmap = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
+            }
+            return upscaledBlurredBitmap
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during regenerateBlurredBitmap", e)
+            upscaledBlurredBitmap?.recycle() // newBitmapHolder?.recycleInternals() in H2WallpaperService
+            blurredDownscaled?.recycle()
+            downscaledForBlur?.recycle()
+            return null
+        } finally {
+            // 清理中间位图，除非它们是返回的结果
+            if (upscaledBlurredBitmap != blurredDownscaled) blurredDownscaled?.recycle()
+            if (upscaledBlurredBitmap != downscaledForBlur && blurredDownscaled != downscaledForBlur) downscaledForBlur?.recycle()
+        }
+    }
+
+
     private fun drawPage1Layer(
         canvas: Canvas,
         config: WallpaperConfig,

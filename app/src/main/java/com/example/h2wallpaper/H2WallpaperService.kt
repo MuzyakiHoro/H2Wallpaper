@@ -76,6 +76,7 @@ class H2WallpaperService : WallpaperService() {
         // ---
 
         private var numPagesReportedByLauncher = 1
+        private var currentBlurUpdateJob: Job? = null // 新增，用于单独更新模糊
         private var currentPageOffset = 0f
 
 
@@ -103,7 +104,8 @@ class H2WallpaperService : WallpaperService() {
         override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
             Log.i(DEBUG_TAG, "onSharedPreferenceChanged: key=$key received by service.")
             var needsFullReload = false
-            var needsP1TopUpdate = false // For focus, height, or content scale changes
+            var needsP1TopUpdate = false
+            var needsOnlyBlurUpdate = false // 新增标志
             var needsRedrawOnly = false
 
             val oldImageUriString = imageUriString
@@ -111,84 +113,168 @@ class H2WallpaperService : WallpaperService() {
             val oldP1FocusX = currentP1FocusX
             val oldP1FocusY = currentP1FocusY
             val oldPage1ImageHeightRatio = page1ImageHeightRatio
-            val oldP1ContentScaleFactor = currentP1ContentScaleFactor // 保存旧的内容缩放因子
+            val oldP1ContentScaleFactor = currentP1ContentScaleFactor
             val oldBackgroundBlurRadius = currentBackgroundBlurRadius
             val oldBlurDownscaleFactor = currentBlurDownscaleFactor
             val oldBlurIterations = currentBlurIterations
 
-            loadPreferencesFromStorage() // 从仓库重新加载所有配置
+            loadPreferencesFromStorage() // 重新加载所有配置
 
             if (oldImageContentVersion != currentImageContentVersion) {
-                Log.i(DEBUG_TAG, "Image Content Version changed ($oldImageContentVersion -> $currentImageContentVersion). Triggering full reload.")
-                needsFullReload = true
-            } else if (oldImageUriString != imageUriString) {
-                Log.i(DEBUG_TAG, "Image URI string changed. Triggering full reload.")
-                needsFullReload = true
-            } else {
-                // 如果版本号和URI都没变，再检查具体的key
-                key?.let { currentKey ->
-                    when (currentKey) {
-                        WallpaperConfigConstants.KEY_P1_FOCUS_X,
-                        WallpaperConfigConstants.KEY_P1_FOCUS_Y,
-                        WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO,
-                        WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR -> { // P1视觉相关的参数
-                            if (oldP1FocusX != currentP1FocusX || oldP1FocusY != currentP1FocusY ||
-                                oldPage1ImageHeightRatio != page1ImageHeightRatio ||
-                                oldP1ContentScaleFactor != currentP1ContentScaleFactor) {
-                                Log.i(DEBUG_TAG, "Preference changed for P1 visual params (Focus/Height/Scale). Triggering P1 top update.")
-                                needsP1TopUpdate = true
-                            }
-                        }
-                        WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS,
-                        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR,
-                        WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> {
-                            if (oldBackgroundBlurRadius != currentBackgroundBlurRadius ||
-                                oldBlurDownscaleFactor != currentBlurDownscaleFactor ||
-                                oldBlurIterations != currentBlurIterations) {
-                                Log.i(DEBUG_TAG, "Preference changed: Blur related params. Triggering full reload (for P2 background).")
-                                needsFullReload = true // 模糊参数改变通常影响P2背景，需要重载整个滚动背景
-                            }
-                        }
-                        WallpaperConfigConstants.KEY_BACKGROUND_COLOR,
-                        WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY,
-                        WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO,
-                        WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO,
-                        WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET,
-                        WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS,
-                        WallpaperConfigConstants.KEY_P1_SHADOW_DX,
-                        WallpaperConfigConstants.KEY_P1_SHADOW_DY,
-                        WallpaperConfigConstants.KEY_P1_SHADOW_COLOR,
-                        WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> {
-                            Log.i(DEBUG_TAG, "Preference changed for rendering param (Color/Scroll/Fade/Shadow). Triggering redraw.")
-                            needsRedrawOnly = true
-                        }
-                        // KEY_IMAGE_URI 和 KEY_IMAGE_CONTENT_VERSION 已通过版本号和URI字符串比较处理
-                    }
-                } ?: run { // key is null (可能由 clear() 或批量编辑触发，虽然不太常见)
-                    if (!needsFullReload && !needsP1TopUpdate) { // 如果没有更优先的重载，则至少重绘
-                        Log.i(DEBUG_TAG,"Preference key is null, and no major bitmap reload triggered. Triggering redraw as precaution.")
-                        needsRedrawOnly = true
-                    }
+                Log.i(DEBUG_TAG, "Image Content Version changed ($oldImageContentVersion -> $currentImageContentVersion).")
+                // 版本变化通常意味着可能任何事情都变了，或者至少 P1 的视觉效果变了。
+                // 如果URI也变了，肯定是 full reload。
+                // 如果URI没变，但其他例如P1焦点、高度、或任何通过版本号管理的参数变了，
+                // 我们需要判断这个版本变化是否仅仅因为模糊参数。
+                // 为了简化，如果版本号变了，我们先假设可能需要 full reload，
+                // 但如果能确定只有模糊参数导致版本更新，则可以优化。
+                // 目前 MainViewModel 中的 updateAdvancedSettingRealtime 对所有滑块都更新版本号。
+
+                // 更精细的判断：
+                if (oldImageUriString != imageUriString) {
+                    Log.i(DEBUG_TAG, "Image URI changed with version. Triggering full reload.")
+                    needsFullReload = true
+                } else if (oldP1FocusX != currentP1FocusX || oldP1FocusY != currentP1FocusY ||
+                    oldPage1ImageHeightRatio != page1ImageHeightRatio ||
+                    oldP1ContentScaleFactor != currentP1ContentScaleFactor) {
+                    Log.i(DEBUG_TAG, "P1 visual params (Focus/Height/Scale) changed with version. Triggering P1 top update (and potentially full if no source).")
+                    needsP1TopUpdate = true // 如果源图也需要重新加载（比如没有了），这个会升级为full reload
+                } else if (oldBackgroundBlurRadius != currentBackgroundBlurRadius ||
+                    oldBlurDownscaleFactor != currentBlurDownscaleFactor ||
+                    oldBlurIterations != currentBlurIterations) {
+                    Log.i(DEBUG_TAG, "Blur params changed with version. Triggering blur-only update.")
+                    needsOnlyBlurUpdate = true
+                } else {
+                    // 版本号变了，但上面检查的主要参数都没变，可能是其他参数（如阴影、颜色等）
+                    Log.i(DEBUG_TAG, "Other rendering params changed with version. Triggering redraw.")
+                    needsRedrawOnly = true
                 }
             }
+            // 如果版本号没变，再检查具体的 key (这种情况理论上不应该发生，因为 ViewModel 更新参数后会更新版本号)
+            // 但为了健壮性，可以保留对特定 key 的检查，以防万一版本号逻辑有疏漏
+            else if (key != null) {
+                when (key) {
+                    WallpaperConfigConstants.KEY_IMAGE_URI -> { // URI直接变化，强制full reload
+                        if (oldImageUriString != imageUriString) needsFullReload = true
+                    }
+                    WallpaperConfigConstants.KEY_P1_FOCUS_X,
+                    WallpaperConfigConstants.KEY_P1_FOCUS_Y,
+                    WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO,
+                    WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR -> {
+                        if (oldP1FocusX != currentP1FocusX || oldP1FocusY != currentP1FocusY ||
+                            oldPage1ImageHeightRatio != page1ImageHeightRatio ||
+                            oldP1ContentScaleFactor != currentP1ContentScaleFactor) {
+                            needsP1TopUpdate = true
+                        }
+                    }
+                    WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS,
+                    WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR,
+                    WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> {
+                        if (oldBackgroundBlurRadius != currentBackgroundBlurRadius ||
+                            oldBlurDownscaleFactor != currentBlurDownscaleFactor ||
+                            oldBlurIterations != currentBlurIterations) {
+                            needsOnlyBlurUpdate = true // 优先尝试仅更新模糊
+                        }
+                    }
+                    // ... 其他参数触发 needsRedrawOnly ...
+                    else -> needsRedrawOnly = true
+                }
+            } else { // key is null
+                if (imageUriString != null) needsRedrawOnly = true
+            }
 
-            // --- 根据标志执行操作 ---
+
+            // --- 根据标志执行操作 (优先级：Full Reload > P1 Update / Blur Update > Redraw) ---
             if (needsFullReload) {
                 Log.i(DEBUG_TAG, "Action: Executing full bitmap reload.")
+                currentBlurUpdateJob?.cancel() // 取消进行中的模糊更新
                 loadFullBitmapsAsync()
+            } else if (needsOnlyBlurUpdate) {
+                // 仅当有未模糊的背景图时才尝试此优化
+                if (engineWallpaperBitmaps?.scrollingBackgroundBitmap != null && imageUriString != null) {
+                    Log.i(DEBUG_TAG, "Action: Executing blur-only update for background.")
+                    currentBitmapLoadJob?.cancel() // 取消完整加载（如果正在进行）
+                    updateOnlyBlurredBackgroundAsync()
+                } else if (imageUriString != null) {
+                    Log.w(DEBUG_TAG, "Action: Blur-only update requested, but scrollingBackgroundBitmap is null. Forcing full reload.")
+                    loadFullBitmapsAsync() // 回退到完整加载
+                }
             } else if (needsP1TopUpdate) {
                 if (engineWallpaperBitmaps?.sourceSampledBitmap != null && imageUriString != null) {
                     Log.i(DEBUG_TAG, "Action: Executing P1 top cropped bitmap update.")
+                    // 如果P1更新也可能影响模糊（例如，P1高度变化导致背景可见区域变化，模糊可能需要重新评估），则需要更复杂的逻辑
+                    // 当前假设P1更新不直接要求背景模糊重做，除非模糊参数本身也变了
                     updateTopCroppedBitmapAsync()
-                } else if (imageUriString != null) { // 有URI但没有源图，说明源图加载失败或未加载
+                } else if (imageUriString != null) {
                     Log.w(DEBUG_TAG, "Action: P1 top update requested, but sourceSampledBitmap is null. Forcing full reload.")
                     loadFullBitmapsAsync()
                 }
-                // 如果 imageUriString == null，则不执行任何操作，等待图片选择
             } else if (needsRedrawOnly) {
                 if (isVisible) {
                     Log.i(DEBUG_TAG, "Action: Executing redraw only.")
                     drawCurrentFrame()
+                }
+            }
+        }
+        private fun updateOnlyBlurredBackgroundAsync() {
+            currentBlurUpdateJob?.cancel() // 取消上一个模糊更新任务
+            currentBitmapLoadJob?.cancel() // 也取消完整加载任务，因为我们只更新模糊
+
+            val baseForBlur = engineWallpaperBitmaps?.scrollingBackgroundBitmap
+            if (baseForBlur == null || screenWidth <= 0 || screenHeight <= 0 || imageUriString == null) {
+                if (imageUriString != null) { // 有URI但没有基础滚动图，说明有问题
+                    Log.w(DEBUG_TAG, "updateOnlyBlurredBackgroundAsync: Base scrolling bitmap is null. Attempting full reload.")
+                    loadFullBitmapsAsyncIfNeeded() // 尝试完整重载作为后备
+                } else if (isVisible) {
+                    drawCurrentFrame() // 没有URI，绘制占位符
+                }
+                return
+            }
+
+            Log.i(DEBUG_TAG, "updateOnlyBlurredBackgroundAsync: Starting for current scrolling background. BlurR=$currentBackgroundBlurRadius, DF=$currentBlurDownscaleFactor, It=$currentBlurIterations")
+
+            currentBlurUpdateJob = engineScope.launch {
+                var newBlurredBitmap: Bitmap? = null
+                try {
+                    ensureActive()
+                    newBlurredBitmap = withContext(Dispatchers.IO) {
+                        ensureActive()
+                        SharedWallpaperRenderer.regenerateBlurredBitmap(
+                            context = applicationContext,
+                            baseBitmap = baseForBlur,
+                            targetWidth = baseForBlur.width, // 模糊图的目标尺寸应与原滚动图一致
+                            targetHeight = baseForBlur.height,
+                            blurRadius = currentBackgroundBlurRadius,
+                            blurDownscaleFactor = currentBlurDownscaleFactor,
+                            blurIterations = currentBlurIterations
+                        )
+                    }
+                    ensureActive()
+
+                    val oldBlurred = engineWallpaperBitmaps?.blurredScrollingBackgroundBitmap
+                    if (this@H2WallpaperEngine.imageUriString != null && engineWallpaperBitmaps?.scrollingBackgroundBitmap == baseForBlur) {
+                        engineWallpaperBitmaps?.blurredScrollingBackgroundBitmap = newBlurredBitmap
+                        if (oldBlurred != newBlurredBitmap) oldBlurred?.recycle()
+                        Log.i(DEBUG_TAG, "updateOnlyBlurredBackgroundAsync: Successfully updated blurred background.")
+                    } else {
+                        Log.w(DEBUG_TAG, "updateOnlyBlurredBackgroundAsync: Conditions changed during async operation. Discarding result.")
+                        newBlurredBitmap?.recycle()
+                    }
+                } catch (e: CancellationException) {
+                    Log.d(TAG, "updateOnlyBlurredBackgroundAsync cancelled.")
+                    newBlurredBitmap?.recycle()
+                } catch (e: Exception) {
+                    Log.e(TAG, "updateOnlyBlurredBackgroundAsync failed", e)
+                    newBlurredBitmap?.recycle()
+                    // 发生错误，考虑是否回退到完整加载或清除模糊图
+                    if (this@H2WallpaperEngine.imageUriString != null && engineWallpaperBitmaps?.scrollingBackgroundBitmap == baseForBlur) {
+                        engineWallpaperBitmaps?.blurredScrollingBackgroundBitmap = null // 清除损坏的模糊图
+                    }
+                } finally {
+                    if (isActive && coroutineContext[Job] == currentBlurUpdateJob) currentBlurUpdateJob = null
+                    if (isVisible && this@H2WallpaperEngine.imageUriString != null) {
+                        drawCurrentFrame()
+                    }
                 }
             }
         }

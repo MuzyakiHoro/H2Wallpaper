@@ -23,8 +23,9 @@ import java.io.OutputStream
 import com.example.h2wallpaper.WallpaperConfigConstants
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlin.math.abs // 确保导入
+import kotlin.math.abs
 import kotlinx.coroutines.flow.update
+import kotlin.math.roundToInt // 确保导入 roundToInt
 
 open class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -46,7 +47,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val _p1FocusY = MutableLiveData<Float>()
     val p1FocusY: LiveData<Float> get() = _p1FocusY
 
-    private val _p1ContentScaleFactor = MutableLiveData<Float>() // 新增：P1 内容的缩放因子
+    private val _p1ContentScaleFactor = MutableLiveData<Float>()
     val p1ContentScaleFactor: LiveData<Float> get() = _p1ContentScaleFactor
 
     private val _toastMessage = MutableLiveData<Event<String>>()
@@ -63,34 +64,59 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     // --- P1编辑模式状态 ---
     private val _isP1EditMode = MutableLiveData<Boolean>(false)
     open val isP1EditMode: LiveData<Boolean> get() = _isP1EditMode
-    // --- 移除了 originalEdit... 和 tempP1... 变量 ---
 
-    // 新增: 控制配置 BottomSheet 的显示状态
-    protected val _showConfigSheet = MutableStateFlow(false) // 之前添加的
-    open val showConfigSheet: StateFlow<Boolean> get() = _showConfigSheet // 之前添加的
+    // --- 新增：BottomSheet 配置状态 ---
+    protected val _showConfigSheet = MutableStateFlow(false)
+    open val showConfigSheet: StateFlow<Boolean> get() = _showConfigSheet
 
-    // 新增：切换 BottomSheet 显示状态的方法
-    open fun toggleConfigSheetVisibility() {
-        _showConfigSheet.update { currentState -> !currentState }
-    }
-    // --- 新增：BottomSheet 选择状态 ---
     private val _selectedMainCategoryIdInSheet = MutableStateFlow(mainCategoriesData.firstOrNull()?.id)
     val selectedMainCategoryIdInSheet: StateFlow<String?> = _selectedMainCategoryIdInSheet
 
     private val _subCategoryForAdjustmentIdInSheet = MutableStateFlow<String?>(null)
     val subCategoryForAdjustmentIdInSheet: StateFlow<String?> = _subCategoryForAdjustmentIdInSheet
 
+    // --- 新增：高级设置参数的 LiveData ---
+    private val _scrollSensitivity = MutableLiveData<Float>()
+    open val scrollSensitivity: LiveData<Float> get() = _scrollSensitivity
 
-    // openConfigSheet 和 closeConfigSheet 也可以保留，如果其他地方明确需要打开或关闭
-    open fun openConfigSheet() {
-        _showConfigSheet.value = true
+    private val _p1OverlayFadeRatio = MutableLiveData<Float>()
+    open val p1OverlayFadeRatio: LiveData<Float> get() = _p1OverlayFadeRatio
+
+    private val _p2BackgroundFadeInRatio = MutableLiveData<Float>()
+    val p2BackgroundFadeInRatio: LiveData<Float> get() = _p2BackgroundFadeInRatio
+
+    private val _backgroundInitialOffset = MutableLiveData<Float>()
+    val backgroundInitialOffset: LiveData<Float> get() = _backgroundInitialOffset
+
+    private val _backgroundBlurRadius = MutableLiveData<Float>()
+    val backgroundBlurRadius: LiveData<Float> get() = _backgroundBlurRadius
+
+    private val _blurDownscaleFactor = MutableLiveData<Float>()
+    val blurDownscaleFactor: LiveData<Float> get() = _blurDownscaleFactor
+
+    private val _blurIterations = MutableLiveData<Int>() // 注意：这个是 Int 类型
+    val blurIterations: LiveData<Int> get() = _blurIterations
+
+    private val _p1ShadowRadius = MutableLiveData<Float>()
+    val p1ShadowRadius: LiveData<Float> get() = _p1ShadowRadius
+
+    private val _p1ShadowDx = MutableLiveData<Float>()
+    val p1ShadowDx: LiveData<Float> get() = _p1ShadowDx
+
+    private val _p1ShadowDy = MutableLiveData<Float>()
+    val p1ShadowDy: LiveData<Float> get() = _p1ShadowDy
+
+    // p1ShadowColor 是 Int，如果需要也可以做成 LiveData，但通常通过颜色选择器直接更新
+    // private val _p1ShadowColor = MutableLiveData<Int>()
+    // val p1ShadowColor: LiveData<Int> get() = _p1ShadowColor
+
+    private val _p1ImageBottomFadeHeight = MutableLiveData<Float>()
+    val p1ImageBottomFadeHeight: LiveData<Float> get() = _p1ImageBottomFadeHeight
+
+
+    init {
+        loadInitialPreferences()
     }
-
-    open fun closeConfigSheet() {
-        _showConfigSheet.value = false
-    }
-
-
 
     private fun loadInitialPreferences() {
         _selectedImageUri.value = preferencesRepository.getSelectedImageUri()
@@ -99,6 +125,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _p1FocusX.value = preferencesRepository.getP1FocusX()
         _p1FocusY.value = preferencesRepository.getP1FocusY()
         _p1ContentScaleFactor.value = preferencesRepository.getP1ContentScaleFactor()
+
+        // 初始化新增的 LiveData
+        _scrollSensitivity.value = preferencesRepository.getScrollSensitivity()
+        _p1OverlayFadeRatio.value = preferencesRepository.getP1OverlayFadeRatio()
+        _p2BackgroundFadeInRatio.value = preferencesRepository.getP2BackgroundFadeInRatio()
+        _backgroundInitialOffset.value = preferencesRepository.getBackgroundInitialOffset()
+        _backgroundBlurRadius.value = preferencesRepository.getBackgroundBlurRadius()
+        _blurDownscaleFactor.value = preferencesRepository.getBlurDownscaleFactorInt() / 100.0f // 从 Int 转换为 Float
+        _blurIterations.value = preferencesRepository.getBlurIterations()
+        _p1ShadowRadius.value = preferencesRepository.getP1ShadowRadius()
+        _p1ShadowDx.value = preferencesRepository.getP1ShadowDx()
+        _p1ShadowDy.value = preferencesRepository.getP1ShadowDy()
+        _p1ImageBottomFadeHeight.value = preferencesRepository.getP1ImageBottomFadeHeight()
+        // _p1ShadowColor.value = preferencesRepository.getP1ShadowColor()
+
 
         viewModelScope.launch {
             val currentUri = _selectedImageUri.value
@@ -115,14 +156,24 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    // 修改 toggleP1EditMode 方法
+    open fun toggleConfigSheetVisibility() {
+        _showConfigSheet.update { currentState -> !currentState }
+    }
+
+    open fun openConfigSheet() {
+        _showConfigSheet.value = true
+    }
+
+    open fun closeConfigSheet() {
+        _showConfigSheet.value = false
+    }
+
     open fun toggleP1EditMode() {
         val currentlyEditing = _isP1EditMode.value ?: false
         val newEditMode = !currentlyEditing
         _isP1EditMode.value = newEditMode
 
         if (newEditMode) {
-            // 进入P1编辑模式时，清除子分类调整项，确保滑块/颜色选择器不显示
             _subCategoryForAdjustmentIdInSheet.value = null
             Log.d("MainViewModel", "Entering P1 Edit Mode.")
         } else {
@@ -131,12 +182,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun updateP1ConfigRealtime(normX: Float, normY: Float, heightRatio: Float, contentScale: Float) {
-        if (_isP1EditMode.value != true) {
-            // 通常此回调只应在编辑模式下由PreviewView触发
-            // Log.w("MainViewModel", "updateP1ConfigRealtime called when not in P1 Edit Mode. Current values will be updated if different.")
-            // 如果PreviewView在非编辑模式下也可能回调（例如初始化同步），则需要确保值确实不同才更新
-        }
-
         var configActuallyChanged = false
 
         val newNormX = normX.coerceIn(0f, 1f)
@@ -153,10 +198,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             configActuallyChanged = true
         }
 
-        // 如果焦点X或Y任一改变, 确保调用 setP1Focus 以便统一处理（如果setP1Focus有特殊逻辑，如更新版本）
-        // 但由于我们下面会统一更新版本，这里仅确保 SharedPreferences 中的 X 和 Y 被设置。
-        // 如果 setP1FocusX/Y 不分别存在，则需要在这里组合调用 setP1Focus。
-
         val newHeightRatio = heightRatio.coerceIn(
             WallpaperConfigConstants.MIN_HEIGHT_RATIO,
             WallpaperConfigConstants.MAX_HEIGHT_RATIO
@@ -168,8 +209,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         val newContentScale = contentScale.coerceIn(
-            WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR, // Min scale
-            4.0f // Max scale (should match WallpaperPreviewView's p1UserMaxScaleFactorRelativeToCover)
+            WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR,
+            4.0f
         )
         if (abs((_p1ContentScaleFactor.value ?: WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR) - newContentScale) > 0.0001f) {
             _p1ContentScaleFactor.value = newContentScale
@@ -183,7 +224,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun updatePage1ImageHeightRatio(newRatio: Float) { // For legacy buttons if still used
+    // 旧的更新方法，如果不再通过按钮等方式调用，可以考虑移除或设为private
+    fun updatePage1ImageHeightRatio(newRatio: Float) {
         if (_isP1EditMode.value == true) {
             Log.i("MainViewModel", "In P1 Edit Mode, height changes via gesture. Ignoring legacy call.")
             return
@@ -196,7 +238,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun updateP1Focus(focusX: Float, focusY: Float) { // For potential external programmatic changes
+    fun updateP1Focus(focusX: Float, focusY: Float) {
         if (_isP1EditMode.value == true) {
             Log.i("MainViewModel", "In P1 Edit Mode, focus changes via gesture. Ignoring legacy call.")
             return
@@ -204,7 +246,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val clampedX = focusX.coerceIn(0f, 1f); val clampedY = focusY.coerceIn(0f, 1f)
         if (_p1FocusX.value != clampedX || _p1FocusY.value != clampedY) {
             _p1FocusX.value = clampedX; _p1FocusY.value = clampedY
-            preferencesRepository.setP1Focus(clampedX, clampedY) // Assumes setP1Focus updates version
+            preferencesRepository.setP1Focus(clampedX, clampedY)
         }
     }
 
@@ -240,12 +282,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     _page1ImageHeightRatio.postValue(defHeightRatio)
                     _p1ContentScaleFactor.postValue(defContentScale)
 
-                    preferencesRepository.resetSettingsForNewImage(internalFileUri) // Resets focus, scale, and updates version
-                    preferencesRepository.setPage1ImageHeightRatio(defHeightRatio) // Save height separately
-                    // resetSettingsForNewImage already updates version, ensure no double update if setPage1ImageHeightRatio also updates.
-                    // For safety, if setPage1ImageHeightRatio also updates version, this might be one place where MainViewModel
-                    // directly calls updateImageContentVersion() after all defaults are set.
-                    // However, resetSettingsForNewImage is the primary "new content" event.
+                    preferencesRepository.resetSettingsForNewImage(internalFileUri)
+                    preferencesRepository.setPage1ImageHeightRatio(defHeightRatio)
+
 
                     try {
                         extractColorsFromUri(internalFileUri, isNewImage = true)
@@ -284,13 +323,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private suspend fun deleteInternalImage(internalFileUri: Uri) = withContext(Dispatchers.IO) {
         val context = getApplication<Application>().applicationContext
+        // FileProvider URI 不能直接转换为 File 对象进行删除。
+        // 我们需要通过原始保存路径来删除，或者如果 FileProvider URI 是内部文件的，需要一种方式映射回去。
+        // 假设 internalFileUri 是通过 FileProvider.getUriForFile(context, "${context.packageName}.provider", internalFile) 创建的
+        // 并且 internalFile 的路径是固定的 "wallpaper_images/h2_wallpaper_internal_image.jpg"
         val imageDir = File(context.filesDir, "wallpaper_images")
         val internalFile = File(imageDir, "h2_wallpaper_internal_image.jpg")
+
+        // 比较路径是否与预期的一致，或者直接尝试删除预期的文件（如果 URI 代表的就是这个文件）
+        // 注意：直接从 FileProvider URI 获取文件路径可能不直接或不安全。
+        // 更稳健的方法是，如果 saveImageToInternalAppStorage 总是保存到同一个文件名，
+        // 那么 deleteInternalImage 就可以直接尝试删除那个固定路径的文件。
         if (internalFile.exists()) {
             if (internalFile.delete()) Log.i("MainViewModel", "Deleted old internal image: ${internalFile.path}")
             else Log.w("MainViewModel", "Failed to delete old internal image: ${internalFile.path}")
         }
     }
+
 
     private suspend fun extractColorsFromUri(uri: Uri, isNewImage: Boolean) = withContext(Dispatchers.IO) {
         val context = getApplication<Application>().applicationContext
@@ -328,7 +377,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         viewModelScope.launch(Dispatchers.Main) { updateSelectedBackgroundColor(newBgColor) }
                     }
                 }
-            } ?: run { // bitmapForPalette is null
+            } ?: run {
                 Log.e("MainViewModel", "extractColorsFromUri: Decoded bitmap for palette is null. URI: $uri")
                 if (isNewImage) _toastMessage.postValue(Event(getApplication<Application>().getString(R.string.image_load_failed_toast) + " (提取颜色时解码失败)"))
                 launch(Dispatchers.Main) { setDefaultColorPalette() }
@@ -376,24 +425,135 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    open fun saveNonBitmapConfigAndUpdateVersion() {
-        preferencesRepository.updateImageContentVersion()
+    /**
+     * 用于从 Compose UI (BottomSheet) 实时更新高级设置参数。
+     * @param paramKey 参数的键名 (来自 WallpaperConfigConstants)
+     * @param actualValue 参数的实际浮点数值 (非 slider 的 0-1 位置值)
+     */
+    open fun updateAdvancedSettingRealtime(paramKey: String, actualValue: Float) {
+        val editor = preferencesRepository.prefs.edit() // 直接访问 SharedPreferences 进行编辑
+        var valueChanged = false
+
+        when (paramKey) {
+            WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> {
+                if (_scrollSensitivity.value != actualValue) {
+                    _scrollSensitivity.value = actualValue
+                    editor.putInt(paramKey, (actualValue * 10).roundToInt())
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO -> {
+                if (_p1OverlayFadeRatio.value != actualValue) {
+                    _p1OverlayFadeRatio.value = actualValue
+                    editor.putInt(paramKey, (actualValue * 100).roundToInt())
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> {
+                if (_p2BackgroundFadeInRatio.value != actualValue) {
+                    _p2BackgroundFadeInRatio.value = actualValue
+                    editor.putInt(paramKey, (actualValue * 100).roundToInt())
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> {
+                if (_backgroundInitialOffset.value != actualValue) {
+                    _backgroundInitialOffset.value = actualValue
+                    editor.putInt(paramKey, (actualValue * 10).roundToInt())
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> {
+                if (_backgroundBlurRadius.value != actualValue) {
+                    _backgroundBlurRadius.value = actualValue
+                    editor.putInt(paramKey, actualValue.roundToInt())
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> {
+                // actualValue 是 0.0f - 1.0f
+                if (_blurDownscaleFactor.value != actualValue) {
+                    _blurDownscaleFactor.value = actualValue
+                    editor.putInt(paramKey, (actualValue * 100).roundToInt())
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> {
+                val intValue = actualValue.roundToInt() // 迭代次数是整数
+                if (_blurIterations.value != intValue) {
+                    _blurIterations.value = intValue
+                    editor.putInt(paramKey, intValue)
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> {
+                if (_p1ShadowRadius.value != actualValue) {
+                    _p1ShadowRadius.value = actualValue
+                    editor.putInt(paramKey, actualValue.roundToInt())
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_P1_SHADOW_DX -> {
+                if (_p1ShadowDx.value != actualValue) {
+                    _p1ShadowDx.value = actualValue
+                    editor.putInt(paramKey, actualValue.roundToInt())
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_P1_SHADOW_DY -> {
+                if (_p1ShadowDy.value != actualValue) {
+                    _p1ShadowDy.value = actualValue
+                    editor.putInt(paramKey, actualValue.roundToInt())
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> {
+                if (_p1ImageBottomFadeHeight.value != actualValue) {
+                    _p1ImageBottomFadeHeight.value = actualValue
+                    editor.putInt(paramKey, actualValue.roundToInt())
+                    valueChanged = true
+                }
+            }
+            else -> {
+                Log.w("MainViewModel", "updateAdvancedSettingRealtime: Unknown paramKey: $paramKey")
+                return
+            }
+        }
+
+        if (valueChanged) {
+            editor.apply()
+            preferencesRepository.updateImageContentVersion() // 关键：更新版本号以触发壁纸服务刷新
+            Log.d("MainViewModel", "Advanced setting '$paramKey' updated to $actualValue and saved. Version updated.")
+        }
     }
+
+
+    // 确保在 P1 编辑模式结束，或者用户选择 "应用壁纸" 或 "更多高级设置" 导航前，
+    // 或者 BottomSheet 关闭时，任何“缓冲”的更改（如果采用了延迟保存策略）都已保存。
+    // 但根据您的实时更新需求，上面的 updateAdvancedSettingRealtime 已经包含了保存和版本更新。
+    // 这个方法主要用于那些不通过滑块，但仍需触发版本更新的非图片内容配置更改。
+    open fun saveNonBitmapConfigAndUpdateVersion() {
+        // 这个方法目前主要用于从 MainActivity 触发一个通用的版本更新。
+        // 对于滑动条，版本更新已在 updateAdvancedSettingRealtime 中处理。
+        // 如果有其他配置项（非滑动条，非图片本身）也需要触发版本更新，可以在这里添加逻辑，
+        // 或者确保它们的更新也调用 preferencesRepository.updateImageContentVersion()
+        preferencesRepository.updateImageContentVersion()
+        Log.d("MainViewModel", "saveNonBitmapConfigAndUpdateVersion: Image content version explicitly updated.")
+    }
+
 
     override fun onCleared() {
         super.onCleared()
         originalBitmapForColorExtraction?.recycle(); originalBitmapForColorExtraction = null
         Log.d("MainViewModel", "ViewModel cleared.")
     }
-    // --- 新增：更新 BottomSheet 选择状态的方法 ---
+
     fun onMainCategorySelectedInSheet(categoryId: String?) {
         _selectedMainCategoryIdInSheet.value = categoryId
-        // 当主分类切换时，也应该清除子分类的调整项
         _subCategoryForAdjustmentIdInSheet.value = null
     }
 
     fun onSubCategoryForAdjustmentSelectedInSheet(subCategoryId: String?) {
-        // 如果点击的是当前已选中的，则取消；否则设为新的
         if (_subCategoryForAdjustmentIdInSheet.value == subCategoryId) {
             _subCategoryForAdjustmentIdInSheet.value = null
         } else {
