@@ -1,7 +1,6 @@
 // app/src/main/java/com/example/h2wallpaper/BottomSheetScreen.kt
 package com.example.h2wallpaper
 
-// ... (所有其他 imports 保持不变) ...
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
@@ -9,24 +8,36 @@ import android.net.Uri
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.animation.Crossfade
-import androidx.compose.foundation.BorderStroke // 确保导入
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AspectRatio // 示例图标
+import androidx.compose.material.icons.filled.Brightness6 // 示例图标
+import androidx.compose.material.icons.filled.CheckCircleOutline // 示例图标
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ColorLens
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer // 确保导入
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -41,11 +52,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-import androidx.compose.animation.animateContentSize // 新增
 
 
-// --- 数据模型 (保持不变) ---
-// ... (代码与上一条回复一致) ...
+// --- 数据模型 (与之前一致) ---
 data class SubCategory(
     val id: String,
     val name: String,
@@ -61,7 +70,7 @@ data class MainCategory(
 val mainCategoriesData = listOf(
     MainCategory("cat_general", "通用", listOf(
         SubCategory("sub_select_image", "选择图片", type = "action"),
-        SubCategory("sub_bg_color", "背景颜色", type = "action"),
+        SubCategory("sub_bg_color", "背景颜色", type = "color_picker"),
         SubCategory("sub_apply_wallpaper", "应用壁纸", type = "action"),
         SubCategory("sub_advanced_settings", "更多高级设置", type = "action")
     )),
@@ -85,15 +94,16 @@ val mainCategoriesData = listOf(
     ))
 )
 
-// MainActivityActions 接口 (保持不变)
-// ... (代码与上一条回复一致) ...
+// --- MainActivityActions 接口 (与之前一致) ---
 interface MainActivityActions {
     fun requestReadMediaImagesPermission()
     fun startSettingsActivity()
     fun promptToSetWallpaper()
 }
 
-// ConfigSheetContent Composable (保持不变)
+// enum class 定义移到文件顶部
+enum class AdjustmentAreaState { PLACEHOLDER, SLIDER, COLOR_PICKER }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfigSheetContent(
@@ -105,24 +115,22 @@ fun ConfigSheetContent(
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences(WallpaperConfigConstants.PREFS_NAME, Context.MODE_PRIVATE) }
 
-    // 修改点：从 ViewModel 观察状态
     val selectedMainCategoryId by viewModel.selectedMainCategoryIdInSheet.collectAsState()
     val subCategoryForAdjustmentId by viewModel.subCategoryForAdjustmentIdInSheet.collectAsState()
 
-    // 根据 ID 找到对应的对象
     val selectedMainCategory = remember(selectedMainCategoryId) {
         mainCategoriesData.find { it.id == selectedMainCategoryId } ?: mainCategoriesData.firstOrNull()
     }
     val subCategoryForAdjustment = remember(subCategoryForAdjustmentId, selectedMainCategory) {
-        selectedMainCategory?.subCategories?.find { it.id == subCategoryForAdjustmentId && it.type == "parameter_slider"}
+        selectedMainCategory?.subCategories?.find { it.id == subCategoryForAdjustmentId }
     }
 
     val isP1EditMode by viewModel.isP1EditMode.observeAsState(initial = false)
 
+    // 这就是截图第130行报错的 Lambda 表达式
     val onSliderValueChangeFinished: (String, Float) -> Unit = { paramKey, newSliderPosition ->
-        // ... (内容保持不变) ...
         val editor = prefs.edit()
-        val actualValue = mapSliderPositionToActualValue(paramKey, newSliderPosition, prefs)
+        val actualValue = mapSliderPositionToActualValue(paramKey, newSliderPosition, prefs) // 确保这个函数存在且签名正确
         when (paramKey) {
             WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> editor.putInt(paramKey, (actualValue * 10).roundToInt())
             WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO,
@@ -135,6 +143,7 @@ fun ConfigSheetContent(
             WallpaperConfigConstants.KEY_P1_SHADOW_DX,
             WallpaperConfigConstants.KEY_P1_SHADOW_DY,
             WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> editor.putInt(paramKey, actualValue.roundToInt())
+            // 确保所有在 ParameterAdjustmentSection 中可能用到的 paramKey 都在这里有处理
         }
         editor.apply()
         Log.d("ConfigSheet", "Slider for $paramKey saved with actual value: $actualValue (slider: $newSliderPosition)")
@@ -142,125 +151,220 @@ fun ConfigSheetContent(
     }
 
     Column(
-        modifier = modifier
+        modifier = modifier // 这个 modifier 来自 ConfigBottomSheetContainer，包含高度限制和滚动
             .fillMaxWidth()
             .padding(bottom = 16.dp)
     ) {
-        // 1. 参数调整区域 (或占位符)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .animateContentSize()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            val currentAdjustmentCategoryLocal = subCategoryForAdjustment // 使用从ID衍生的对象
-            val showParameterControls = currentAdjustmentCategoryLocal != null // 因为我们已确保它是parameter_slider类型
+            val currentAdjustmentCategory = subCategoryForAdjustment
+            val areaState = if (isP1EditMode) {
+                AdjustmentAreaState.PLACEHOLDER
+            } else {
+                when (currentAdjustmentCategory?.type) {
+                    "parameter_slider" -> AdjustmentAreaState.SLIDER
+                    "color_picker" -> AdjustmentAreaState.COLOR_PICKER
+                    else -> AdjustmentAreaState.PLACEHOLDER
+                }
+            }
 
             Crossfade(
-                targetState = showParameterControls,
-                label = "ParameterAdjustmentCrossfade"
-            ) { shouldShowControls ->
-                if (shouldShowControls && currentAdjustmentCategoryLocal != null) {
-                    ParameterAdjustmentSection(
-                        subCategory = currentAdjustmentCategoryLocal,
-                        keyOfParam = currentAdjustmentCategoryLocal.id,
-                        prefs = prefs,
-                        onFinalValueChange = { paramKey, finalSliderPos ->
-                            onSliderValueChangeFinished(paramKey, finalSliderPos)
+                targetState = areaState,
+                label = "AdjustmentAreaCrossfade"
+            ) { state ->
+                when (state) {
+                    AdjustmentAreaState.SLIDER -> {
+                        if (currentAdjustmentCategory != null) {
+                            ParameterAdjustmentSection( // 调用 ParameterAdjustmentSection
+                                subCategory = currentAdjustmentCategory,
+                                keyOfParam = currentAdjustmentCategory.id,
+                                prefs = prefs,
+                                onFinalValueChange = { paramKey, finalSliderPos -> // 签名 (String, Float) -> Unit
+                                    onSliderValueChangeFinished(paramKey, finalSliderPos) // 传递给 onSliderValueChangeFinished
+                                }
+                            )
+                        } else {
+                            PlaceholderForAdjustmentArea(text = if (isP1EditMode && viewModel.selectedImageUri.value != null) "P1图片调整模式已激活" else "选择下方参数项进行调整")
                         }
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .defaultMinSize(minHeight = 40.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "选择下方参数项进行调整",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = 0.7f)
-                        )
+                    }
+                    AdjustmentAreaState.COLOR_PICKER -> {
+                        if (currentAdjustmentCategory != null) {
+                            ColorSelectionSection(
+                                viewModel = viewModel,
+                                subCategory = currentAdjustmentCategory
+                            )
+                        } else {
+                            PlaceholderForAdjustmentArea(text = if (isP1EditMode && viewModel.selectedImageUri.value != null) "P1图片调整模式已激活" else "选择下方参数项进行调整")
+                        }
+                    }
+                    AdjustmentAreaState.PLACEHOLDER -> {
+                        PlaceholderForAdjustmentArea(text = if (isP1EditMode && viewModel.selectedImageUri.value != null) "P1图片调整模式已激活" else "选择下方参数项进行调整")
                     }
                 }
             }
         }
 
-        // 2. 主分类选择行
         MainCategoryTabs(
             categories = mainCategoriesData,
-            selectedCategory = selectedMainCategory, // 使用从ID衍生的对象
+            selectedCategory = selectedMainCategory,
             onCategorySelected = { category ->
-                // 修改点：调用 ViewModel 更新状态
-                viewModel.onMainCategorySelectedInSheet(category.id)
-            },
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp)
-        )
-
-        // 3. 子分类/操作显示区域
-        SubCategoryDisplayArea(
-            subCategories = selectedMainCategory?.subCategories ?: emptyList(),
-            currentlyAdjusting = subCategoryForAdjustment, // 使用从ID衍生的对象
-            onSubCategoryClick = { subCategory ->
-                if (subCategory.type == "parameter_slider") {
-                    // 修改点：调用 ViewModel 更新状态
-                    viewModel.onSubCategoryForAdjustmentSelectedInSheet(subCategory.id)
-                } else {
-                    // 动作类，清除调整项并执行动作
-                    viewModel.onSubCategoryForAdjustmentSelectedInSheet(null) // 清除调整项
-                    handleSubCategoryAction(subCategory, viewModel, activityActions, context, onHideSheet)
+                if (!isP1EditMode) {
+                    viewModel.onMainCategorySelectedInSheet(category.id)
                 }
             },
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
+            enabled = !isP1EditMode
+        )
+
+        SubCategoryDisplayArea(
+            subCategories = selectedMainCategory?.subCategories ?: emptyList(),
+            currentlyAdjusting = if (isP1EditMode) null else subCategoryForAdjustment,
+            onSubCategoryClick = { subCategory ->
+                if (subCategory.id == "p1_customize_action") {
+                    if (viewModel.selectedImageUri.value != null) {
+                        viewModel.toggleP1EditMode()
+                    } else {
+                        Toast.makeText(context, context.getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
+                    }
+                } else if (!isP1EditMode) {
+                    if (subCategory.type == "parameter_slider" || subCategory.type == "color_picker") {
+                        viewModel.onSubCategoryForAdjustmentSelectedInSheet(subCategory.id)
+                    } else {
+                        viewModel.onSubCategoryForAdjustmentSelectedInSheet(null)
+                        handleSubCategoryAction(subCategory, viewModel, activityActions, context, onHideSheet)
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            isP1EditModeActive = isP1EditMode
         )
     }
 }
 
+// --- PlaceholderForAdjustmentArea Composable (与之前一致) ---
+@Composable
+private fun PlaceholderForAdjustmentArea(text: String = "选择下方参数项进行调整") {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 40.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = 0.7f)
+        )
+    }
+}
 
-// MainCategoryTabs Composable (保持不变)
-// ... (代码与上一条回复一致) ...
+// --- ColorSelectionSection Composable (与之前一致) ---
+@Composable
+fun ColorSelectionSection(
+    viewModel: MainViewModel,
+    subCategory: SubCategory
+) {
+    val colorPalette by viewModel.colorPalette.observeAsState(initial = emptyList())
+    val selectedColor by viewModel.selectedBackgroundColor.observeAsState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = subCategory.name,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Medium,
+            color = Color.White,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        if (colorPalette.isEmpty()) {
+            Text(
+                "未提取到颜色或图片未选择",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.7f)
+            )
+        } else {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp)
+            ) {
+                items(colorPalette) { colorInt ->
+                    val color = Color(colorInt)
+                    val isSelected = colorInt == selectedColor
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(color, CircleShape)
+                            .border(
+                                width = if (isSelected) 2.dp else 0.dp,
+                                color = if (isSelected) Color.White else Color.Transparent,
+                                shape = CircleShape
+                            )
+                            .clickable { viewModel.updateSelectedBackgroundColor(colorInt) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+// --- MainCategoryTabs Composable (与之前一致) ---
 @Composable
 fun MainCategoryTabs(
     categories: List<MainCategory>,
     selectedCategory: MainCategory?,
     onCategorySelected: (MainCategory) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     LazyRow(
         modifier = modifier.fillMaxWidth(),
+        userScrollEnabled = enabled,
         contentPadding = PaddingValues(horizontal = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         items(categories) { category ->
             val isSelected = category == selectedCategory
             TextButton(
-                onClick = { onCategorySelected(category) },
-                shape = RoundedCornerShape(12.dp), // 增加圆角
+                onClick = { if (enabled) onCategorySelected(category) },
+                enabled = enabled,
+                shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.textButtonColors(
-                    containerColor = if (isSelected) Color.White.copy(alpha = 0.15f) else Color.Transparent, // 选中时给一点半透明白色背景
-                    contentColor = Color.White // 标签文本颜色改为白色
+                    containerColor = if (isSelected && enabled) Color.White.copy(alpha = 0.15f) else Color.Transparent,
+                    contentColor = Color.White,
+                    disabledContainerColor = Color.Transparent,
+                    disabledContentColor = Color.White.copy(alpha = 0.3f)
                 ),
-                border = if (isSelected) BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)) else null, // 选中时给一个半透明白色边框
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp) // 调整内边距
+                border = if (isSelected && enabled) BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)) else null,
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
                     category.name,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                    fontSize = 14.sp // 稍微调整字体大小
+                    fontWeight = if (isSelected && enabled) FontWeight.Bold else FontWeight.Medium,
+                    fontSize = 14.sp
                 )
             }
         }
     }
 }
 
-// SubCategoryDisplayArea Composable (保持不变)
-// ... (代码与上一条回复一致) ...
+// --- SubCategoryDisplayArea Composable (与之前一致) ---
+
 @Composable
 fun SubCategoryDisplayArea(
     subCategories: List<SubCategory>,
     currentlyAdjusting: SubCategory?,
     onSubCategoryClick: (SubCategory) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isP1EditModeActive: Boolean // 这个参数已存在
 ) {
     if (subCategories.isEmpty()) {
         Box(modifier = modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -268,85 +372,108 @@ fun SubCategoryDisplayArea(
                 "此分类下无具体选项",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
-                color = Color.White.copy(alpha = 0.7f) // 文本颜色
+                color = Color.White.copy(alpha = 0.7f)
             )
         }
         return
     }
 
     LazyRow(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
+        modifier = modifier.fillMaxWidth().padding(vertical = 8.dp),
+        userScrollEnabled = !isP1EditModeActive,
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         items(subCategories) { subCategory ->
+            val isP1CustomizeButton = subCategory.id == "p1_customize_action"
+            val cardEnabled = if (isP1EditModeActive) isP1CustomizeButton else true
+
             SubCategoryCard(
                 subCategory = subCategory,
-                onClick = { onSubCategoryClick(subCategory) },
-                isHighlighted = currentlyAdjusting == subCategory && subCategory.type == "parameter_slider"
+                onClick = { if (cardEnabled) onSubCategoryClick(subCategory) },
+                isHighlighted = !isP1EditModeActive && currentlyAdjusting == subCategory &&
+                        (subCategory.type == "parameter_slider" || subCategory.type == "color_picker"),
+                enabled = cardEnabled,
+                displayText = if (isP1EditModeActive && isP1CustomizeButton) "完成P1调整" else subCategory.name,
+                isP1EditModeActive = isP1EditModeActive // <--- 新增：传递参数
             )
         }
     }
 }
 
-
-// --- SubCategoryCard Composable ---
+// --- SubCategoryCard Composable (与之前一致) ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SubCategoryCard(
     subCategory: SubCategory,
     onClick: () -> Unit,
-    isHighlighted: Boolean
+    isHighlighted: Boolean,
+    enabled: Boolean = true,
+    displayText: String = subCategory.name,
+    isP1EditModeActive: Boolean // <--- 新增参数
 ) {
-    // 卡片的大小和形状可以与 MainCategoryTabs 中的 TextButton 类似或协调
-    // 为了达到 TextButton 的效果，我们也可以直接使用 TextButton 或 Surface 来构建
-    // 这里我们继续使用 Card，但调整其参数
+    val cardAlpha = if (enabled) 1f else 0.4f
+
     Card(
-        onClick = onClick,
+        onClick = { if (enabled) onClick() },
+        enabled = enabled,
         modifier = Modifier
-            .widthIn(min = 80.dp) // 最小宽度，允许内容扩展
-            .defaultMinSize(minHeight = 70.dp) // 与 MainCategoryTabs 的 TextButton 高度感类似
-            .padding(vertical = 4.dp), // 给卡片本身一点垂直外边距，使其不至于太拥挤
-        shape = RoundedCornerShape(12.dp), // 与主分类一致的圆角
+            .widthIn(min = 80.dp)
+            .defaultMinSize(minHeight = 70.dp)
+            .padding(vertical = 4.dp)
+            .graphicsLayer(alpha = cardAlpha),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
-            // 修改点：选中时背景，未选中时透明
-            containerColor = if (isHighlighted) Color.White.copy(alpha = 0.15f) else Color.Transparent,
-            contentColor = Color.White // 内容（文字和图标）颜色统一为白色
+            containerColor = if (isHighlighted && enabled) Color.White.copy(alpha = 0.15f) else Color.Transparent,
+            contentColor = Color.White,
+            disabledContainerColor = Color.Transparent
         ),
-        // 修改点：选中时边框，未选中时无边框
-        border = if (isHighlighted) BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)) else null
+        border = if (isHighlighted && enabled) BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)) else null
     ) {
         Column(
             modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 8.dp) // 调整内边距以适应内容
-                .fillMaxHeight(), // 让 Column 填充 Card 的高度
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .fillMaxHeight(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
+            // 现在可以安全使用 isP1EditModeActive
+            val iconToShow = when (subCategory.id) {
+                "p1_customize_action" -> if (isP1EditModeActive && enabled) Icons.Filled.CheckCircleOutline else Icons.Filled.AspectRatio
+                "sub_select_image" -> Icons.Filled.Image
+                "sub_bg_color" -> Icons.Filled.ColorLens
+                "sub_apply_wallpaper" -> Icons.Filled.Wallpaper
+                "sub_advanced_settings" -> Icons.Filled.Settings
+                else -> {
+                    when (subCategory.type) {
+                        "parameter_slider" -> Icons.Filled.Tune
+                        "color_picker" -> Icons.Filled.ColorLens // 确保这个 type 在 mainCategoriesData 中正确设置
+                        "action" -> Icons.Filled.ChevronRight
+                        else -> Icons.Filled.ChevronRight
+                    }
+                }
+            }
             Icon(
-                imageVector = if (subCategory.type == "parameter_slider") Icons.Filled.Tune else Icons.Filled.ChevronRight,
-                contentDescription = subCategory.name,
-                modifier = Modifier.size(24.dp), // 图标大小调整
-                tint = Color.White // 图标颜色
+                imageVector = iconToShow,
+                contentDescription = displayText,
+                modifier = Modifier.size(28.dp),
+                tint = Color.White
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                subCategory.name,
-                style = MaterialTheme.typography.labelSmall, // 使用 labelSmall 或 bodySmall
+                text = displayText,
+                style = MaterialTheme.typography.labelSmall,
                 textAlign = TextAlign.Center,
                 maxLines = 2,
-                fontSize = 12.sp, // 字体大小
-                color = Color.White, // 文字颜色
-                fontWeight = if (isHighlighted) FontWeight.Bold else FontWeight.Medium // 高亮时加粗
+                fontSize = 12.sp,
+                color = Color.White,
+                fontWeight = if (isHighlighted && enabled) FontWeight.Bold else FontWeight.Medium
             )
         }
     }
 }
 
-// ParameterAdjustmentSection Composable (保持不变)
-// ... (代码与上一条回复一致) ...
+// --- ParameterAdjustmentSection Composable (与之前一致) ---
 @Composable
 fun ParameterAdjustmentSection(
     subCategory: SubCategory,
@@ -354,13 +481,13 @@ fun ParameterAdjustmentSection(
     prefs: SharedPreferences,
     onFinalValueChange: (paramKey: String, finalSliderPosition: Float) -> Unit
 ) {
-    var internalSliderPosition by remember(keyOfParam) {
+    var internalSliderPosition by remember(keyOfParam) { // key 确保参数切换时 slider 重置
         mutableStateOf(getInitialSliderPosition(keyOfParam, prefs))
     }
 
     val currentValueDisplay = mapSliderPositionToActualValue(keyOfParam, internalSliderPosition, prefs)
 
-    Column(modifier = Modifier.padding(horizontal = 0.dp, vertical = 4.dp)) { // 移除父级Column的 horizontal padding
+    Column(modifier = Modifier.padding(horizontal = 0.dp, vertical = 4.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -370,7 +497,7 @@ fun ParameterAdjustmentSection(
                 subCategory.name,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Medium,
-                color = Color.White // 文本颜色
+                color = Color.White
             )
             Text(
                 if (keyOfParam == WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY ||
@@ -381,19 +508,19 @@ fun ParameterAdjustmentSection(
                 ) { String.format("%.2f", currentValueDisplay) }
                 else { currentValueDisplay.roundToInt().toString() },
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.85f) // 当前值文本颜色，可以略微透明
+                color = Color.White.copy(alpha = 0.85f)
             )
         }
         Slider(
             value = internalSliderPosition,
             onValueChange = { newPosition -> internalSliderPosition = newPosition },
             valueRange = 0f..1f,
-            steps = getStepsForParam(keyOfParam, prefs),
+            steps = getStepsForParam(keyOfParam, prefs), // 确保 getStepsForParam 存在且正确
             modifier = Modifier.fillMaxWidth().padding(top = 0.dp),
             onValueChangeFinished = {
-                onFinalValueChange(keyOfParam, internalSliderPosition)
+                onFinalValueChange(keyOfParam, internalSliderPosition) // 正确调用
             },
-            colors = SliderDefaults.colors( // 自定义滑块颜色
+            colors = SliderDefaults.colors(
                 thumbColor = Color.White,
                 activeTrackColor = Color.White.copy(alpha = 0.8f),
                 inactiveTrackColor = Color.White.copy(alpha = 0.3f),
@@ -652,3 +779,4 @@ fun ConfigSheetContentTabbedPreview() {
         }
     }
 }
+

@@ -115,13 +115,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    // 修改 toggleP1EditMode 方法
     open fun toggleP1EditMode() {
         val currentlyEditing = _isP1EditMode.value ?: false
-        _isP1EditMode.value = !currentlyEditing
-        if (currentlyEditing) {
-            Log.d("MainViewModel", "Exiting P1 Edit Mode. Changes were saved real-time.")
-        } else {
+        val newEditMode = !currentlyEditing
+        _isP1EditMode.value = newEditMode
+
+        if (newEditMode) {
+            // 进入P1编辑模式时，清除子分类调整项，确保滑块/颜色选择器不显示
+            _subCategoryForAdjustmentIdInSheet.value = null
             Log.d("MainViewModel", "Entering P1 Edit Mode.")
+        } else {
+            Log.d("MainViewModel", "Exiting P1 Edit Mode. Changes were saved real-time.")
         }
     }
 
