@@ -293,7 +293,7 @@ class H2WallpaperService : WallpaperService() {
             currentBackgroundBlurRadius = preferencesRepository.getBackgroundBlurRadius()
             currentNormalizedInitialBgScrollOffset = preferencesRepository.getBackgroundInitialOffset()
             currentP2BackgroundFadeInRatio = preferencesRepository.getP2BackgroundFadeInRatio()
-            currentBlurDownscaleFactor = preferencesRepository.getBlurDownscaleFactorInt() / 100.0f
+            currentBlurDownscaleFactor = preferencesRepository.getBlurDownscaleFactor()
             currentBlurIterations = preferencesRepository.getBlurIterations()
             currentP1ShadowRadius = preferencesRepository.getP1ShadowRadius()
             currentP1ShadowDx = preferencesRepository.getP1ShadowDx()

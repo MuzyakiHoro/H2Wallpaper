@@ -9,7 +9,7 @@ import com.example.h2wallpaper.WallpaperConfigConstants.DEFAULT_BLUR_DOWNSCALE_F
 import com.example.h2wallpaper.WallpaperConfigConstants.DEFAULT_BLUR_ITERATIONS
 import com.example.h2wallpaper.WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO
 import com.example.h2wallpaper.WallpaperConfigConstants.DEFAULT_IMAGE_CONTENT_VERSION
-import com.example.h2wallpaper.WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR // 确保导入
+import com.example.h2wallpaper.WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR
 import com.example.h2wallpaper.WallpaperConfigConstants.DEFAULT_P1_FOCUS_X
 import com.example.h2wallpaper.WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y
 import com.example.h2wallpaper.WallpaperConfigConstants.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT_INT
@@ -28,7 +28,7 @@ import com.example.h2wallpaper.WallpaperConfigConstants.KEY_BLUR_ITERATIONS
 import com.example.h2wallpaper.WallpaperConfigConstants.KEY_IMAGE_CONTENT_VERSION
 import com.example.h2wallpaper.WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO
 import com.example.h2wallpaper.WallpaperConfigConstants.KEY_IMAGE_URI
-import com.example.h2wallpaper.WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR // 确保导入
+import com.example.h2wallpaper.WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR
 import com.example.h2wallpaper.WallpaperConfigConstants.KEY_P1_FOCUS_X
 import com.example.h2wallpaper.WallpaperConfigConstants.KEY_P1_FOCUS_Y
 import com.example.h2wallpaper.WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT
@@ -40,6 +40,7 @@ import com.example.h2wallpaper.WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS
 import com.example.h2wallpaper.WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO
 import com.example.h2wallpaper.WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY
 import com.example.h2wallpaper.WallpaperConfigConstants.PREFS_NAME
+import kotlin.math.roundToInt
 
 class WallpaperPreferencesRepository(context: Context) {
 
@@ -57,7 +58,7 @@ class WallpaperPreferencesRepository(context: Context) {
     fun getP1FocusX(): Float = prefs.getFloat(KEY_P1_FOCUS_X, DEFAULT_P1_FOCUS_X)
     fun getP1FocusY(): Float = prefs.getFloat(KEY_P1_FOCUS_Y, DEFAULT_P1_FOCUS_Y)
 
-    fun getP1ContentScaleFactor(): Float = // 新增 Getter
+    fun getP1ContentScaleFactor(): Float =
         prefs.getFloat(KEY_P1_CONTENT_SCALE_FACTOR, DEFAULT_P1_CONTENT_SCALE_FACTOR)
 
     fun getScrollSensitivity(): Float =
@@ -79,8 +80,8 @@ class WallpaperPreferencesRepository(context: Context) {
         DEFAULT_P2_BACKGROUND_FADE_IN_RATIO_INT
     ) / 100.0f
 
-    fun getBlurDownscaleFactorInt(): Int =
-        prefs.getInt(KEY_BLUR_DOWNSCALE_FACTOR, DEFAULT_BLUR_DOWNSCALE_FACTOR_INT)
+    fun getBlurDownscaleFactor(): Float =
+        prefs.getInt(KEY_BLUR_DOWNSCALE_FACTOR, DEFAULT_BLUR_DOWNSCALE_FACTOR_INT) / 100.0f
 
     fun getBlurIterations(): Int = prefs.getInt(KEY_BLUR_ITERATIONS, DEFAULT_BLUR_ITERATIONS)
 
@@ -88,7 +89,10 @@ class WallpaperPreferencesRepository(context: Context) {
         prefs.getInt(KEY_P1_SHADOW_RADIUS, DEFAULT_P1_SHADOW_RADIUS_INT).toFloat()
 
     fun getP1ShadowDx(): Float = prefs.getInt(KEY_P1_SHADOW_DX, DEFAULT_P1_SHADOW_DX_INT).toFloat()
+
+    // 确保 getP1ShadowDy 方法正确返回 Float
     fun getP1ShadowDy(): Float = prefs.getInt(KEY_P1_SHADOW_DY, DEFAULT_P1_SHADOW_DY_INT).toFloat()
+
     fun getP1ShadowColor(): Int = prefs.getInt(KEY_P1_SHADOW_COLOR, DEFAULT_P1_SHADOW_COLOR)
 
     fun getP1ImageBottomFadeHeight(): Float =
@@ -130,10 +134,9 @@ class WallpaperPreferencesRepository(context: Context) {
             .putFloat(KEY_P1_FOCUS_X, focusX)
             .putFloat(KEY_P1_FOCUS_Y, focusY)
             .apply()
-        // 版本更新由ViewModel在确认所有相关P1参数设置后统一处理
     }
 
-    fun setP1ContentScaleFactor(scaleFactor: Float) { // 新增 Setter
+    fun setP1ContentScaleFactor(scaleFactor: Float) {
         prefs.edit().putFloat(KEY_P1_CONTENT_SCALE_FACTOR, scaleFactor).apply()
     }
 
@@ -141,34 +144,32 @@ class WallpaperPreferencesRepository(context: Context) {
         prefs.edit().putLong(KEY_IMAGE_CONTENT_VERSION, System.currentTimeMillis()).apply()
     }
 
-    /**
-     * 新增: 通用方法，用于保存整数类型的设置项
-     */
+    fun saveScaledFloatSettingAsInt(key: String, actualFloatValue: Float, scaleFactor: Int) {
+        val intValue = (actualFloatValue * scaleFactor).roundToInt()
+        prefs.edit().putInt(key, intValue).apply()
+    }
+
+    fun saveFloatSetting(key: String, value: Float) {
+        prefs.edit().putFloat(key, value).apply()
+    }
+
     fun saveIntSetting(key: String, value: Int) {
         prefs.edit().putInt(key, value).apply()
     }
 
-    /**
-     * 新增: 如果有直接保存Float的需求（虽然当前ViewModel都转成了Int）
-     */
-    fun saveFloatSetting(key: String, value: Float) {
-        prefs.edit().putFloat(key, value).apply()
-    }
 
     fun resetSettingsForNewImage(newImageUri: Uri) {
         prefs.edit()
             .putString(KEY_IMAGE_URI, newImageUri.toString())
             .putFloat(KEY_P1_FOCUS_X, DEFAULT_P1_FOCUS_X)
             .putFloat(KEY_P1_FOCUS_Y, DEFAULT_P1_FOCUS_Y)
-            .putFloat(KEY_P1_CONTENT_SCALE_FACTOR, DEFAULT_P1_CONTENT_SCALE_FACTOR) // 重置内容缩放
-            // P1 高度通常不随新图片重置，除非产品设计如此
-            // .putFloat(KEY_IMAGE_HEIGHT_RATIO, DEFAULT_HEIGHT_RATIO)
-            .putLong(KEY_IMAGE_CONTENT_VERSION, System.currentTimeMillis()) // 新图片意味着新版本
+            .putFloat(KEY_P1_CONTENT_SCALE_FACTOR, DEFAULT_P1_CONTENT_SCALE_FACTOR)
+            // .putFloat(KEY_IMAGE_HEIGHT_RATIO, DEFAULT_HEIGHT_RATIO) // P1 高度通常不随新图片重置
+            .putLong(KEY_IMAGE_CONTENT_VERSION, System.currentTimeMillis())
             .apply()
     }
 
     fun removeImageUri() {
         prefs.edit().remove(KEY_IMAGE_URI).apply()
-        // ViewModel应在调用此方法后，重置相关配置并更新版本号
     }
 }

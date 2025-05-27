@@ -72,7 +72,6 @@ val mainCategoriesData = listOf(
         SubCategory("sub_select_image", "选择图片", type = "action"),
         SubCategory("sub_bg_color", "背景颜色", type = "color_picker"),
         SubCategory("sub_apply_wallpaper", "应用壁纸", type = "action"),
-        SubCategory("sub_advanced_settings", "更多高级设置", type = "action")
     )),
     MainCategory("cat_p1_foreground", "P1 前景", listOf(
         SubCategory("p1_customize_action", "调整P1图片", type = "action"),
@@ -97,7 +96,6 @@ val mainCategoriesData = listOf(
 // --- MainActivityActions 接口 (与之前一致) ---
 interface MainActivityActions {
     fun requestReadMediaImagesPermission()
-    fun startSettingsActivity()
     fun promptToSetWallpaper()
 }
 
@@ -482,7 +480,6 @@ fun ParameterAdjustmentSection(
 
     // prefs 仍然用于获取参数的min/max范围，因为这些通常是固定的
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences(WallpaperConfigConstants.PREFS_NAME, Context.MODE_PRIVATE) }
 
     // 滑块的0f-1f位置状态，其初始值基于ViewModel中的实际值计算得来
     var currentSliderPosition by remember(keyOfParam, currentActualValueFromVM.value, currentBlurIterationsFromVM.value) {
@@ -492,13 +489,13 @@ fun ParameterAdjustmentSection(
             currentActualValueFromVM.value
         }
         mutableStateOf(
-            actualValueToUse?.let { mapActualValueToSliderPosition(keyOfParam, it, prefs) } ?: 0.5f // 默认中间位置
+            actualValueToUse?.let { mapActualValueToSliderPosition(keyOfParam, it) } ?: 0.5f // 默认中间位置
         )
     }
 
     // 用于在UI上显示格式化后的当前实际值
     val displayValueString = remember(keyOfParam, currentSliderPosition) {
-        val actualVal = mapSliderPositionToActualValue(keyOfParam, currentSliderPosition, prefs)
+        val actualVal = mapSliderPositionToActualValue(keyOfParam, currentSliderPosition)
         if (keyOfParam == WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY ||
             keyOfParam == WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO ||
             keyOfParam == WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO ||
@@ -532,12 +529,12 @@ fun ParameterAdjustmentSection(
             onValueChange = { newSliderPos ->
                 currentSliderPosition = newSliderPos // 更新本地滑块位置状态以驱动UI
                 // 将新的滑块位置转换为实际参数值
-                val actualParamValue = mapSliderPositionToActualValue(keyOfParam, newSliderPos, prefs)
+                val actualParamValue = mapSliderPositionToActualValue(keyOfParam, newSliderPos)
                 // 调用 ViewModel 的方法来更新配置和 SharedPreferences
                 viewModel.updateAdvancedSettingRealtime(keyOfParam, actualParamValue)
             },
             valueRange = 0f..1f,
-            steps = getStepsForParam(keyOfParam, prefs),
+            steps = getStepsForParam(keyOfParam),
             modifier = Modifier.fillMaxWidth().padding(top = 0.dp),
             // onValueChangeFinished 移除了，因为实时更新已在 onValueChange 中处理
             colors = SliderDefaults.colors(
@@ -554,74 +551,61 @@ fun ParameterAdjustmentSection(
 // --- 辅助函数 ---
 
 // 将实际参数值映射回滑块的 0f-1f 位置
-fun mapActualValueToSliderPosition(paramKey: String, actualValue: Float, prefs: SharedPreferences): Float {
-    val minRaw = getMinRawValueForParam(paramKey, prefs)
-    val maxRaw = getMaxRawValueForParam(paramKey, prefs)
+fun mapActualValueToSliderPosition(paramKey: String, actualValue: Float): Float { // NO prefs
+    val minRaw = getMinRawValueForParam(paramKey) // NO prefs
+    val maxRaw = getMaxRawValueForParam(paramKey) // NO prefs
     return if ((maxRaw - minRaw) == 0f) 0f else ((actualValue - minRaw) / (maxRaw - minRaw)).coerceIn(0f, 1f)
 }
+
 
 // (getInitialSliderPosition 已被 mapActualValueToSliderPosition 替代了其主要用途)
 // (mapSliderPositionToActualValue, getMinRawValueForParam, getMaxRawValueForParam, getStepsForParam 保持不变)
 
-fun mapSliderPositionToActualValue(paramKey: String, sliderPosition: Float, prefs: SharedPreferences): Float {
-    val minRaw = getMinRawValueForParam(paramKey, prefs)
-    val maxRaw = getMaxRawValueForParam(paramKey, prefs)
+fun mapSliderPositionToActualValue(paramKey: String, sliderPosition: Float): Float { // NO prefs
+    val minRaw = getMinRawValueForParam(paramKey) // NO prefs
+    val maxRaw = getMaxRawValueForParam(paramKey) // NO prefs
     val value = minRaw + (maxRaw - minRaw) * sliderPosition
-
-    // 根据参数键进行必要的精度调整或类型转换
-    return when (paramKey) {
-        // 对于需要特定小数位或整数的参数，可以在这里处理，但通常 ViewModel 保存时会处理
-        // 例如，如果某个值总是希望是整数，可以在这里 .roundToInt().toFloat()
-        // 但由于 ViewModel 的 updateAdvancedSettingRealtime 接收 Float，所以这里保持 Float
-        else -> value
-    }
+    return value // 移除之前的 when 语句，因为类型转换应在ViewModel或存储层面处理
 }
-
-fun getMinRawValueForParam(paramKey: String, prefs: SharedPreferences): Float {
-    // XML preferences_wallpaper.xml 中的 app:min 定义了 SeekBarPreference 的整数最小值
-    // 我们需要将其转换为实际的浮点最小值
+fun getMinRawValueForParam(paramKey: String): Float { // NO prefs
+    // 这些值之前定义在 preferences_wallpaper.xml 的 app:min 属性中
+    // 现在我们直接硬编码这些值，因为XML文件已被移除
     return when (paramKey) {
-        WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> prefs.getInt("scrollSensitivity_min", 1) / 10.0f // 对应XML min="1"
-        WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO -> prefs.getInt("p1OverlayFadeRatio_min", 1) / 100.0f // 对应XML min="1"
-        WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> prefs.getInt("p2BackgroundFadeInRatio_min", 1) / 100.0f // 对应XML min="1"
-        WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> prefs.getInt("backgroundInitialOffset_min", 0) / 10.0f // 对应XML min="0"
-        WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> prefs.getInt("backgroundBlurRadius_min", 0).toFloat() // 对应XML min="0"
-        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> prefs.getInt("blurDownscaleFactor_min", 5) / 100.0f // 对应XML min="5"
-        WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> prefs.getInt("blurIterations_min", 1).toFloat() // 对应XML min="1"
-        WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> prefs.getInt("p1ShadowRadius_min", 0).toFloat() // 对应XML min="0"
-        WallpaperConfigConstants.KEY_P1_SHADOW_DX -> prefs.getInt("p1ShadowDx_min", -20).toFloat() // 对应XML min="-20"
-        WallpaperConfigConstants.KEY_P1_SHADOW_DY -> prefs.getInt("p1ShadowDy_min", 0).toFloat() // 对应XML min="0"
-        WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> prefs.getInt("p1ImageBottomFadeHeight_min", 0).toFloat() // 对应XML min="0"
+        WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> 1 / 10.0f
+        WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO -> 1 / 100.0f
+        WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> 1 / 100.0f
+        WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> 0 / 10.0f
+        WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> 0f
+        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> 5 / 100.0f
+        WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> 1f
+        WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> 0f
+        WallpaperConfigConstants.KEY_P1_SHADOW_DX -> -20f
+        WallpaperConfigConstants.KEY_P1_SHADOW_DY -> 0f
+        WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> 0f
         else -> 0f
     }
 }
 
-fun getMaxRawValueForParam(paramKey: String, prefs: SharedPreferences): Float {
-    // XML preferences_wallpaper.xml 中的 android:max 定义了 SeekBarPreference 的整数最大值
+fun getMaxRawValueForParam(paramKey: String): Float { // NO prefs
+    // 这些值之前定义在 preferences_wallpaper.xml 的 android:max 属性中
+    // 现在我们直接硬编码这些值，因为XML文件已被移除
     return when (paramKey) {
-        WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> prefs.getInt("scrollSensitivity_max", 20) / 10.0f // 对应XML max="20"
-        WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO -> prefs.getInt("p1OverlayFadeRatio_max", 100) / 100.0f // 对应XML max="100"
-        WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> prefs.getInt("p2BackgroundFadeInRatio_max", 100) / 100.0f // 对应XML max="100"
-        WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> prefs.getInt("backgroundInitialOffset_max", 10) / 10.0f // 对应XML max="10" (假设之前是1.0，所以10/10.0)
-        WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> prefs.getInt("backgroundBlurRadius_max", 25).toFloat() // 对应XML max="25"
-        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> prefs.getInt("blurDownscaleFactor_max", 100) / 100.0f // 对应XML max="100"
-        WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> prefs.getInt("blurIterations_max", 3).toFloat() // 对应XML max="3" (之前代码示例是10，统一为XML)
-        WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> prefs.getInt("p1ShadowRadius_max", 20).toFloat() // 对应XML max="20"
-        WallpaperConfigConstants.KEY_P1_SHADOW_DX -> prefs.getInt("p1ShadowDx_max", 20).toFloat() // 对应XML max="20"
-        WallpaperConfigConstants.KEY_P1_SHADOW_DY -> prefs.getInt("p1ShadowDy_max", 20).toFloat() // 对应XML max="20"
-        WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> prefs.getInt("p1ImageBottomFadeHeight_max", 2560).toFloat() // 对应XML max="2560"
+        WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> 20 / 10.0f
+        WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO -> 100 / 100.0f
+        WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> 100 / 100.0f
+        WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> 10 / 10.0f
+        WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> 25f
+        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> 100 / 100.0f
+        WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> 3f
+        WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> 20f
+        WallpaperConfigConstants.KEY_P1_SHADOW_DX -> 20f
+        WallpaperConfigConstants.KEY_P1_SHADOW_DY -> 20f
+        WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> 2560f
         else -> 1f
     }
 }
 
-
-fun getStepsForParam(paramKey: String, prefs: SharedPreferences): Int {
-    // Steps for a Slider is (number of discrete points - 2) if range is [min, max]
-    // Or (number of intervals - 1)
-    // If a SeekBarPreference has max M and min N, it has (M - N) intervals if each step is 1.
-    // So, steps for Compose Slider would be (M - N - 1) if integer steps.
-    // For float ranges, it's more about desired granularity.
-    // Let's try to match the granularity of SeekBarPreference.
+fun getStepsForParam(paramKey: String): Int { // NO prefs
     val minRawInt: Int
     val maxRawInt: Int
 
@@ -629,24 +613,20 @@ fun getStepsForParam(paramKey: String, prefs: SharedPreferences): Int {
         WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> { minRawInt = 1; maxRawInt = 20 }
         WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO,
         WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO,
-        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> { minRawInt = 1; maxRawInt = 100 } // Assuming min was 1 in XML for these
+        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> { minRawInt = 1; maxRawInt = 100 }
         WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> { minRawInt = 0; maxRawInt = 10 }
         WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> { minRawInt = 0; maxRawInt = 25 }
-        WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> { minRawInt = 1; maxRawInt = 3 } // From XML
+        WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> { minRawInt = 1; maxRawInt = 3 }
         WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> { minRawInt = 0; maxRawInt = 20 }
         WallpaperConfigConstants.KEY_P1_SHADOW_DX -> { minRawInt = -20; maxRawInt = 20 }
         WallpaperConfigConstants.KEY_P1_SHADOW_DY -> { minRawInt = 0; maxRawInt = 20 }
         WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> {
-            // This has a large range, fewer steps might be better for UX
-            // Max 2560. If we want ~100 steps: 2560 / 100 = 25.6. So, (2560-0)/step_size - 1
-            // Let's aim for a reasonable number of steps, e.g., 63 for a step of 40px.
-            // (2560 - 0) = 2560.  If steps = 63, then 64 intervals. 2560/64 = 40. This matches XML.
             minRawInt = 0; maxRawInt = 2560
-            return if (maxRawInt > minRawInt) 63 else 0 // (maxRawInt / 40) - 1
+            return if (maxRawInt > minRawInt) 63 else 0 // (maxRawInt / 40) - 1 for step of 40
         }
-        else -> return 0 // Default to continuous if not specified
+        else -> return 0
     }
-    return (maxRawInt - minRawInt -1).coerceAtLeast(0) // (intervals - 1)
+    return (maxRawInt - minRawInt - 1).coerceAtLeast(0)
 }
 
 
@@ -688,10 +668,6 @@ fun handleSubCategoryAction(
             } else {
                 Toast.makeText(context, context.getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
             }
-        }
-        "sub_advanced_settings" -> {
-            activityActions.startSettingsActivity()
-            onHideSheet()
         }
         "p1_customize_action" -> { // This case is also handled by onSubCategoryClick's main logic
             if (viewModel.selectedImageUri.value != null) {
@@ -798,7 +774,6 @@ fun ConfigSheetContentTabbedPreview() {
     }
     val fakeActions = object : MainActivityActions {
         override fun requestReadMediaImagesPermission() {}
-        override fun startSettingsActivity() {}
         override fun promptToSetWallpaper() {}
     }
 

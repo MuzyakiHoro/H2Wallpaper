@@ -31,10 +31,6 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <activity
-            android:name=".SettingsActivity"
-            android:label="壁纸高级设置"
-            android:parentActivityName=".MainActivity" > </activity>
 
         <service
             android:name=".H2WallpaperService" android:label="@string/wallpaper_service_label" android:permission="android.permission.BIND_WALLPAPER"
