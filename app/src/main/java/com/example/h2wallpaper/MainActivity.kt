@@ -34,7 +34,6 @@ class MainActivity : AppCompatActivity(), MainActivityActions {
 
     private lateinit var imageLoadingProgressBar: ProgressBar
     private lateinit var wallpaperPreviewView: WallpaperPreviewView
-    private lateinit var fabOpenConfigPanel: FloatingActionButton
     private lateinit var configBottomSheetComposeView: ComposeView
 
     private val mainViewModel: MainViewModel by viewModels()
@@ -82,7 +81,6 @@ class MainActivity : AppCompatActivity(), MainActivityActions {
 
         imageLoadingProgressBar = findViewById(R.id.imageLoadingProgressBar)
         wallpaperPreviewView = findViewById(R.id.wallpaperPreviewView)
-        fabOpenConfigPanel = findViewById(R.id.fabOpenConfigPanel)
         configBottomSheetComposeView = findViewById(R.id.configBottomSheetComposeView)
 
         configBottomSheetComposeView.setContent {
@@ -94,13 +92,6 @@ class MainActivity : AppCompatActivity(), MainActivityActions {
             }
         }
 
-        fabOpenConfigPanel.setOnClickListener {
-            if (mainViewModel.showConfigSheet.value) {
-                mainViewModel.closeConfigSheet()
-            } else {
-                mainViewModel.openConfigSheet()
-            }
-        }
 
         wallpaperPreviewView.setOnClickListener {
             Log.d(TAG, "WallpaperPreviewView clicked (MainActivity OnClickListener), toggling config sheet.")
@@ -233,11 +224,7 @@ class MainActivity : AppCompatActivity(), MainActivityActions {
         mainViewModel.p1ShadowDy.observe(this) { syncPreviewViewWithViewModelConfig() }
         mainViewModel.p1ImageBottomFadeHeight.observe(this) { syncPreviewViewWithViewModelConfig() }
 
-        mainViewModel.isLoading.observe(this) { isLoading ->
-            Log.d(TAG, "isLoading Observer: isLoading = $isLoading")
-            imageLoadingProgressBar.visibility = if (isLoading) View.VISIBLE else View.GONE
-            fabOpenConfigPanel.isEnabled = !isLoading
-        }
+
 
         mainViewModel.toastMessage.observe(this) { event ->
             event.getContentIfNotHandled()?.let { msgContent ->

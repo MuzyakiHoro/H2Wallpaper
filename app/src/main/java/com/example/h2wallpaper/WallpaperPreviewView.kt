@@ -536,184 +536,214 @@ class WallpaperPreviewView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val touchX = event.x
         val touchY = event.y
+        // 添加日志以便调试
+        // Log.d("WP_TOUCH", "onTouchEvent: action=${event.actionToString(event.actionMasked)}, x=$touchX, y=$touchY, isInP1EditMode=$isInP1EditMode, isP1Resizing=$isP1HeightResizing")
 
+        var eventHandled = false // 用于跟踪事件是否已被处理
+
+        // --- P1编辑模式下的专属手势处理 ---
         if (isInP1EditMode && wallpaperBitmaps?.sourceSampledBitmap != null) {
-            // 1. 首先处理最优先的 P1 高度调整手势
-            var handledByP1HeightResize = false
-            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            // 1. P1 高度调整手势 (最高优先级)
+            //    只在ACTION_DOWN时检查是否开始高度调整，或在isP1HeightResizing为true时处理后续事件
+            if (event.actionMasked == MotionEvent.ACTION_DOWN && !isP1HeightResizing) { // 避免重复检查
                 val effectiveTouchSlop = touchSlop * p1HeightResizeTouchSlopFactor
-                val heightHandleHotZone = RectF( p1DisplayRectView.left, p1DisplayRectView.bottom - effectiveTouchSlop, p1DisplayRectView.right, p1DisplayRectView.bottom + effectiveTouchSlop)
+                val heightHandleHotZone = RectF(
+                    p1DisplayRectView.left,
+                    p1DisplayRectView.bottom - effectiveTouchSlop,
+                    p1DisplayRectView.right,
+                    p1DisplayRectView.bottom + effectiveTouchSlop
+                )
                 if (p1DisplayRectView.height() > effectiveTouchSlop * 1.5f && heightHandleHotZone.contains(touchX, touchY)) {
-                    if (!p1ContentScroller.isFinished) { p1ContentScroller.forceFinished(true); }
+                    if (!p1ContentScroller.isFinished) { p1ContentScroller.forceFinished(true) }
                     isP1HeightResizing = true
-                    p1HeightResizeStartRawY = event.rawY
+                    p1HeightResizeStartRawY = event.rawY // 使用rawY以避免视图滚动影响
                     p1HeightResizeStartRatio = currentEditP1HeightRatio
                     parent?.requestDisallowInterceptTouchEvent(true)
-                    handledByP1HeightResize = true
+                    // Log.d("WP_TOUCH", "P1 Height Resizing STARTED")
+                    eventHandled = true // DOWN事件被高度调整逻辑初步处理
                 }
             }
+
             if (isP1HeightResizing) {
                 when (event.actionMasked) {
-                    MotionEvent.ACTION_MOVE -> { /* ... 高度调整的 move 逻辑 ... */
+                    MotionEvent.ACTION_MOVE -> {
                         val dy = event.rawY - p1HeightResizeStartRawY
                         val deltaRatio = dy / viewHeight.toFloat()
                         var newRatio = p1HeightResizeStartRatio + deltaRatio
-                        newRatio = newRatio.coerceIn(WallpaperConfigConstants.MIN_HEIGHT_RATIO, WallpaperConfigConstants.MAX_HEIGHT_RATIO)
+                        newRatio = newRatio.coerceIn(
+                            WallpaperConfigConstants.MIN_HEIGHT_RATIO,
+                            WallpaperConfigConstants.MAX_HEIGHT_RATIO
+                        )
                         if (abs(newRatio - currentEditP1HeightRatio) > 0.002f) {
                             currentEditP1HeightRatio = newRatio
                             calculateP1DisplayRectView()
                             resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY)
                             attemptThrottledP1ConfigUpdate()
                         }
-                        handledByP1HeightResize = true
+                        eventHandled = true
                     }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { /* ... 高度调整的 up/cancel 逻辑 ... */
-                        executeP1ConfigUpdate()
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        if (isThrottledP1ConfigUpdatePending) executeP1ConfigUpdate()
                         isP1HeightResizing = false
                         parent?.requestDisallowInterceptTouchEvent(false)
-                        handledByP1HeightResize = true // 即使是UP/CANCEL，也认为高度调整逻辑处理了它
+                        // Log.d("WP_TOUCH", "P1 Height Resizing ENDED")
+                        eventHandled = true // UP/CANCEL事件结束了高度调整
                     }
+                    // 对于ACTION_DOWN，如果isP1HeightResizing已经是true（理论上不应该），也标记为已处理
+                    MotionEvent.ACTION_DOWN -> eventHandled = true
                 }
-                if (handledByP1HeightResize) return true // 如果高度调整正在进行，它消耗所有事件
+                if (eventHandled) return true // 如果高度调整正在进行或刚结束，它消耗所有相关事件
             }
 
-            // 2. 如果不是高度调整，再尝试 P1 内容的缩放和拖动/单击手势
-            // handledByScale 会先于 handledByDragOrTap 判断，这通常没问题
-            val handledByScale = p1ContentScaleGestureDetector.onTouchEvent(event)
-            val handledByDragOrTap = p1ContentDragGestureDetector.onTouchEvent(event) // 这个现在也处理单击
+            // 2. P1 内容缩放 和 P1内容拖动/P1区域内单击 手势检测器
+            //    仅当触摸点在 P1 显示区域内时，才让这些检测器处理。
+            //    并且确保不是在高度调整中。
+            var handledByP1SpecificDetectors = false
+            if (p1DisplayRectView.contains(touchX, touchY) && !isP1HeightResizing) {
+                // Log.d("WP_TOUCH", "P1 Edit: Event within P1 display rect, trying detectors.")
+                // ScaleGestureDetector通常应该先于DragGestureDetector，以避免缩放时的焦点跳动被误认为拖动。
+                // 然而，如果onTouchEvent中先调用一个，它返回true，另一个就不会被调用。
+                // 标准做法是两个都调用，因为它们内部会正确处理事件。
+                val scaleResult = p1ContentScaleGestureDetector.onTouchEvent(event)
+                // 即使缩放处理了，单击/拖动检测器也应该有机会处理（例如，如果它是一个没有缩放的点击）
+                // 但如果scaleResult为true，通常意味着是一个缩放手势，不太可能是单击。
+                // GestureDetector处理单击和拖动。
+                val dragOrTapResult = p1ContentDragGestureDetector.onTouchEvent(event)
 
-            if (handledByScale || handledByDragOrTap) {
-                // 如果是缩放、拖动或者P1区域内的单击，则我们认为事件已处理
+                if (scaleResult || dragOrTapResult) {
+                    // Log.d("WP_TOUCH", "P1 Edit: Handled by Scale ($scaleResult) or Drag/Tap ($dragOrTapResult)")
+                    handledByP1SpecificDetectors = true
+                }
+            }
+
+            if (handledByP1SpecificDetectors) {
+                // 如果是P1区域内的特定手势（拖动、缩放、P1内单击），则它们优先处理
                 if (event.actionMasked != MotionEvent.ACTION_UP && event.actionMasked != MotionEvent.ACTION_CANCEL) {
                     parent?.requestDisallowInterceptTouchEvent(true)
                 } else {
-                    if (isThrottledP1ConfigUpdatePending) {
-                        executeP1ConfigUpdate()
-                    }
+                    if (isThrottledP1ConfigUpdatePending) executeP1ConfigUpdate()
                     parent?.requestDisallowInterceptTouchEvent(false)
                 }
-                return true // 明确返回 true，表示事件被 P1 编辑手势消耗
+                return true // P1专属手势消耗了事件
             }
-
-            // 3. 如果事件在 P1 区域内，但没有被以上 P1 编辑手势（高度、缩放、拖动、P1内单击）处理，
-            // 这通常不太可能发生，因为 onSingleTapUp 应该能捕获到。
-            // 但为了保险，如果触摸点在 P1 区域内，我们也消费掉它，不让它触发页面滑动。
-            // 不过，如果 onSingleTapUp 确实调用了 performClick()，我们其实是希望外部的 OnClickListener 响应的。
-            // 所以这里的逻辑需要调整：如果触摸在 p1DisplayRectView 内，我们不应该阻止 performClick()。
-            // p1ContentDragGestureDetector 已经处理了 p1DisplayRectView 内的单击。
-            // 所以，如果事件到达这里，并且在 p1DisplayRectView 内，它可能是一个没有被任何 detector 消费的事件的尾声。
-            // 我们主要的目标是阻止它意外触发页面滑动。
-            if (p1DisplayRectView.contains(touchX, touchY)) {
-                // 如果事件在P1区域但未被任何特定P1手势消耗，我们仍标记为已处理，
-                // 以阻止它传递给下面的页面滑动逻辑。
-                // MainActivity中的OnClickListener仍然会被之前的performClick()调用。
-                return true
-            }
-            // 如果事件不在 P1 区域内，但在 P1 编辑模式下，我们希望它能触发全局单击（如果它是一个单击）
-            // 这部分逻辑由下面的非 P1 编辑模式的单击处理覆盖。
+            // 如果在P1编辑模式，但事件既不是高度调整，也不是P1区域内的特定手势（例如，点击P1区域外部）
+            // 那么事件会继续流向下面的全局处理逻辑。
         }
 
-        // --- 非 P1 编辑模式 或 P1 编辑模式下但触摸点在 P1 区域之外 的触摸处理 ---
-        // 这部分逻辑现在也适用于 P1 编辑模式下，当触摸发生在 P1 区域之外时，
-        // 或者 P1 区域内的事件没有被 P1 的 detectors 完全消费并“漏”到这里。
-        // 我们希望的是，无论是否在P1编辑模式，只要是一个“纯粹”的单击，performClick()就会被调用。
-
-        if (velocityTracker == null) velocityTracker = VelocityTracker.obtain()
+        // --- 全局触摸处理逻辑 (适用于非P1编辑模式，或P1编辑模式下未被上述P1专属逻辑消耗的事件) ---
+        if (velocityTracker == null) {
+            velocityTracker = VelocityTracker.obtain()
+        }
         velocityTracker!!.addMovement(event)
+
         val action = event.actionMasked
-        val x = event.x // 当前事件的x坐标
+        val currentGlobalX = event.x
+
+        var globalEventHandled = false
 
         when (action) {
             MotionEvent.ACTION_DOWN -> {
                 if (!pageScroller.isFinished) pageScroller.abortAnimation()
-                lastTouchX = x
-                downTouchX = x // 记录按下的 x 坐标
+                if (isInP1EditMode && !p1ContentScroller.isFinished) p1ContentScroller.forceFinished(true)
+
+                lastTouchX = currentGlobalX
+                downTouchX = currentGlobalX
                 activePointerId = event.getPointerId(0)
                 isPageSwiping = false
-                // 只有在非P1编辑模式下，或者P1编辑模式但触摸不在P1区域时，才阻止父类拦截
-                // 但实际上，如果进入ACTION_DOWN，我们总是先假设可能要滑动
-                parent?.requestDisallowInterceptTouchEvent(true)
-                return true
+                parent?.requestDisallowInterceptTouchEvent(true) // 请求父容器不拦截
+                // Log.d("WP_TOUCH", "Global ACTION_DOWN captured.")
+                globalEventHandled = true // 总是处理DOWN，以接收后续事件
             }
+
             MotionEvent.ACTION_MOVE -> {
-                if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false
+                if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false // 或 globalEventHandled
                 val pointerIndex = event.findPointerIndex(activePointerId)
-                if (pointerIndex < 0) return false
-                val currentMoveX = event.getX(pointerIndex)
-                val deltaX = lastTouchX - currentMoveX
+                if (pointerIndex < 0) return false // 或 globalEventHandled
 
-                if (!isPageSwiping && abs(currentMoveX - downTouchX) > touchSlop) {
-                    isPageSwiping = true
-                }
+                val moveX = event.getX(pointerIndex)
+                val deltaX = lastTouchX - moveX
 
-                if (isPageSwiping) {
-                    // 只有在非P1编辑模式下才允许页面滑动
-                    if (!isInP1EditMode) {
-                        currentPreviewXOffset = if (viewWidth > 0 && numVirtualPages > 1) (currentPreviewXOffset + deltaX / (viewWidth.toFloat() * (numVirtualPages - 1))).coerceIn(0f, 1f) else 0f
-                        lastTouchX = currentMoveX
+                // 页面滑动逻辑只在非P1编辑模式下生效
+                if (!isInP1EditMode) {
+                    if (!isPageSwiping && abs(moveX - downTouchX) > touchSlop) {
+                        isPageSwiping = true
+                        parent?.requestDisallowInterceptTouchEvent(true) // 确保滑动时父容器不拦截
+                        // Log.d("WP_TOUCH", "Global Page Swiping STARTED.")
+                    }
+                    if (isPageSwiping) {
+                        currentPreviewXOffset = if (viewWidth > 0 && numVirtualPages > 1) {
+                            (currentPreviewXOffset + deltaX / (viewWidth.toFloat() * (numVirtualPages - 1)))
+                                .coerceIn(0f, 1f)
+                        } else 0f
                         invalidate()
-                    } else {
-                        // P1编辑模式下，如果判定为页面滑动（通常是触摸在P1区域外），我们什么都不做
-                        // 或者允许滑动，但需要确保 P1 编辑手势优先
-                        // 当前的逻辑是，如果 isInP1EditMode 为 true，上面的 P1 手势处理会优先返回 true。
-                        // 如果事件能到这里，说明它不在 P1 区域或未被 P1 手势处理。
-                        // 我们在这里可以选择是否在 P1 编辑模式下也允许页面滑动（如果触摸在 P1 外）。
-                        // 为了简化，我们先假设 P1 编辑模式下，主要交互在 P1 区域内，页面滑动被抑制。
-                        // 但如果用户确实想在P1编辑时滑动页面，这里的逻辑需要调整。
-                        // 目前，如果进入 isPageSwiping 且 isInP1EditMode，这里不会更新 offset。
                     }
                 }
-                return true
+                lastTouchX = moveX
+                globalEventHandled = true // MOVE事件被我们考虑（即使只是更新lastTouchX）
             }
+
             MotionEvent.ACTION_UP -> {
-                if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false
-                var eventHandled = false
-                if (isPageSwiping) {
-                    if (!isInP1EditMode) { // 页面滑动只在非P1编辑模式下进行
-                        val velocityTracker = this.velocityTracker!!
-                        velocityTracker.computeCurrentVelocity(1000, maxFlingVelocity.toFloat())
-                        val velocityX = velocityTracker.getXVelocity(activePointerId)
-                        if (abs(velocityX) > minFlingVelocity && numVirtualPages > 1) {
-                            flingPage(velocityX)
-                        } else {
+                if (activePointerId == MotionEvent.INVALID_POINTER_ID) {
+                    recycleVelocityTracker()
+                    isPageSwiping = false
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                    return false // 无效指针，未处理
+                }
+
+                if (isPageSwiping) { // isPageSwiping 只在 !isInP1EditMode 时为 true
+                    val vt = this.velocityTracker!!
+                    vt.computeCurrentVelocity(1000, maxFlingVelocity.toFloat())
+                    val velocityX = vt.getXVelocity(activePointerId)
+                    if (abs(velocityX) > minFlingVelocity && numVirtualPages > 1) {
+                        // Log.d("WP_TOUCH", "Global ACTION_UP: Flinging page.")
+                        flingPage(velocityX)
+                    } else {
+                        // Log.d("WP_TOUCH", "Global ACTION_UP: Snapping page after swipe.")
+                        snapToNearestPage(currentPreviewXOffset)
+                    }
+                    globalEventHandled = true
+                } else {
+                    // 不是页面滑动，则判断为单击
+                    if (abs(currentGlobalX - downTouchX) < touchSlop) {
+                        // Log.d("WP_TOUCH", "Global ACTION_UP: Valid click detected. Calling performClick(). isInP1EditMode: $isInP1EditMode")
+                        performClick() // 无论是否在P1编辑模式，都调用 performClick
+                        globalEventHandled = true
+                    } else {
+                        // Log.d("WP_TOUCH", "Global ACTION_UP: Not a swipe, but moved too far for a click.")
+                        // 如果移动超过touchSlop但不足以判定为isPageSwiping
+                        // 只有在非P1编辑模式下，才考虑吸附到最近页面
+                        if (!isInP1EditMode) {
                             snapToNearestPage(currentPreviewXOffset)
                         }
+                        globalEventHandled = true // 认为这个拖拽结束也被处理了
                     }
-                    eventHandled = true
-                } else {
-                    // 如果不是页面滑动，则判断为单击
-                    // 这个单击判断现在是全局的（无论是否在P1编辑模式）
-                    // 因为P1编辑模式下的特定区域单击已由 p1ContentDragGestureDetector.onSingleTapUp -> performClick() 处理
-                    // 如果触摸在P1区域外，或者P1区域内的单击没有被内部detector的onSingleTapUp处理（不太可能），则这里会捕获
-                    if (abs(x - downTouchX) < touchSlop) {
-                        Log.d(TAG, "onTouchEvent: Global ACTION_UP, potential click. Calling performClick(). isInP1EditMode: $isInP1EditMode")
-                        performClick() // 调用 performClick，让外部 OnClickListener 处理
-                    } else {
-                        // 如果有微小移动但不足以算滑动，也不是 P1 编辑手G势，可能也需要吸附到最近页面（如果不在P1编辑模式）
-                        if(!isInP1EditMode) snapToNearestPage(currentPreviewXOffset)
-                    }
-                    eventHandled = true
                 }
-
                 recycleVelocityTracker()
                 activePointerId = MotionEvent.INVALID_POINTER_ID
                 isPageSwiping = false
                 parent?.requestDisallowInterceptTouchEvent(false)
-                return eventHandled // 或者总是 true
             }
+
             MotionEvent.ACTION_CANCEL -> {
-                // 与 ACTION_UP 类似的处理
-                if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false
-                if (isPageSwiping && !isInP1EditMode) {
+                // Log.d("WP_TOUCH", "Global ACTION_CANCEL received.")
+                if (isPageSwiping && !isInP1EditMode) { // isPageSwiping 只在非P1编辑模式为true
                     snapToNearestPage(currentPreviewXOffset)
                 }
                 recycleVelocityTracker()
                 activePointerId = MotionEvent.INVALID_POINTER_ID
                 isPageSwiping = false
                 parent?.requestDisallowInterceptTouchEvent(false)
-                return true
+                globalEventHandled = true // CANCEL事件我们通常认为已处理
             }
         }
+
+        // 如果我们的自定义逻辑处理了事件，则返回true
+        if (globalEventHandled) {
+            return true
+        }
+
+        // 否则，调用父类的实现
+        // Log.d("WP_TOUCH", "Global: Event not handled by custom logic, calling super.onTouchEvent for action ${event.actionToString(event.actionMasked)}")
         return super.onTouchEvent(event)
     }
 

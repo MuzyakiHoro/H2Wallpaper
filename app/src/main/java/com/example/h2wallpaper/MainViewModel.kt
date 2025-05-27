@@ -109,6 +109,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val _p1ImageBottomFadeHeight = MutableLiveData<Float>()
     val p1ImageBottomFadeHeight: LiveData<Float> get() = _p1ImageBottomFadeHeight
 
+    // 新增：控制自定义颜色RGB滑块区域的显示状态
+    private val _showCustomColorSliders = MutableStateFlow(false)
+    open val showCustomColorSliders: StateFlow<Boolean> get() = _showCustomColorSliders
+    // 新方法：切换自定义颜色滑块的显示，并确保与参数滑块互斥
+    open fun toggleCustomColorSlidersVisibility() {
+        val newVisibility = !_showCustomColorSliders.value
+        _showCustomColorSliders.value = newVisibility
+        if (newVisibility) {
+            // 如果显示颜色滑块，则隐藏参数调整滑块
+            _subCategoryForAdjustmentIdInSheet.value = null
+        }
+    }
 
     init {
         loadInitialPreferences()
@@ -523,11 +535,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _subCategoryForAdjustmentIdInSheet.value = null
     }
 
+    // 修改：当选择子分类进行参数调整时，应隐藏自定义颜色滑块
     fun onSubCategoryForAdjustmentSelectedInSheet(subCategoryId: String?) {
-        if (_subCategoryForAdjustmentIdInSheet.value == subCategoryId) {
-            _subCategoryForAdjustmentIdInSheet.value = null // Click again to deselect/hide adjustment area
+        if (_subCategoryForAdjustmentIdInSheet.value == subCategoryId && subCategoryId != null) {
+            // 如果再次点击已选中的参数滑块项，则收起它
+            _subCategoryForAdjustmentIdInSheet.value = null
+            // _showCustomColorSliders.value = false // 不需要，因为参数调整和颜色调整是互斥的
         } else {
             _subCategoryForAdjustmentIdInSheet.value = subCategoryId
+            if (subCategoryId != null) {
+                // 如果选择了参数滑块项，则隐藏自定义颜色滑块
+                _showCustomColorSliders.value = false
+            }
         }
     }
 }
