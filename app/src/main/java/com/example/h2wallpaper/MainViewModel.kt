@@ -122,6 +122,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    // 新增节流相关属性
+    private val paramUpdateTimes = mutableMapOf<String, Long>()
+    private val throttleInterval = 20f // 改为20ms，对应50fps
+
     init {
         loadInitialPreferences()
     }
@@ -257,6 +261,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     open fun updateSelectedBackgroundColor(color: Int) {
+        // 添加节流逻辑
+        val currentTime = System.currentTimeMillis()
+        val lastUpdateTime = paramUpdateTimes["bg_color"] ?: 0L
+        if (currentTime - lastUpdateTime < throttleInterval) {
+            return  // 如果间隔太短，直接跳过更新
+        }
+        paramUpdateTimes["bg_color"] = currentTime
+
         if (_selectedBackgroundColor.value != color) {
             _selectedBackgroundColor.value = color
             preferencesRepository.setSelectedBackgroundColor(color)
@@ -425,6 +437,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     open fun updateAdvancedSettingRealtime(paramKey: String, actualValue: Float) {
+        // 添加节流逻辑
+        val currentTime = System.currentTimeMillis()
+        val lastUpdateTime = paramUpdateTimes[paramKey] ?: 0L
+        if (currentTime - lastUpdateTime < throttleInterval) {
+            return  // 如果间隔太短，直接跳过更新
+        }
+        paramUpdateTimes[paramKey] = currentTime
+
         var valueChanged = false
         // Determine the correct scale factor for integer storage if needed
         // Or call appropriate repository method for direct float/int storage

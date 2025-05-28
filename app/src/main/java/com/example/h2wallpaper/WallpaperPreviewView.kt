@@ -12,6 +12,7 @@ import android.graphics.RectF
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.util.Log
 import android.view.GestureDetector
@@ -26,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -95,7 +97,21 @@ class WallpaperPreviewView @JvmOverloads constructor(
     private val viewScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var fullBitmapLoadingJob: Job? = null
     private var topBitmapUpdateJob: Job? = null
-    private var blurUpdateJob: Job? = null // 新增
+    private var blurUpdateJob: Job? = null // 用于执行单个模糊任务
+    
+    // 启用智能模糊任务调度系统
+    private val blurTaskQueue = Channel<BlurTask>(Channel.UNLIMITED) // 模糊任务队列
+    private var blurTaskProcessor: Job? = null // 处理模糊任务的协程
+    private var lastBlurTaskStartTime = 0L // 上次任务开始时间
+    private val BLUR_TASK_TIME_THRESHOLD = 30L // 任务处理时间阈值，单位毫秒
+    
+    // 定义模糊任务数据类
+    private data class BlurTask(
+        val radius: Float,
+        val downscaleFactor: Float, 
+        val iterations: Int,
+        val timestamp: Long = System.currentTimeMillis()
+    )
 
     // --- P1 编辑模式相关 ---
     private var isInP1EditMode: Boolean = false
@@ -157,14 +173,24 @@ class WallpaperPreviewView @JvmOverloads constructor(
         initializeP1GestureDetectors()
     }
 
+    /**
+     * 初始化P1内容拖动和缩放的手势检测器
+     */
     private fun initializeP1GestureDetectors() {
         p1ContentDragGestureDetector = GestureDetector(context, P1ContentGestureListener())
         p1ContentScaleGestureDetector = ScaleGestureDetector(context, P1ContentScaleListener())
     }
 
+    /**
+     * 设置P1配置编辑监听器，当P1区域的焦点、高度比例或内容缩放比例变化时回调
+     */
     fun setOnP1ConfigEditedListener(listener: ((normalizedX: Float, normalizedY: Float, heightRatio: Float, contentScale: Float) -> Unit)?) {
         this.onP1ConfigEditedListener = listener
     }
+
+    /**
+     * 设置请求动作回调，用于与外部Activity或Fragment通信
+     */
     fun setOnRequestActionCallback(callback: ((action: PreviewViewAction) -> Unit)?) {
         this.onRequestActionCallback = callback
     }
@@ -177,6 +203,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         get() = if (isInP1EditMode || isTransitioningFromEditMode) currentEditP1ContentScaleFactor else this.currentP1ContentScaleFactor
 
 
+    /**
+     * 当视图大小改变时调用，重新计算布局并加载或更新位图
+     */
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         val oldViewWidth = viewWidth; val oldViewHeight = viewHeight
         viewWidth = w; viewHeight = h
@@ -199,6 +228,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 计算P1显示区域的矩形和调整手柄的位置
+     */
     private fun calculateP1DisplayRectView() {
         if (viewWidth <= 0 || viewHeight <= 0) {
             p1DisplayRectView.setEmpty()
@@ -217,6 +249,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         )
     }
 
+    /**
+     * 设置P1焦点编辑模式，用于进入或退出P1区域的编辑状态
+     */
     fun setP1FocusEditMode(
         isEditing: Boolean,
         initialNormFocusX: Float? = null,
@@ -311,6 +346,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
     }
 
 
+    /**
+     * 重置P1编辑矩阵以将图像焦点居中显示
+     */
     private fun resetP1EditMatrixToFocus(normFocusX: Float, normFocusY: Float) {
         val source = wallpaperBitmaps?.sourceSampledBitmap
         if (source == null || source.isRecycled || p1DisplayRectView.isEmpty) {
@@ -345,15 +383,24 @@ class WallpaperPreviewView @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * 计算P1基本填充缩放比例，确保图像至少填满目标区域
+     */
     private fun calculateP1BaseFillScale(source: Bitmap, targetRect: RectF): Float {
         if (source.width <= 0 || source.height <= 0 || targetRect.width() <= 0 || targetRect.height() <= 0) return 1.0f
         return max(targetRect.width() / source.width.toFloat(), targetRect.height() / source.height.toFloat())
     }
 
+    /**
+     * 获取当前P1编辑矩阵的缩放值
+     */
     private fun getCurrentP1EditMatrixScale(): Float {
         val values = FloatArray(9); p1EditMatrix.getValues(values); return values[Matrix.MSCALE_X]
     }
 
+    /**
+     * 应用P1编辑矩阵边界限制，防止图像超出显示区域或缩放不合理
+     */
     private fun applyP1EditMatrixBounds() {
         val source = wallpaperBitmaps?.sourceSampledBitmap ?: return
         if (p1DisplayRectView.isEmpty || source.isRecycled || source.width == 0 || source.height == 0) return
@@ -405,6 +452,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         if (abs(dx) > 0.001f || abs(dy) > 0.001f) p1EditMatrix.postTranslate(dx, dy)
     }
 
+    /**
+     * 尝试节流P1配置更新，避免频繁更新
+     */
     private fun attemptThrottledP1ConfigUpdate() {
         if (!isInP1EditMode) return
         val currentTime = System.currentTimeMillis()
@@ -421,6 +471,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 执行P1配置更新，计算新的焦点位置并通知监听器
+     */
     private fun executeP1ConfigUpdate() {
         lastP1ConfigUpdateTime = System.currentTimeMillis()
         isThrottledP1ConfigUpdatePending = false
@@ -532,6 +585,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 处理视图上的触摸事件，管理页面滑动、P1编辑和高度调整等交互
+     */
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val touchX = event.x
@@ -747,6 +803,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
+    /**
+     * 绘制视图内容，根据不同模式展示壁纸预览、编辑状态或占位符
+     */
     override fun onDraw(canvas: Canvas) {
         if (viewWidth <= 0 || viewHeight <= 0) return
         val cWBM = wallpaperBitmaps
@@ -803,6 +862,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
     }
 
 
+    /**
+     * 设置配置值，更新预览参数并根据需要刷新视图
+     */
     fun setConfigValues(
         scrollSensitivity: Float, p1OverlayFadeRatio: Float, backgroundBlurRadius: Float,
         snapAnimationDurationMs: Long, normalizedInitialBgScrollOffset: Float,
@@ -813,6 +875,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
         val oldBgBlurR = this.currentBackgroundBlurRadius
         val oldBgBlurDF = this.currentBlurDownscaleFactor
         val oldBgBlurIt = this.currentBlurIterations
+        val oldP1ImageBottomFadeHeight = this.currentP1ImageBottomFadeHeight
 
         this.currentScrollSensitivity = scrollSensitivity.coerceIn(0.1f, 5.0f)
         this.currentP1OverlayFadeRatio = p1OverlayFadeRatio.coerceIn(0.01f, 1.0f)
@@ -827,6 +890,12 @@ class WallpaperPreviewView @JvmOverloads constructor(
         this.currentP1ShadowDy = p1ShadowDy.coerceIn(-50f, 50f)
         this.currentP1ShadowColor = p1ShadowColor
         this.currentP1ImageBottomFadeHeight = p1ImageBottomFadeHeight.coerceAtLeast(0f)
+
+        // 检测底部融入参数变化并快速更新视图
+        if (oldP1ImageBottomFadeHeight != this.currentP1ImageBottomFadeHeight) {
+            invalidate() // 立即请求重绘，不走复杂的更新流程
+            return
+        }
 
         val blurParamsChanged = oldBgBlurR != this.currentBackgroundBlurRadius ||
                 oldBgBlurDF != this.currentBlurDownscaleFactor ||
@@ -854,10 +923,11 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 异步更新背景模糊效果，使用智能任务调度系统
+     */
     private fun updateOnlyBlurredBackgroundForPreviewAsync() {
-        blurUpdateJob?.cancel()
-        fullBitmapLoadingJob?.cancel() // 取消可能正在进行的完整加载
-
+        // 检查必要条件，确保有源图像
         val baseForBlur = wallpaperBitmaps?.scrollingBackgroundBitmap
         if (baseForBlur == null || viewWidth <= 0 || viewHeight <= 0 || imageUri == null) {
             if (imageUri != null) {
@@ -870,49 +940,134 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
 
         Log.d(TAG, "updateOnlyBlurredBackgroundForPreviewAsync: R=$currentBackgroundBlurRadius, DF=$currentBlurDownscaleFactor, It=$currentBlurIterations")
-
-        blurUpdateJob = viewScope.launch {
-            var newBlurredBitmap: Bitmap? = null
-            try {
-                ensureActive()
-                newBlurredBitmap = withContext(Dispatchers.IO) { // 使用 Dispatchers.IO 或 Default
+        
+        // 创建新的模糊任务并加入队列
+        val newTask = BlurTask(
+            radius = currentBackgroundBlurRadius,
+            downscaleFactor = currentBlurDownscaleFactor,
+            iterations = currentBlurIterations
+        )
+        
+        // 确保任务处理器在运行
+        if (blurTaskProcessor == null || blurTaskProcessor?.isActive != true) {
+            startBlurTaskProcessor()
+        }
+        
+        // 加入任务到队列
+        viewScope.launch {
+            blurTaskQueue.send(newTask)
+            Log.d(TAG, "Added blur task to queue: $newTask")
+        }
+    }
+    
+    /**
+     * 启动模糊任务处理器，管理任务队列并实现智能调度策略
+     */
+    private fun startBlurTaskProcessor() {
+        blurTaskProcessor?.cancel()
+        blurTaskProcessor = viewScope.launch {
+            Log.d(TAG, "Starting blur task processor")
+            var lastProcessedTask: BlurTask? = null
+            var slowTaskDetected = false // 跟踪是否检测到慢速任务
+            
+            for (task in blurTaskQueue) {
+                try {
                     ensureActive()
-                    SharedWallpaperRenderer.regenerateBlurredBitmap(
-                        context, // WallpaperPreviewView 的 context
-                        baseForBlur,
-                        baseForBlur.width, // 目标尺寸与原滚动图一致
-                        baseForBlur.height,
-                        currentBackgroundBlurRadius,
-                        currentBlurDownscaleFactor,
-                        currentBlurIterations
-                    )
-                }
-                ensureActive()
-                val oldBlurred = wallpaperBitmaps?.blurredScrollingBackgroundBitmap
-                if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.scrollingBackgroundBitmap == baseForBlur) {
-                    wallpaperBitmaps?.blurredScrollingBackgroundBitmap = newBlurredBitmap
-                    if (oldBlurred != newBlurredBitmap) oldBlurred?.recycle()
-                } else {
-                    newBlurredBitmap?.recycle()
-                }
-            } catch (e: CancellationException) {
-                Log.d(TAG, "Preview blur update cancelled.")
-                newBlurredBitmap?.recycle()
-            } catch (e: Exception) {
-                Log.e(TAG, "Preview blur update failed", e)
-                newBlurredBitmap?.recycle()
-                if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.scrollingBackgroundBitmap == baseForBlur) {
-                    wallpaperBitmaps?.blurredScrollingBackgroundBitmap = null
-                }
-            } finally {
-                if (isActive && coroutineContext[Job] == blurUpdateJob) blurUpdateJob = null
-                if (isActive && this@WallpaperPreviewView.imageUri != null) {
-                    invalidate()
+                    
+                    // 如果检测到上一个任务处理时间超过阈值，则执行特殊处理
+                    if (slowTaskDetected) {
+                        // 清空队列中的所有任务，只保留最新的任务
+                        var newestTask: BlurTask? = task
+                        while (!blurTaskQueue.isEmpty) {
+                            val nextTask = blurTaskQueue.tryReceive().getOrNull()
+                            if (nextTask != null) {
+                                newestTask = nextTask
+                                Log.d(TAG, "Slow task detected, skipping intermediate task")
+                            }
+                        }
+                        
+                        // 如果找到了更新的任务，则使用它而不是当前任务
+                        if (newestTask != task) {
+                            Log.d(TAG, "Slow task detected, jumping to newest task")
+                            lastProcessedTask = newestTask
+                            // 将最新任务重新放入队列
+                            blurTaskQueue.send(newestTask!!)
+                            // 重置慢速任务标志
+                            slowTaskDetected = false
+                            continue
+                        }
+                        
+                        // 重置慢速任务标志
+                        slowTaskDetected = false
+                    }
+                    
+                    // 处理当前任务
+                    lastProcessedTask = task
+                    
+                    // 执行模糊处理
+                    val baseForBlur = wallpaperBitmaps?.scrollingBackgroundBitmap
+                    if (baseForBlur == null || baseForBlur.isRecycled) {
+                        Log.w(TAG, "Base bitmap is null or recycled, aborting task")
+                        continue
+                    }
+                    
+                    var newBlurredBitmap: Bitmap? = null
+                    try {
+                        val startTime = SystemClock.elapsedRealtime()
+                        newBlurredBitmap = withContext(Dispatchers.IO) {
+                            ensureActive()
+                            SharedWallpaperRenderer.regenerateBlurredBitmap(
+                                context,
+                                baseForBlur,
+                                baseForBlur.width,
+                                baseForBlur.height,
+                                task.radius,
+                                task.downscaleFactor,
+                                task.iterations
+                            )
+                        }
+                        val processingTime = SystemClock.elapsedRealtime() - startTime
+                        
+                        // 检查任务处理时间是否超过阈值
+                        if (processingTime > BLUR_TASK_TIME_THRESHOLD) {
+                            Log.d(TAG, "Slow task detected! Processing time: ${processingTime}ms > ${BLUR_TASK_TIME_THRESHOLD}ms")
+                            slowTaskDetected = true
+                        }
+                        
+                        ensureActive()
+                        val oldBlurred = wallpaperBitmaps?.blurredScrollingBackgroundBitmap
+                        if (imageUri != null && wallpaperBitmaps?.scrollingBackgroundBitmap == baseForBlur) {
+                            wallpaperBitmaps?.blurredScrollingBackgroundBitmap = newBlurredBitmap
+                            if (oldBlurred != newBlurredBitmap) oldBlurred?.recycle()
+                            invalidate()
+                            Log.d(TAG, "Blur task completed in ${processingTime}ms")
+                        } else {
+                            newBlurredBitmap?.recycle()
+                            Log.d(TAG, "Conditions changed during blur processing, discarded result")
+                        }
+                    } catch (e: CancellationException) {
+                        Log.d(TAG, "Blur task was cancelled")
+                        newBlurredBitmap?.recycle()
+                        break
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing blur task", e)
+                        newBlurredBitmap?.recycle()
+                    }
+                } catch (e: CancellationException) {
+                    Log.d(TAG, "Blur task processor was cancelled")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in blur task processor", e)
                 }
             }
+            Log.d(TAG, "Blur task processor stopped")
+            blurTaskProcessor = null
         }
     }
 
+    /**
+     * 设置图像URI，加载新图像或重新加载现有图像
+     */
     fun setImageUri(uri: Uri?, forceReload: Boolean = false) {
         Log.d(TAG, "setImageUri called: $uri. EditMode: $isInP1EditMode, ForceReload: $forceReload")
         if (isInP1EditMode) {
@@ -956,6 +1111,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 从URI加载完整位图集，包括源图、滚动背景和模糊背景
+     */
     private fun loadFullBitmapsFromUri(uriToLoad: Uri?, forceInternalReload: Boolean = false) {
         if (uriToLoad == null || viewWidth <= 0 || viewHeight <= 0) {
             if (!forceInternalReload) {
@@ -1036,6 +1194,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 设置P1图像高度比例，更新显示区域大小
+     */
     fun setPage1ImageHeightRatio(newRatio: Float) {
         val clampedRatio = newRatio.coerceIn(WallpaperConfigConstants.MIN_HEIGHT_RATIO, WallpaperConfigConstants.MAX_HEIGHT_RATIO)
         if (abs(nonEditModePage1ImageHeightRatio - clampedRatio) > 0.001f) {
@@ -1056,6 +1217,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 设置归一化焦点位置，用于确定P1区域显示的图像部分
+     */
     fun setNormalizedFocus(focusX: Float, focusY: Float) {
         val clampedFocusX = focusX.coerceIn(0f, 1f)
         val clampedFocusY = focusY.coerceIn(0f, 1f)
@@ -1077,6 +1241,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 设置P1内容缩放因子，控制图像在P1区域的缩放级别
+     */
     fun setP1ContentScaleFactor(scale: Float) {
         val clampedScale = scale.coerceIn(WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR, p1UserMaxScaleFactorRelativeToCover)
         if (abs(this.currentP1ContentScaleFactor - clampedScale) > 0.001f) {
@@ -1095,6 +1262,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 仅更新P1顶部裁剪位图，用于非编辑模式下的显示
+     */
     private fun updateOnlyPage1TopCroppedBitmap(
         heightRatioToUse: Float,
         sourceBitmap: Bitmap,
@@ -1156,6 +1326,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 在主线程协程作用域中启动任务的辅助方法
+     */
     private fun mainScopeLaunch(block: suspend CoroutineScope.() -> Unit) {
         if (viewScope.isActive) {
             viewScope.launch {
@@ -1167,6 +1340,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
     }
 
 
+    /**
+     * 设置选定的背景颜色并刷新视图
+     */
     fun setSelectedBackgroundColor(color: Int){
         if(this.selectedBackgroundColor != color){
             this.selectedBackgroundColor = color
@@ -1174,7 +1350,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
-    // performClick() 方法是 View 类自带的，它会调用 setOnClickListener 设置的监听器
+    /**
+     * 响应点击事件，调用设置的OnClickListener
+     */
     override fun performClick(): Boolean {
         Log.d(TAG, "performClick() called. isInP1EditMode: $isInP1EditMode")
         // super.performClick() 会调用外部设置的 OnClickListener
@@ -1182,6 +1360,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         return super.performClick()
     }
 
+    /**
+     * 处理页面快速滑动，计算目标页面并动画滚动到该位置
+     */
     private fun flingPage(velocityX: Float) {
         if (isInP1EditMode || numVirtualPages <= 1) {
             if (!pageScroller.isFinished) pageScroller.abortAnimation()
@@ -1210,6 +1391,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         animateToOffset(targetXOffset)
     }
 
+    /**
+     * 将页面吸附到最近的整页位置
+     */
     private fun snapToNearestPage(currentOffset: Float) {
         if (isInP1EditMode || numVirtualPages <= 1) {
             if (!pageScroller.isFinished) pageScroller.abortAnimation()
@@ -1223,6 +1407,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         animateToOffset(targetXOffset)
     }
 
+    /**
+     * 动画滚动到指定的偏移位置
+     */
     private fun animateToOffset(targetXOffset: Float) {
         val currentPixelOffset = (currentPreviewXOffset * getScrollRange()).toInt()
         val targetPixelOffset = (targetXOffset * getScrollRange()).toInt()
@@ -1237,6 +1424,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 计算滚动位置，处理页面滚动和P1内容滚动的动画
+     */
     override fun computeScroll() {
         var triggerInvalidate = false
 
@@ -1287,23 +1477,43 @@ class WallpaperPreviewView @JvmOverloads constructor(
     }
 
 
+    /**
+     * 获取滚动范围的像素值
+     */
     private fun getScrollRange(): Int = (numVirtualPages - 1) * 10000
 
+    /**
+     * 回收速度追踪器，释放资源
+     */
     private fun recycleVelocityTracker() {
         velocityTracker?.recycle()
         velocityTracker = null
     }
 
+    /**
+     * 视图从窗口分离时调用，清理所有资源
+     */
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        Log.d(TAG,"onDetachedFromWindow: Cancelling jobs & recycling bitmaps.")
-        fullBitmapLoadingJob?.cancel()
-        fullBitmapLoadingJob = null
-        topBitmapUpdateJob?.cancel()
-        topBitmapUpdateJob = null
+        // 取消所有协程
         viewScope.cancel()
+        fullBitmapLoadingJob = null
+        topBitmapUpdateJob = null
+        blurUpdateJob = null
+        
+        // 清理模糊任务队列
+        blurTaskProcessor?.cancel()
+        blurTaskProcessor = null
+        blurTaskQueue.close()
+        
+        // 回收位图资源
         wallpaperBitmaps?.recycleInternals()
         wallpaperBitmaps = null
-        mainHandler.removeCallbacksAndMessages(null)
+        
+        // 释放速度追踪器
+        velocityTracker?.recycle()
+        velocityTracker = null
+        
+        Log.d(TAG, "WallpaperPreviewView detached, resources cleaned up")
     }
 }

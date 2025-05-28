@@ -26,9 +26,9 @@ import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ColorLens
-import androidx.compose.material.icons.filled.Edit // 用于自定义颜色按钮
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Settings // 保留以防未来有其他非XML设置入口
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.*
@@ -54,7 +54,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlinx.coroutines.channels.Channel
-
 
 // --- 数据模型 ---
 data class SubCategory(
@@ -257,7 +256,8 @@ fun CustomColorSlidersArea(
 
     LaunchedEffect(red, green, blue) {
         localCustomColor = Color(red, green, blue)
-        // ViewModel的更新现在放在 onValueChangeFinished 中
+        // 实时更新颜色到ViewModel，节流逻辑已经移至ViewModel中处理
+        viewModel.updateSelectedBackgroundColor(localCustomColor.toArgb())
     }
 
     Column(modifier = Modifier.padding(vertical = 8.dp).defaultMinSize(minHeight = 64.dp)) {
@@ -270,15 +270,18 @@ fun CustomColorSlidersArea(
         )
         ColorSlider(label = "红", value = red,
             onValueChange = { red = it },
-            onValueChangeFinished = { viewModel.updateSelectedBackgroundColor(Color(red, green, blue).toArgb()) }
+            // 移除onValueChangeFinished，通过LaunchedEffect即时更新
+            onValueChangeFinished = { }
         )
         ColorSlider(label = "绿", value = green,
             onValueChange = { green = it },
-            onValueChangeFinished = { viewModel.updateSelectedBackgroundColor(Color(red, green, blue).toArgb()) }
+            // 移除onValueChangeFinished，通过LaunchedEffect即时更新
+            onValueChangeFinished = { }
         )
         ColorSlider(label = "蓝", value = blue,
             onValueChange = { blue = it },
-            onValueChangeFinished = { viewModel.updateSelectedBackgroundColor(Color(red, green, blue).toArgb()) }
+            // 移除onValueChangeFinished，通过LaunchedEffect即时更新
+            onValueChangeFinished = { }
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -326,7 +329,10 @@ fun PresetColorPalette(viewModel: MainViewModel) {
                             color = if (isSelected) Color.White else Color.Transparent,
                             shape = CircleShape
                         )
-                        .clickable { viewModel.updateSelectedBackgroundColor(colorIntValue) }
+                        .clickable { 
+                            // 直接调用ViewModel方法，由ViewModel负责节流
+                            viewModel.updateSelectedBackgroundColor(colorIntValue) 
+                        }
                 )
             }
         }
@@ -565,49 +571,6 @@ fun ParameterAdjustmentSection(
         )
     }
 
-    // 添加节流状态
-    var lastUpdateTime by remember { mutableStateOf(0L) }
-    val isBlurParam = keyOfParam == WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS ||
-            keyOfParam == WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR ||
-            keyOfParam == WallpaperConfigConstants.KEY_BLUR_ITERATIONS
-    val throttleInterval = 16.67f // 约16.67ms，对应60fps
-
-    // 创建模糊参数更新的Channel
-    val blurUpdateChannel = remember { Channel<Float>(Channel.CONFLATED) }
-    
-    // 启动模糊参数处理的专用协程
-    LaunchedEffect(blurUpdateChannel) {
-        var lastProcessedValue: Float? = null
-        var processingStartTime: Long = 0
-        
-        while (true) {
-            val newValue = blurUpdateChannel.receive()
-            val currentTime = System.currentTimeMillis()
-            
-            // 如果处理时间超过2秒，丢弃所有待处理的值，直接处理最新值
-            if (lastProcessedValue != null && currentTime - processingStartTime > 2000) {
-                Log.d("BlurUpdate", "Processing timeout, discarding all pending values and processing latest value")
-                // 清空channel中的所有待处理值
-                while (blurUpdateChannel.tryReceive().isSuccess) {
-                    // 继续尝试接收直到channel为空
-                }
-                // 重置处理状态
-                lastProcessedValue = null
-            }
-            
-            if (newValue != lastProcessedValue) {
-                processingStartTime = currentTime
-                try {
-                    val actualParamValue = mapSliderPositionToActualValue(keyOfParam, newValue)
-                    viewModel.updateAdvancedSettingRealtime(keyOfParam, actualParamValue)
-                    lastProcessedValue = newValue
-                } catch (e: Exception) {
-                    Log.e("BlurUpdate", "Error processing blur update", e)
-                }
-            }
-        }
-    }
-
     val displayValueString = remember(keyOfParam, currentSliderPosition) {
         val actualVal = mapSliderPositionToActualValue(keyOfParam, currentSliderPosition)
         if (keyOfParam == WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY ||
@@ -637,35 +600,44 @@ fun ParameterAdjustmentSection(
                 color = Color.White.copy(alpha = 0.85f)
             )
         }
-        Slider(
-            value = currentSliderPosition,
-            onValueChange = { newSliderPos ->
-                currentSliderPosition = newSliderPos
-                val currentTime = System.currentTimeMillis()
-                
-                // 对于模糊参数，使用Channel发送更新
-                if (isBlurParam) {
-                    if (currentTime - lastUpdateTime >= throttleInterval) {
-                        blurUpdateChannel.trySend(newSliderPos)
-                        lastUpdateTime = currentTime
-                    }
-                } else {
-                    // 非模糊参数保持实时更新
-                    val actualParamValue = mapSliderPositionToActualValue(keyOfParam, newSliderPos)
-                    viewModel.updateAdvancedSettingRealtime(keyOfParam, actualParamValue)
-                }
-            },
-            valueRange = 0f..1f,
-            steps = getStepsForParam(keyOfParam),
-            modifier = Modifier.fillMaxWidth().padding(top = 0.dp),
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = Color.White.copy(alpha = 0.8f),
-                inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-                activeTickColor = Color.White.copy(alpha = 0.5f),
-                inactiveTickColor = Color.White.copy(alpha = 0.2f)
+        
+        // 添加对模糊迭代参数的特殊处理，显示刻度
+        if (keyOfParam == WallpaperConfigConstants.KEY_BLUR_ITERATIONS) {
+            Slider(
+                value = currentSliderPosition,
+                onValueChange = { newPosition ->
+                    // 对于模糊迭代参数，steps已经限制了可用值
+                    currentSliderPosition = newPosition
+                    val actualValue = mapSliderPositionToActualValue(keyOfParam, newPosition)
+                    viewModel.updateAdvancedSettingRealtime(keyOfParam, actualValue)
+                },
+                valueRange = 0f..1f,
+                steps = 1, // 这里设置步数为1，表示有两个步骤（总共3个值：1、2、3）
+                colors = SliderDefaults.colors(
+                    thumbColor = Color.White,
+                    activeTrackColor = Color.White.copy(alpha = 0.7f),
+                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                ),
+                modifier = Modifier.fillMaxWidth().padding(top = 0.dp)
             )
-        )
+        } else {
+            // 其他参数使用常规滑动条
+            Slider(
+                value = currentSliderPosition,
+                onValueChange = { newPosition ->
+                    currentSliderPosition = newPosition
+                    val actualValue = mapSliderPositionToActualValue(keyOfParam, newPosition)
+                    viewModel.updateAdvancedSettingRealtime(keyOfParam, actualValue)
+                },
+                valueRange = 0f..1f,
+                colors = SliderDefaults.colors(
+                    thumbColor = Color.White,
+                    activeTrackColor = Color.White.copy(alpha = 0.7f),
+                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                ),
+                modifier = Modifier.fillMaxWidth().padding(top = 0.dp)
+            )
+        }
     }
 }
 
@@ -712,7 +684,7 @@ fun getMaxRawValueForParam(paramKey: String): Float {
         WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> 20f
         WallpaperConfigConstants.KEY_P1_SHADOW_DX -> 20f
         WallpaperConfigConstants.KEY_P1_SHADOW_DY -> 20f
-        WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> 2560f
+        WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> 600f
         else -> 1f
     }
 }
@@ -732,8 +704,8 @@ fun getStepsForParam(paramKey: String): Int {
         WallpaperConfigConstants.KEY_P1_SHADOW_DX -> { minRawInt = -20; maxRawInt = 20 } // step 1
         WallpaperConfigConstants.KEY_P1_SHADOW_DY -> { minRawInt = 0; maxRawInt = 20 } // step 1
         WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> {
-            // Range 0 to 2560. For ~64 steps, interval is 40.
-            return (2560 / 40) -1 //  63 steps
+            // Range 0 to 600. For ~30 steps, interval is 20.
+            return (600 / 20) - 1 // 29 steps
         }
         else -> return 0
     }

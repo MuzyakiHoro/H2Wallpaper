@@ -116,6 +116,21 @@ object SharedWallpaperRenderer {
     private val rectShadowPaint = Paint().apply { isAntiAlias = true }
     private val overlayFadePaint = Paint().apply { isAntiAlias = true }
 
+    /**
+     * 调整颜色的透明度
+     * @param color 原始颜色
+     * @param factor 透明度因子（0.0-1.0，1.0表示完全不透明）
+     * @return 调整透明度后的颜色
+     */
+    private fun adjustAlpha(color: Int, factor: Float): Int {
+        val alpha = (Color.alpha(color) * factor).toInt().coerceIn(0, 255)
+        return Color.argb(
+            alpha,
+            Color.red(color),
+            Color.green(color),
+            Color.blue(color)
+        )
+    }
 
     fun drawFrame(
         canvas: Canvas,
@@ -375,7 +390,21 @@ object SharedWallpaperRenderer {
                     val fadeActualHeight = config.p1ImageBottomFadeHeight.coerceIn(0f, topBmp.height.toFloat())
                     if (fadeActualHeight > 0.1f) {
                         val fadeStartY = topBmp.height.toFloat(); val fadeEndY = topBmp.height.toFloat() - fadeActualHeight
-                        overlayFadePaint.shader = LinearGradient(0f, fadeStartY, 0f, fadeEndY, config.page1BackgroundColor, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+                        
+                        // 使用多色点实现先急后缓的非线性渐变
+                        val colors = intArrayOf(
+                            config.page1BackgroundColor,                       // 底部颜色（完全不透明）
+                            adjustAlpha(config.page1BackgroundColor, 0.8f),    // 30%高度位置（80%不透明）
+                            adjustAlpha(config.page1BackgroundColor, 0.3f),    // 70%高度位置（30%不透明）
+                            Color.TRANSPARENT                                  // 顶部颜色（完全透明）
+                        )
+                        val positions = floatArrayOf(0f, 0.3f, 0.7f, 1f)
+                        
+                        overlayFadePaint.shader = LinearGradient(
+                            0f, fadeStartY, 0f, fadeEndY,
+                            colors, positions, Shader.TileMode.CLAMP
+                        )
+                        
                         canvas.drawRect(0f, fadeEndY, topBmp.width.toFloat(), fadeStartY, overlayFadePaint)
                     } else {
                         overlayFadePaint.shader = null
