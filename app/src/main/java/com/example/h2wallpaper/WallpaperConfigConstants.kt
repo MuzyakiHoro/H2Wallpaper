@@ -42,7 +42,7 @@ object WallpaperConfigConstants {
     const val DEFAULT_BACKGROUND_BLUR_RADIUS: Float = 25f // 保持与XML中SeekBar一致或找到源头
     const val DEFAULT_BACKGROUND_INITIAL_OFFSET: Float = 0.2f
     const val DEFAULT_P2_BACKGROUND_FADE_IN_RATIO: Float = 0.8f
-    const val DEFAULT_BLUR_DOWNSCALE_FACTOR_INT: Int = 25 // 代表百分比的100倍，即0.25
+    const val DEFAULT_BLUR_DOWNSCALE_FACTOR_INT: Int = 10 // 代表百分比的100倍，即0.1
     const val DEFAULT_BLUR_ITERATIONS: Int = 1
 
     const val DEFAULT_P1_SHADOW_RADIUS: Float = 0f

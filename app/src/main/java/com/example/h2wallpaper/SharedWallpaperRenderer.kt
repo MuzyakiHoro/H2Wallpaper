@@ -16,6 +16,7 @@ import android.renderscript.Element
 import android.renderscript.RenderScript
 import android.renderscript.ScriptIntrinsicBlur
 import android.util.Log
+import android.os.SystemClock // 添加SystemClock用于精确计时
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -28,6 +29,40 @@ object SharedWallpaperRenderer {
     private const val TAG = "SharedRenderer"
     private const val DEBUG_TAG_RENDERER = "SharedRenderer_Debug"
     private const val MIN_DOWNSCALED_DIMENSION = 16
+
+    // 性能数据统计相关
+    private const val PERF_TAG = "BlurPerf"
+    private var blurTestCounter = 0
+    private var totalDownscaleTimeStats = PerfStats()
+    private var totalBlurTimeStats = PerfStats()
+    private var totalUpscaleTimeStats = PerfStats()
+    private var totalProcessTimeStats = PerfStats()
+
+    // 性能统计数据类
+    private data class PerfStats(
+        var total: Long = 0,
+        var count: Int = 0,
+        var min: Long = Long.MAX_VALUE,
+        var max: Long = 0
+    ) {
+        val average: Long get() = if (count > 0) total / count else 0
+        
+        fun update(value: Long) {
+            total += value
+            count++
+            min = min.coerceAtMost(value)
+            max = max.coerceAtLeast(value)
+        }
+        
+        fun reset() {
+            total = 0
+            count = 0
+            min = Long.MAX_VALUE
+            max = 0
+        }
+        
+        override fun toString(): String = "平均=${average}ms, 最小=${min}ms, 最大=${max}ms, 样本数=$count"
+    }
 
     data class WallpaperBitmaps(
         var sourceSampledBitmap: Bitmap?,
@@ -115,24 +150,52 @@ object SharedWallpaperRenderer {
         } else {
             p2BackgroundAlpha = 255
         }
-
         val backgroundToDraw = bitmaps.blurredScrollingBackgroundBitmap ?: bitmaps.scrollingBackgroundBitmap
         backgroundToDraw?.let { bgBmp ->
             if (!bgBmp.isRecycled && bgBmp.width > 0 && bgBmp.height > 0) {
                 val imageActualWidth = bgBmp.width.toFloat()
+                val imageActualHeight = bgBmp.height.toFloat()
                 val screenActualWidth = config.screenWidth.toFloat()
-                val totalScrollableWidthPx = (imageActualWidth - screenActualWidth).coerceAtLeast(0f)
-                val initialPixelOffset = totalScrollableWidthPx * config.normalizedInitialBgScrollOffset.coerceIn(0f,1f)
-                val scrollRangeForSensitivity = totalScrollableWidthPx - initialPixelOffset
+                val screenActualHeight = config.screenHeight.toFloat()
+                
+                // 计算缩放比例以确保图像铺满屏幕
+                val scaleX = screenActualWidth / imageActualWidth
+                val scaleY = screenActualHeight / imageActualHeight
+                val scale = max(scaleX, scaleY)
+                
+                // 计算缩放后的尺寸
+                val scaledWidth = imageActualWidth * scale
+                val scaledHeight = imageActualHeight * scale
+                
+                // 计算垂直居中偏移（只保留垂直方向的居中）
+                val offsetY = (screenActualHeight - scaledHeight) / 2f
+                
+                // 计算滚动效果
+                val totalScrollableWidthPx = (scaledWidth - screenActualWidth).coerceAtLeast(0f)
+                // 控制初始位置 - 修改为使用初始偏移在可滚动范围内的位置
+                val initialScrollPosition = totalScrollableWidthPx * config.normalizedInitialBgScrollOffset.coerceIn(0f, 1f)
+                // 剩余可滚动范围
+                val scrollRangeForSensitivity = totalScrollableWidthPx * (1f - config.normalizedInitialBgScrollOffset.coerceIn(0f, 1f))
+                // 根据页面偏移计算当前动态滚动位置
                 var currentDynamicScrollPx = config.currentXOffset * config.scrollSensitivityFactor * scrollRangeForSensitivity
                 currentDynamicScrollPx = currentDynamicScrollPx.coerceIn(0f, scrollRangeForSensitivity)
-                val currentScrollPxFloat = (initialPixelOffset + currentDynamicScrollPx).coerceIn(0f, totalScrollableWidthPx)
-                val bgTopOffset = ((config.screenHeight - bgBmp.height) / 2f)
-
+                // 最终滚动位置 = 初始位置 + 动态滚动量
+                val currentScrollPxFloat = initialScrollPosition + currentDynamicScrollPx
+                
+                // 绘制背景
                 canvas.save()
-                canvas.translate(-currentScrollPxFloat, bgTopOffset)
                 scrollingBgPaint.alpha = p2BackgroundAlpha
-                canvas.drawBitmap(bgBmp, 0f, 0f, scrollingBgPaint)
+                
+                // 创建目标矩形，从最左边开始绘制，只应用垂直居中
+                val dstRect = RectF(
+                    -currentScrollPxFloat,  // 从最左边开始，只应用滚动偏移
+                    offsetY, 
+                    scaledWidth - currentScrollPxFloat, 
+                    offsetY + scaledHeight
+                )
+                
+                // 使用drawBitmap的矩形版本，将图像缩放并绘制到目标矩形中
+                canvas.drawBitmap(bgBmp, null, dstRect, scrollingBgPaint)
                 canvas.restore()
             } else {
                 Log.w(TAG, "drawFrame (P2): Background bitmap is invalid or recycled.")
@@ -151,8 +214,7 @@ object SharedWallpaperRenderer {
      * @param blurDownscaleFactor 模糊前的降采样因子
      * @param blurIterations 模糊迭代次数
      * @return 新的模糊后的Bitmap，如果失败则返回null
-     */
-    fun regenerateBlurredBitmap(
+     */    fun regenerateBlurredBitmap(
         context: Context,
         baseBitmap: Bitmap?,
         targetWidth: Int,
@@ -172,28 +234,92 @@ object SharedWallpaperRenderer {
         var downscaledForBlur: Bitmap? = null
         var blurredDownscaled: Bitmap? = null
         var upscaledBlurredBitmap: Bitmap? = null
+        
+        // 性能统计初始化
+        val totalStartTime = SystemClock.elapsedRealtime()
+        var downscaleTime = 0L
+        var blurTime = 0L
+        var upscaleTime = 0L
+        var isFallbackPath = false
 
         try {
             val sourceForActualBlur = baseBitmap
-            val actualDownscaleFactor = blurDownscaleFactor.coerceIn(0.05f, 1.0f)
+            val actualDownscaleFactor = blurDownscaleFactor.coerceIn(0.01f, 0.5f)
             val downscaledWidth = (sourceForActualBlur.width * actualDownscaleFactor).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
             val downscaledHeight = (sourceForActualBlur.height * actualDownscaleFactor).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
-
-            if (actualDownscaleFactor < 0.99f && (downscaledWidth < sourceForActualBlur.width || downscaledHeight < sourceForActualBlur.height)) {
+            if (actualDownscaleFactor < 0.99f && (downscaledWidth < sourceForActualBlur.width || downscaledHeight < sourceForActualBlur.height)) {                // 计时：降采样开始
+                val downscaleStartTime = SystemClock.elapsedRealtime()
+                // 使用Bitmap.createScaledBitmap进行降采样（回退优化）
                 downscaledForBlur = Bitmap.createScaledBitmap(sourceForActualBlur, downscaledWidth, downscaledHeight, true)
+                downscaleTime = SystemClock.elapsedRealtime() - downscaleStartTime
+                
+                // 计时：模糊开始
+                val blurStartTime = SystemClock.elapsedRealtime()
                 blurredDownscaled = blurBitmapUsingRenderScript(context, downscaledForBlur, blurRadius.coerceIn(0.1f, 25.0f), blurIterations)
-                if (blurredDownscaled != null) {
-                    // 放大回目标尺寸 (通常是 baseBitmap 的原始尺寸)
-                    upscaledBlurredBitmap = Bitmap.createScaledBitmap(blurredDownscaled, targetWidth, targetHeight, true)
+                blurTime = SystemClock.elapsedRealtime() - blurStartTime
+                  if (blurredDownscaled != null) {
+                    // 不进行放大，直接使用降采样后的模糊图像
+                    upscaledBlurredBitmap = blurredDownscaled
+                    upscaleTime = 0L // 没有放大操作，时间为0
+                    Log.d(TAG, "使用降采样后的模糊图像，跳过放大步骤")
                 } else {
                     Log.w(TAG, "regenerateBlurredBitmap: Blurred downscaled bitmap is null, falling back to blur on base bitmap.")
+                    isFallbackPath = true
+                    // 计时：模糊开始 (后备路径)
+                    val blurStartTime = SystemClock.elapsedRealtime()
                     upscaledBlurredBitmap = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
+                    blurTime = SystemClock.elapsedRealtime() - blurStartTime
                     // 如果fallback也需要缩放到targetWidth/Height，但通常sourceForActualBlur已经是正确尺寸了
                 }
             } else {
                 // 不需要降采样，直接模糊
+                isFallbackPath = true
+                // 计时：模糊开始 (无降采样路径)
+                val blurStartTime = SystemClock.elapsedRealtime()
                 upscaledBlurredBitmap = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
+                blurTime = SystemClock.elapsedRealtime() - blurStartTime
             }
+            
+            // 总耗时统计
+            val totalTime = SystemClock.elapsedRealtime() - totalStartTime
+            
+            // 更新性能统计数据
+            totalProcessTimeStats.update(totalTime)
+            if (!isFallbackPath) {
+                totalDownscaleTimeStats.update(downscaleTime)
+                totalUpscaleTimeStats.update(upscaleTime)
+            }
+            totalBlurTimeStats.update(blurTime)
+            
+            blurTestCounter++
+            
+            // 单个log输出当前操作的性能数据
+            val sb = StringBuilder()
+            sb.append("【模糊性能测试 #$blurTestCounter】\n")
+            sb.append("图像尺寸: ${baseBitmap.width}x${baseBitmap.height}, ")
+            sb.append("降采样因子: $actualDownscaleFactor, ")
+            sb.append("模糊半径: $blurRadius, ")
+            sb.append("迭代次数: $blurIterations\n")
+            
+            if (isFallbackPath) {
+                sb.append("[直接模糊路径]\n")
+                sb.append("模糊处理: ${blurTime}ms\n")
+                sb.append("总处理时间: ${totalTime}ms")
+            } else {
+                sb.append("降采样(${sourceForActualBlur.width}x${sourceForActualBlur.height}→${downscaledWidth}x${downscaledHeight}): ${downscaleTime}ms\n")
+                sb.append("模糊处理: ${blurTime}ms\n")
+                sb.append("放大处理: ${upscaleTime}ms\n")
+                sb.append("总处理时间: ${totalTime}ms")
+            }
+            
+            Log.d(PERF_TAG, sb.toString())
+            
+            // 当测试达到10次时，输出汇总统计
+            if (blurTestCounter >= 10) {
+                outputPerformanceStats()
+                resetPerformanceStats()
+            }
+            
             return upscaledBlurredBitmap
         } catch (e: Exception) {
             Log.e(TAG, "Error during regenerateBlurredBitmap", e)
@@ -348,16 +474,17 @@ object SharedWallpaperRenderer {
 
             if (blurRadius > 0.01f && baseScrollingBitmap != null && !baseScrollingBitmap.isRecycled) {
                 val sourceForActualBlur = baseScrollingBitmap
-                val actualDownscaleFactor = blurDownscaleFactor.coerceIn(0.05f, 1.0f)
+                val actualDownscaleFactor = blurDownscaleFactor.coerceIn(0.01f, 0.5f)
                 val downscaledWidth = (sourceForActualBlur.width * actualDownscaleFactor).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
                 val downscaledHeight = (sourceForActualBlur.height * actualDownscaleFactor).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
-
                 if (actualDownscaleFactor < 0.99f && (downscaledWidth < sourceForActualBlur.width || downscaledHeight < sourceForActualBlur.height)) {
+                    // 使用Bitmap.createScaledBitmap进行降采样（回退优化）
                     downscaledForBlur = Bitmap.createScaledBitmap(sourceForActualBlur, downscaledWidth, downscaledHeight, true)
-                    blurredDownscaled = blurBitmapUsingRenderScript(context, downscaledForBlur, blurRadius.coerceIn(0.1f, 25.0f), blurIterations)
+                      blurredDownscaled = blurBitmapUsingRenderScript(context, downscaledForBlur, blurRadius.coerceIn(0.1f, 25.0f), blurIterations)
                     if (blurredDownscaled != null) {
-                        upscaledBlurredBitmap = Bitmap.createScaledBitmap(blurredDownscaled, sourceForActualBlur.width, sourceForActualBlur.height, true)
-                        finalBlurredScrollingBackground = upscaledBlurredBitmap
+                        // 不进行放大，直接使用降采样后的模糊图像
+                        finalBlurredScrollingBackground = blurredDownscaled
+                        Log.d(TAG, "prepareScrollingAndBlurredBitmaps: 使用降采样后的模糊图像，跳过放大步骤")
                     } else {
                         // 降采样或模糊降采样图失败，直接在原始缩放图上模糊作为后备
                         Log.w(TAG, "Blurred downscaled bitmap is null, falling back to blur on base scrolling bitmap.")
@@ -392,28 +519,140 @@ object SharedWallpaperRenderer {
             if (upscaledBlurredBitmap != downscaledForBlur && blurredDownscaled != downscaledForBlur) downscaledForBlur?.recycle() // 如果也不是 downscaledForBlur
         }
         return Pair(finalScrollingBackground, finalBlurredScrollingBackground)
-    }
-
-    fun loadAndProcessInitialBitmaps(
+    }    fun loadAndProcessInitialBitmaps(
         context: Context, imageUri: Uri?, targetScreenWidth: Int, targetScreenHeight: Int,
         page1ImageHeightRatio: Float, normalizedFocusX: Float, normalizedFocusY: Float,
-        contentScaleFactorForP1: Float, // 新增参数
+        contentScaleFactorForP1: Float, 
         blurRadiusForBackground: Float, blurDownscaleFactor: Float, blurIterations: Int
     ): WallpaperBitmaps {
         if (imageUri == null || targetScreenWidth <= 0 || targetScreenHeight <= 0) return WallpaperBitmaps(null, null, null, null)
+        
         var sourceSampled: Bitmap? = null
+        var blurSourceBitmap: Bitmap? = null
+        
         try {
+            // 第一步：检查图像尺寸
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(imageUri)?.use { BitmapFactory.decodeStream(it, null, opts) }
             if (opts.outWidth <= 0 || opts.outHeight <= 0) return WallpaperBitmaps(null, null, null, null)
-            opts.inSampleSize = calculateInSampleSize(opts, targetScreenWidth * 2, targetScreenHeight * 2)
-            opts.inJustDecodeBounds = false; opts.inPreferredConfig = Bitmap.Config.ARGB_8888
-            context.contentResolver.openInputStream(imageUri)?.use { sourceSampled = BitmapFactory.decodeStream(it, null, opts) }
-            if (sourceSampled == null || sourceSampled!!.isRecycled) { Log.e(TAG, "Fail decode sourceSampled $imageUri"); return WallpaperBitmaps(null, null, null, null) }
-            val topCropped = preparePage1TopCroppedBitmap(sourceSampled, targetScreenWidth, targetScreenHeight, page1ImageHeightRatio, normalizedFocusX, normalizedFocusY, contentScaleFactorForP1)
-            val (scrolling, blurred) = prepareScrollingAndBlurredBitmaps(context, sourceSampled, targetScreenWidth, targetScreenHeight, blurRadiusForBackground, blurDownscaleFactor, blurIterations)
-            return WallpaperBitmaps(sourceSampled, topCropped, scrolling, blurred)
-        } catch (e: Exception) { Log.e(TAG, "Err loadAndProcessInitialBitmaps $imageUri", e); sourceSampled?.recycle(); return WallpaperBitmaps(null, null, null, null) }
+            
+            // 第二步：加载高质量图像（用于非模糊的显示）
+            val highQualityOpts = BitmapFactory.Options().apply { 
+                inSampleSize = calculateInSampleSize(opts, targetScreenWidth * 2, targetScreenHeight * 2)
+                inJustDecodeBounds = false
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            
+            context.contentResolver.openInputStream(imageUri)?.use { 
+                sourceSampled = BitmapFactory.decodeStream(it, null, highQualityOpts) 
+            }
+            
+            if (sourceSampled == null || sourceSampled!!.isRecycled) { 
+                Log.e(TAG, "Fail decode sourceSampled $imageUri")
+                return WallpaperBitmaps(null, null, null, null) 
+            }
+            
+            // 准备第一页顶部裁剪的图像 - 始终使用高质量图像
+            val topCropped = preparePage1TopCroppedBitmap(
+                sourceSampled, targetScreenWidth, targetScreenHeight, 
+                page1ImageHeightRatio, normalizedFocusX, normalizedFocusY, contentScaleFactorForP1
+            )
+            
+            // 准备滚动背景和模糊背景
+            var scrollingBackground: Bitmap? = null
+            var blurredBackground: Bitmap? = null
+              // 如果需要模糊效果，优化处理：针对模糊背景使用较低分辨率的图像源
+            if (blurRadiusForBackground > 0.01f) {
+                // 对于需要模糊的图片，使用更大的采样率直接加载低分辨率版本
+                // 根据模糊降采样因子计算合适的采样大小
+                val effectiveBlurDownscale = blurDownscaleFactor.coerceIn(0.05f, 1.0f)
+                val blurSampleSize = (1.0f / effectiveBlurDownscale).toInt().coerceAtLeast(1)
+                
+                // 针对模糊效果专门加载低分辨率图像
+                val blurOpts = BitmapFactory.Options().apply { 
+                    inSampleSize = highQualityOpts.inSampleSize * blurSampleSize
+                    inJustDecodeBounds = false
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
+                
+                Log.d(PERF_TAG, "模糊图像使用采样率: ${blurOpts.inSampleSize} (高质量采样率: ${highQualityOpts.inSampleSize} × 模糊采样: $blurSampleSize)")
+                
+                context.contentResolver.openInputStream(imageUri)?.use { 
+                    blurSourceBitmap = BitmapFactory.decodeStream(it, null, blurOpts) 
+                }
+                
+                if (blurSourceBitmap != null) {
+                    // 创建高质量无模糊的滚动背景
+                    scrollingBackground = prepareScrollingBitmap(sourceSampled, targetScreenWidth, targetScreenHeight)
+                    
+                    // 直接在低分辨率图上应用模糊，然后缩放到目标尺寸
+                    val blurStartTime = SystemClock.elapsedRealtime()
+                    
+                    // 对低分辨率图直接应用模糊
+                    val blurredLowRes = blurBitmapUsingRenderScript(context, blurSourceBitmap, blurRadiusForBackground, blurIterations)
+                      if (blurredLowRes != null) {
+                        // 不进行放大，直接使用低分辨率模糊图像
+                        blurredBackground = blurredLowRes
+                        Log.d(TAG, "loadAndProcessInitialBitmaps: 使用低分辨率模糊图像，跳过放大步骤")
+                    }
+                    
+                    val totalBlurTime = SystemClock.elapsedRealtime() - blurStartTime
+                    Log.d(PERF_TAG, "优化的模糊处理总耗时: ${totalBlurTime}ms")
+                } else {
+                    Log.w(TAG, "Failed to load low resolution bitmap for blur, falling back to standard method")
+                    // 如果低分辨率图加载失败，回退到标准方法
+                    val (scrolling, blurred) = prepareScrollingAndBlurredBitmaps(
+                        context, sourceSampled, targetScreenWidth, targetScreenHeight, 
+                        blurRadiusForBackground, blurDownscaleFactor, blurIterations
+                    )
+                    scrollingBackground = scrolling
+                    blurredBackground = blurred
+                }
+            } else {
+                // 如果不需要模糊效果，只准备滚动背景
+                scrollingBackground = prepareScrollingBitmap(sourceSampled, targetScreenWidth, targetScreenHeight)
+            }
+
+            // 清理临时资源
+            blurSourceBitmap?.recycle()
+            
+            return WallpaperBitmaps(sourceSampled, topCropped, scrollingBackground, blurredBackground)
+        } catch (e: Exception) { 
+            Log.e(TAG, "Error loadAndProcessInitialBitmaps $imageUri", e)
+            sourceSampled?.recycle()
+            blurSourceBitmap?.recycle()
+            return WallpaperBitmaps(null, null, null, null) 
+        }
+    }
+    
+    // 辅助方法：只准备滚动背景（不包含模糊处理）
+    private fun prepareScrollingBitmap(
+        sourceBitmap: Bitmap?, targetScreenWidth: Int, targetScreenHeight: Int
+    ): Bitmap? {
+        if (sourceBitmap == null || sourceBitmap.isRecycled) return null
+        if (targetScreenWidth <= 0 || targetScreenHeight <= 0) return null
+        
+        val originalBitmapWidth = sourceBitmap.width.toFloat()
+        val originalBitmapHeight = sourceBitmap.height.toFloat()
+        
+        if (originalBitmapWidth <= 0 || originalBitmapHeight <= 0) return null
+        
+        val scaleToFitScreenHeight = targetScreenHeight / originalBitmapHeight
+        val scaledWidthForScrollingBg = (originalBitmapWidth * scaleToFitScreenHeight).roundToInt()
+        
+        if (scaledWidthForScrollingBg <= 0) return null
+        
+        return try {
+            Bitmap.createScaledBitmap(
+                sourceBitmap,
+                scaledWidthForScrollingBg,
+                targetScreenHeight,
+                true
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in prepareScrollingBitmap", e)
+            null
+        }
     }
 
     private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
@@ -422,27 +661,69 @@ object SharedWallpaperRenderer {
             while (halfH / sample >= reqHeight && halfW / sample >= reqWidth) { sample *= 2; if (sample > 8) break }
         }
         return sample
-    }
-
-    private fun blurBitmapUsingRenderScript(context: Context, bitmap: Bitmap, radius: Float, iterations: Int = 1): Bitmap? {
+    }    private fun blurBitmapUsingRenderScript(context: Context, bitmap: Bitmap, radius: Float, iterations: Int = 1): Bitmap? {
         if (bitmap.isRecycled || bitmap.width == 0 || bitmap.height == 0) return null
         val cRadius = radius.coerceIn(0.1f, 25.0f); val actualIter = iterations.coerceAtLeast(1)
         if (cRadius < 0.1f && actualIter == 1) { try { return bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true) } catch (e: Exception) { Log.e(TAG, "Fail copy no-blur", e); return null } }
         var rs: RenderScript? = null; var script: ScriptIntrinsicBlur? = null
         var currentBmp: Bitmap = bitmap; var outBmp: Bitmap? = null
+        
+        // 模糊过程中的详细计时 (不输出详细log，仅在汇总时使用)
+        val blurDetailStartTime = SystemClock.elapsedRealtime()
+        var scriptInitTime = 0L
+        var iterationTimes = mutableListOf<Long>()
+        
         try {
-            rs = RenderScript.create(context); script = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs)); script.setRadius(cRadius)
+            val rsStartTime = SystemClock.elapsedRealtime()
+            rs = RenderScript.create(context); 
+            script = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs)); 
+            script.setRadius(cRadius)
+            scriptInitTime = SystemClock.elapsedRealtime() - rsStartTime
+            
             for (i in 0 until actualIter) {
+                val iterStartTime = SystemClock.elapsedRealtime()
                 outBmp = Bitmap.createBitmap(currentBmp.width, currentBmp.height, currentBmp.config ?: Bitmap.Config.ARGB_8888)
                 val ain = Allocation.createFromBitmap(rs, currentBmp); val aout = Allocation.createFromBitmap(rs, outBmp)
                 script.setInput(ain); script.forEach(aout); aout.copyTo(outBmp)
                 ain.destroy(); aout.destroy()
                 if (currentBmp != bitmap && currentBmp != outBmp) currentBmp.recycle()
                 currentBmp = outBmp!!
+                iterationTimes.add(SystemClock.elapsedRealtime() - iterStartTime)
             }
+            
+            // 不再单独输出模糊详细统计信息，改为在汇总统计时处理
+            
             return currentBmp
-        } catch (e: Exception) { Log.e(TAG, "RS blur fail", e); outBmp?.recycle(); if (currentBmp != bitmap && currentBmp != outBmp) currentBmp.recycle(); return null
-        } finally { script?.destroy(); rs?.destroy() }
+        } catch (e: Exception) { 
+            Log.e(TAG, "RS blur fail", e); 
+            outBmp?.recycle(); 
+            if (currentBmp != bitmap && currentBmp != outBmp) currentBmp.recycle(); 
+            return null
+        } finally { 
+            script?.destroy(); 
+            rs?.destroy() 
+        }
+    }
+
+    // 输出性能统计汇总数据
+    private fun outputPerformanceStats() {
+        val sb = StringBuilder()
+        sb.append("【模糊性能汇总统计】共${blurTestCounter}次测试\n")
+        sb.append("降采样阶段: ${totalDownscaleTimeStats}\n")
+        sb.append("模糊处理阶段: ${totalBlurTimeStats}\n")
+        sb.append("放大处理阶段: ${totalUpscaleTimeStats}\n")
+        sb.append("总处理时间: ${totalProcessTimeStats}")
+        
+        Log.d(PERF_TAG, sb.toString())
+    }
+    
+    // 重置性能统计数据
+    private fun resetPerformanceStats() {
+        blurTestCounter = 0
+        totalDownscaleTimeStats.reset()
+        totalBlurTimeStats.reset()
+        totalUpscaleTimeStats.reset()
+        totalProcessTimeStats.reset()
     }
 
     fun drawPlaceholder(canvas: Canvas, width: Int, height: Int, text: String) {

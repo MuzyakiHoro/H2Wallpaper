@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import kotlinx.coroutines.channels.Channel
 
 
 // --- 数据模型 ---
@@ -125,7 +126,7 @@ fun ConfigSheetContent(
     val isP1EditMode by viewModel.isP1EditMode.observeAsState(initial = false)
     val showCustomColorSliders by viewModel.showCustomColorSliders.collectAsState()
 
-    // 是否处于某种“编辑锁定”模式 (P1编辑 或 颜色滑块编辑)
+    // 是否处于某种"编辑锁定"模式 (P1编辑 或 颜色滑块编辑)
     val isEditingLocked = isP1EditMode || showCustomColorSliders
 
     Column(
@@ -183,7 +184,7 @@ fun ConfigSheetContent(
                     Toast.makeText(context, "请先完成P1图片调整", Toast.LENGTH_SHORT).show()
                     return@SubCategoryDisplayArea
                 }
-                // 如果颜色滑块显示，只允许通过点击“背景颜色”卡片来关闭它
+                // 如果颜色滑块显示，只允许通过点击"背景颜色"卡片来关闭它
                 if (showCustomColorSliders && subCategory.id != "sub_bg_color") {
                     Toast.makeText(context, "请先完成背景颜色调整", Toast.LENGTH_SHORT).show()
                     return@SubCategoryDisplayArea
@@ -309,8 +310,8 @@ fun PresetColorPalette(viewModel: MainViewModel) {
         contentPadding = PaddingValues(horizontal = 0.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        // “自定义”按钮，现在通过SubCategoryDisplayArea的"sub_bg_color"卡片触发自定义滑块区
-        // 所以这里不再需要单独的“自定义”按钮。
+        // "自定义"按钮，现在通过SubCategoryDisplayArea"sub_bg_color"卡片触发自定义滑块区
+        // 所以这里不再需要单独的"自定义"按钮。
 
         if (colorPalette.isNotEmpty()) {
             items(colorPalette) { colorIntValue ->
@@ -564,6 +565,49 @@ fun ParameterAdjustmentSection(
         )
     }
 
+    // 添加节流状态
+    var lastUpdateTime by remember { mutableStateOf(0L) }
+    val isBlurParam = keyOfParam == WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS ||
+            keyOfParam == WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR ||
+            keyOfParam == WallpaperConfigConstants.KEY_BLUR_ITERATIONS
+    val throttleInterval = 16.67f // 约16.67ms，对应60fps
+
+    // 创建模糊参数更新的Channel
+    val blurUpdateChannel = remember { Channel<Float>(Channel.CONFLATED) }
+    
+    // 启动模糊参数处理的专用协程
+    LaunchedEffect(blurUpdateChannel) {
+        var lastProcessedValue: Float? = null
+        var processingStartTime: Long = 0
+        
+        while (true) {
+            val newValue = blurUpdateChannel.receive()
+            val currentTime = System.currentTimeMillis()
+            
+            // 如果处理时间超过2秒，丢弃所有待处理的值，直接处理最新值
+            if (lastProcessedValue != null && currentTime - processingStartTime > 2000) {
+                Log.d("BlurUpdate", "Processing timeout, discarding all pending values and processing latest value")
+                // 清空channel中的所有待处理值
+                while (blurUpdateChannel.tryReceive().isSuccess) {
+                    // 继续尝试接收直到channel为空
+                }
+                // 重置处理状态
+                lastProcessedValue = null
+            }
+            
+            if (newValue != lastProcessedValue) {
+                processingStartTime = currentTime
+                try {
+                    val actualParamValue = mapSliderPositionToActualValue(keyOfParam, newValue)
+                    viewModel.updateAdvancedSettingRealtime(keyOfParam, actualParamValue)
+                    lastProcessedValue = newValue
+                } catch (e: Exception) {
+                    Log.e("BlurUpdate", "Error processing blur update", e)
+                }
+            }
+        }
+    }
+
     val displayValueString = remember(keyOfParam, currentSliderPosition) {
         val actualVal = mapSliderPositionToActualValue(keyOfParam, currentSliderPosition)
         if (keyOfParam == WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY ||
@@ -597,8 +641,19 @@ fun ParameterAdjustmentSection(
             value = currentSliderPosition,
             onValueChange = { newSliderPos ->
                 currentSliderPosition = newSliderPos
-                val actualParamValue = mapSliderPositionToActualValue(keyOfParam, newSliderPos)
-                viewModel.updateAdvancedSettingRealtime(keyOfParam, actualParamValue)
+                val currentTime = System.currentTimeMillis()
+                
+                // 对于模糊参数，使用Channel发送更新
+                if (isBlurParam) {
+                    if (currentTime - lastUpdateTime >= throttleInterval) {
+                        blurUpdateChannel.trySend(newSliderPos)
+                        lastUpdateTime = currentTime
+                    }
+                } else {
+                    // 非模糊参数保持实时更新
+                    val actualParamValue = mapSliderPositionToActualValue(keyOfParam, newSliderPos)
+                    viewModel.updateAdvancedSettingRealtime(keyOfParam, actualParamValue)
+                }
             },
             valueRange = 0f..1f,
             steps = getStepsForParam(keyOfParam),
@@ -635,7 +690,7 @@ fun getMinRawValueForParam(paramKey: String): Float {
         WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> 0.01f
         WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> 0.0f
         WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> 0f
-        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> 0.05f
+        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> 0.01f
         WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> 1f
         WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> 0f
         WallpaperConfigConstants.KEY_P1_SHADOW_DX -> -20f
@@ -652,7 +707,7 @@ fun getMaxRawValueForParam(paramKey: String): Float {
         WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> 1.0f
         WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> 1.0f
         WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> 25f
-        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> 1.0f
+        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> 0.5f
         WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> 3f
         WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> 20f
         WallpaperConfigConstants.KEY_P1_SHADOW_DX -> 20f
@@ -671,7 +726,7 @@ fun getStepsForParam(paramKey: String): Int {
         WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> { minRawInt = 1; maxRawInt = 100 } // 0.01 to 1.0, step 0.01
         WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> { minRawInt = 0; maxRawInt = 10 } // 0.0 to 1.0, step 0.1
         WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> { minRawInt = 0; maxRawInt = 25 } // step 1
-        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> { minRawInt = 5; maxRawInt = 100 } // 0.05 to 1.0, step 0.01 (map to 5-100)
+        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> { minRawInt = 1; maxRawInt = 50 } // 0.01 to 0.5, step 0.01 (map to 1-50)
         WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> { minRawInt = 1; maxRawInt = 3 } // step 1
         WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> { minRawInt = 0; maxRawInt = 20 } // step 1
         WallpaperConfigConstants.KEY_P1_SHADOW_DX -> { minRawInt = -20; maxRawInt = 20 } // step 1
