@@ -876,50 +876,36 @@ class WallpaperPreviewView @JvmOverloads constructor(
         val oldBgBlurDF = this.currentBlurDownscaleFactor
         val oldBgBlurIt = this.currentBlurIterations
         val oldP1ImageBottomFadeHeight = this.currentP1ImageBottomFadeHeight
+        val oldP1ShadowRadius = this.currentP1ShadowRadius
+        val oldP1ShadowDx = this.currentP1ShadowDx
+        val oldP1ShadowDy = this.currentP1ShadowDy
 
-        this.currentScrollSensitivity = scrollSensitivity.coerceIn(0.1f, 5.0f)
-        this.currentP1OverlayFadeRatio = p1OverlayFadeRatio.coerceIn(0.01f, 1.0f)
-        this.currentP2BackgroundFadeInRatio = p2BackgroundFadeInRatio.coerceIn(0.0f, 1.0f)
-        this.currentBackgroundBlurRadius = backgroundBlurRadius.coerceIn(0f, 50f)
+        this.currentScrollSensitivity = scrollSensitivity
+        this.currentP1OverlayFadeRatio = p1OverlayFadeRatio
+        this.currentBackgroundBlurRadius = backgroundBlurRadius
         this.currentSnapAnimationDurationMs = snapAnimationDurationMs
-        this.currentNormalizedInitialBgScrollOffset = normalizedInitialBgScrollOffset.coerceIn(0f, 1f)
-        this.currentBlurDownscaleFactor = blurDownscaleFactor.coerceIn(0.05f, 1.0f)
-        this.currentBlurIterations = blurIterations.coerceIn(1, 3)
-        this.currentP1ShadowRadius = p1ShadowRadius.coerceIn(0f, 50f)
-        this.currentP1ShadowDx = p1ShadowDx.coerceIn(-50f, 50f)
-        this.currentP1ShadowDy = p1ShadowDy.coerceIn(-50f, 50f)
+        this.currentNormalizedInitialBgScrollOffset = normalizedInitialBgScrollOffset
+        this.currentP2BackgroundFadeInRatio = p2BackgroundFadeInRatio
+        this.currentBlurDownscaleFactor = blurDownscaleFactor
+        this.currentBlurIterations = blurIterations
+        this.currentP1ShadowRadius = p1ShadowRadius
+        this.currentP1ShadowDx = p1ShadowDx
+        this.currentP1ShadowDy = p1ShadowDy
         this.currentP1ShadowColor = p1ShadowColor
-        this.currentP1ImageBottomFadeHeight = p1ImageBottomFadeHeight.coerceAtLeast(0f)
+        this.currentP1ImageBottomFadeHeight = p1ImageBottomFadeHeight
 
-        // 检测底部融入参数变化并快速更新视图
-        if (oldP1ImageBottomFadeHeight != this.currentP1ImageBottomFadeHeight) {
-            invalidate() // 立即请求重绘，不走复杂的更新流程
-            return
-        }
+        // 检测需要快速更新的参数变化
+        val needsImmediateUpdate = oldP1ImageBottomFadeHeight != p1ImageBottomFadeHeight ||
+                oldP1ShadowRadius != p1ShadowRadius ||
+                oldP1ShadowDx != p1ShadowDx ||
+                oldP1ShadowDy != p1ShadowDy
 
-        val blurParamsChanged = oldBgBlurR != this.currentBackgroundBlurRadius ||
-                oldBgBlurDF != this.currentBlurDownscaleFactor ||
-                oldBgBlurIt != this.currentBlurIterations
-
-        if (this.imageUri != null) {
-            if (blurParamsChanged && wallpaperBitmaps?.scrollingBackgroundBitmap != null) {
-                // 如果只有模糊参数变了，并且我们有未模糊的滚动背景图，尝试只更新模糊
-                Log.d(TAG, "setConfigValues: Only blur params changed, attempting to update blur for preview.")
-                updateOnlyBlurredBackgroundForPreviewAsync()
-            } else if (wallpaperBitmaps?.sourceSampledBitmap == null || blurParamsChanged /*如果其他参数也可能触发重载*/) {
-                // 如果没有源图，或者其他参数也变了，或者无法单独更新模糊，则完整重载
-                Log.d(TAG, "setConfigValues: Conditions require full bitmap reload for preview.")
-                loadFullBitmapsFromUri(this.imageUri, true) // forceInternalReload = true
-            } else {
-                // 其他参数变了，但可能只需要重绘或更新P1顶图
-                if (!isInP1EditMode && !isTransitioningFromEditMode && wallpaperBitmaps?.sourceSampledBitmap != null) {
-                    updateOnlyPage1TopCroppedBitmap(nonEditModePage1ImageHeightRatio, wallpaperBitmaps!!.sourceSampledBitmap!!, this.currentP1ContentScaleFactor)
-                } else {
-                    invalidate()
-                }
-            }
+        if (needsImmediateUpdate) {
+            // 如果需要快速更新，直接刷新视图
+            invalidate()
         } else {
-            invalidate() // 没有图片，只重绘占位符
+            // 其他参数变化使用节流更新
+            attemptThrottledP1ConfigUpdate()
         }
     }
 

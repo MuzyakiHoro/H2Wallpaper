@@ -629,6 +629,11 @@ fun ParameterAdjustmentSection(
                     val actualValue = mapSliderPositionToActualValue(keyOfParam, newPosition)
                     viewModel.updateAdvancedSettingRealtime(keyOfParam, actualValue)
                 },
+                onValueChangeFinished = {
+                    // 滑动结束时，确保最终值被处理
+                    val finalValue = mapSliderPositionToActualValue(keyOfParam, currentSliderPosition)
+                    viewModel.updateAdvancedSettingRealtime(keyOfParam, finalValue)
+                },
                 valueRange = 0f..1f,
                 colors = SliderDefaults.colors(
                     thumbColor = Color.White,
