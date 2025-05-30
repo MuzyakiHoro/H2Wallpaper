@@ -18,11 +18,9 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToInt
 
 // 导入 WallpaperConfigConstants 对象
-import com.example.h2wallpaper.WallpaperConfigConstants
 import kotlinx.coroutines.cancel
 
 /**
@@ -117,6 +115,28 @@ class H2WallpaperService : WallpaperService() {
         private var currentP1ImageBottomFadeHeight: Float = WallpaperConfigConstants.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT
         /** 当前图片内容的版本号，用于检测配置的实质性变化。*/
         private var currentImageContentVersion: Long = WallpaperConfigConstants.DEFAULT_IMAGE_CONTENT_VERSION
+
+        // --- New Style Parameters ---
+        /** P1 样式类型。*/
+        private var currentP1StyleType: Int = WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE
+        /** 样式 B 蒙版 Alpha 值。*/
+        private var currentStyleBMaskAlpha: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_MASK_ALPHA
+        /** 样式 B 旋转参数 A。*/
+        private var currentStyleBRotationParamA: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_ROTATION_PARAM_A
+        /** 样式 B 间隙大小比例。*/
+        private var currentStyleBGapSizeRatio: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_GAP_SIZE_RATIO
+        /** 样式 B 间隙 Y 位置比例。*/
+        private var currentStyleBGapPositionYRatio: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_GAP_POSITION_Y_RATIO
+        /** 样式 B 上蒙版最大旋转角度。*/
+        private var currentStyleBUpperMaskMaxRotation: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_UPPER_MASK_MAX_ROTATION
+        /** 样式 B 下蒙版最大旋转角度。*/
+        private var currentStyleBLowerMaskMaxRotation: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_LOWER_MASK_MAX_ROTATION
+        /** 样式 B P1 焦点 X。*/
+        private var currentStyleBP1FocusX: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_X
+        /** 样式 B P1 焦点 Y。*/
+        private var currentStyleBP1FocusY: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_Y
+        /** 样式 B P1 缩放因子。*/
+        private var currentStyleBP1ScaleFactor: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_P1_SCALE_FACTOR
         // ---
 
         /** 启动器报告的实际页面数量，用于更精确的滚动计算。*/
@@ -184,6 +204,18 @@ class H2WallpaperService : WallpaperService() {
             val oldBlurDownscaleFactor = currentBlurDownscaleFactor
             val oldBlurIterations = currentBlurIterations
 
+            // Save old values of new style parameters
+            val oldP1StyleType = currentP1StyleType
+            val oldStyleBMaskAlpha = currentStyleBMaskAlpha
+            val oldStyleBRotationParamA = currentStyleBRotationParamA
+            val oldStyleBGapSizeRatio = currentStyleBGapSizeRatio
+            val oldStyleBGapPositionYRatio = currentStyleBGapPositionYRatio
+            val oldStyleBUpperMaskMaxRotation = currentStyleBUpperMaskMaxRotation
+            val oldStyleBLowerMaskMaxRotation = currentStyleBLowerMaskMaxRotation
+            val oldStyleBP1FocusX = currentStyleBP1FocusX
+            val oldStyleBP1FocusY = currentStyleBP1FocusY
+            val oldStyleBP1ScaleFactor = currentStyleBP1ScaleFactor
+
             loadPreferencesFromStorage() // 重新从 SharedPreferences 加载所有当前配置
 
             // 优先检查图片内容版本号的变化，它通常指示了需要视觉更新
@@ -233,6 +265,33 @@ class H2WallpaperService : WallpaperService() {
                             oldBlurDownscaleFactor != currentBlurDownscaleFactor ||
                             oldBlurIterations != currentBlurIterations) {
                             needsOnlyBlurUpdate = true
+                        }
+                    }
+                    // New style parameters change detection
+                    WallpaperConfigConstants.KEY_P1_STYLE_TYPE,
+                    WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA,
+                    WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A,
+                    WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO,
+                    WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO,
+                    WallpaperConfigConstants.KEY_STYLE_B_UPPER_MASK_MAX_ROTATION,
+                    WallpaperConfigConstants.KEY_STYLE_B_LOWER_MASK_MAX_ROTATION,
+                    WallpaperConfigConstants.KEY_STYLE_B_P1_FOCUS_X,
+                    WallpaperConfigConstants.KEY_STYLE_B_P1_FOCUS_Y,
+                    WallpaperConfigConstants.KEY_STYLE_B_P1_SCALE_FACTOR -> {
+                        if (oldP1StyleType != currentP1StyleType ||
+                            oldStyleBMaskAlpha != currentStyleBMaskAlpha ||
+                            oldStyleBRotationParamA != currentStyleBRotationParamA ||
+                            oldStyleBGapSizeRatio != currentStyleBGapSizeRatio ||
+                            oldStyleBGapPositionYRatio != currentStyleBGapPositionYRatio ||
+                            oldStyleBUpperMaskMaxRotation != currentStyleBUpperMaskMaxRotation ||
+                            oldStyleBLowerMaskMaxRotation != currentStyleBLowerMaskMaxRotation ||
+                            oldStyleBP1FocusX != currentStyleBP1FocusX ||
+                            oldStyleBP1FocusY != currentStyleBP1FocusY ||
+                            oldStyleBP1ScaleFactor != currentStyleBP1ScaleFactor) {
+                            // If no major visual change is already flagged, mark for redraw
+                            if (!needsFullReload && !needsP1TopUpdate && !needsOnlyBlurUpdate) {
+                                needsRedrawOnly = true
+                            }
                         }
                     }
                     // 其他任何参数变化都至少需要重绘
@@ -377,7 +436,19 @@ class H2WallpaperService : WallpaperService() {
             currentP1ImageBottomFadeHeight = preferencesRepository.getP1ImageBottomFadeHeight() //
             currentImageContentVersion = preferencesRepository.getImageContentVersion() //
 
-            Log.i(DEBUG_TAG, "Prefs loaded (Service): URI=$imageUriString, P1H=$page1ImageHeightRatio, P1F=(${currentP1FocusX},${currentP1FocusY}), P1S=$currentP1ContentScaleFactor, Version=$currentImageContentVersion")
+            // Load new style parameters
+            currentP1StyleType = preferencesRepository.getP1StyleType()
+            currentStyleBMaskAlpha = preferencesRepository.getStyleBMaskAlpha()
+            currentStyleBRotationParamA = preferencesRepository.getStyleBRotationParamA()
+            currentStyleBGapSizeRatio = preferencesRepository.getStyleBGapSizeRatio()
+            currentStyleBGapPositionYRatio = preferencesRepository.getStyleBGapPositionYRatio()
+            currentStyleBUpperMaskMaxRotation = preferencesRepository.getStyleBUpperMaskMaxRotation()
+            currentStyleBLowerMaskMaxRotation = preferencesRepository.getStyleBLowerMaskMaxRotation()
+            currentStyleBP1FocusX = preferencesRepository.getStyleBP1FocusX()
+            currentStyleBP1FocusY = preferencesRepository.getStyleBP1FocusY()
+            currentStyleBP1ScaleFactor = preferencesRepository.getStyleBP1ScaleFactor()
+
+            Log.i(DEBUG_TAG, "Prefs loaded (Service): URI=$imageUriString, P1H=$page1ImageHeightRatio, P1F=(${currentP1FocusX},${currentP1FocusY}), P1S=$currentP1ContentScaleFactor, Version=$currentImageContentVersion, P1Style=$currentP1StyleType")
         }
 
         /**
@@ -702,7 +773,19 @@ class H2WallpaperService : WallpaperService() {
                             p1ShadowDx = this.currentP1ShadowDx,
                             p1ShadowDy = this.currentP1ShadowDy,
                             p1ShadowColor = this.currentP1ShadowColor,
-                            p1ImageBottomFadeHeight = this.currentP1ImageBottomFadeHeight
+                            p1ImageBottomFadeHeight = this.currentP1ImageBottomFadeHeight,
+                            // 更新为使用引擎的成员变量
+                            p1StyleType = currentP1StyleType,
+                            styleBMaskAlpha = currentStyleBMaskAlpha,
+                            styleBRotationParamA = currentStyleBRotationParamA,
+                            styleBGapSizeRatio = currentStyleBGapSizeRatio,
+                            styleBGapPositionYRatio = currentStyleBGapPositionYRatio,
+                            styleBUpperMaskMaxRotation = currentStyleBUpperMaskMaxRotation,
+                            styleBLowerMaskMaxRotation = currentStyleBLowerMaskMaxRotation,
+                            styleBP1FocusX = currentStyleBP1FocusX,
+                            styleBP1FocusY = currentStyleBP1FocusY,
+                            styleBP1ScaleFactor = currentStyleBP1ScaleFactor
+                            // 确保没有遗漏 WallpaperConfig 中定义的其他参数
                         )
                         // 调用共享渲染器绘制完整的一帧
                         SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps) //

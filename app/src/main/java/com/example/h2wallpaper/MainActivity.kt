@@ -4,11 +4,9 @@ import android.Manifest
 import android.app.Activity
 import android.app.WallpaperManager
 import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color // Android Graphics Color
-import android.net.Uri
+// import android.graphics.Color // Android Graphics Color - 如果未使用则移除
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -24,432 +22,452 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import com.example.h2wallpaper.ui.theme.H2WallpaperTheme
-// import com.google.android.material.floatingactionbutton.FloatingActionButton // 未使用，可以移除
 // import com.example.h2wallpaper.WallpaperPreferencesRepository // 通常通过ViewModel访问
 
 /**
  * 应用的主 Activity，作为用户配置动态壁纸的界面。
- * 它包含一个 [WallpaperPreviewView] 用于实时预览壁纸效果，
- * 以及一个通过 [ComposeView] 实现的底部配置面板 ([ConfigBottomSheetContainer])。
- * Activity 实现了 [MainActivityActions] 接口，以供 Compose UI 回调执行特定操作。
+ * (原有注释保持不变)
  */
 class MainActivity : AppCompatActivity(), MainActivityActions {
 
-    /** 用于显示图片加载进度的 ProgressBar。*/
-    private lateinit var imageLoadingProgressBar: ProgressBar //
-    /** 自定义的壁纸预览 View。*/
-    private lateinit var wallpaperPreviewView: WallpaperPreviewView //
-    /** 用于承载底部配置面板 (Jetpack Compose UI) 的 ComposeView。*/
-    private lateinit var configBottomSheetComposeView: ComposeView //
+    private lateinit var imageLoadingProgressBar: ProgressBar
+    private lateinit var wallpaperPreviewView: WallpaperPreviewView
+    private lateinit var configBottomSheetComposeView: ComposeView
 
-    /** 通过 KTX 扩展委托方式获取 MainViewModel 实例。*/
-    private val mainViewModel: MainViewModel by viewModels() //
+    private val mainViewModel: MainViewModel by viewModels()
 
-    /** 用于访问 SharedPreferences 的仓库实例 (早期可能直接使用，现在主要通过 ViewModel)。*/
-    private lateinit var preferencesRepository: WallpaperPreferencesRepository //
+    // preferencesRepository 现在主要通过 ViewModel 访问，但如果某些旧逻辑仍直接使用，则保留
+    private lateinit var preferencesRepository: WallpaperPreferencesRepository
 
-    /**
-     * ActivityResultLauncher 用于处理从图片选择器返回的结果。
-     * 当用户选择一张图片后，会调用 [MainViewModel.handleImageSelectionResult] 处理。
-     */
+
     private val pickImageLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
-                mainViewModel.handleImageSelectionResult(result.data?.data) //
+                mainViewModel.handleImageSelectionResult(result.data?.data)
             } else {
                 Log.d(TAG, "Image selection cancelled or failed, resultCode: ${result.resultCode}")
-                if (result.resultCode != Activity.RESULT_CANCELED) { // 如果不是用户主动取消
-                    Toast.makeText(this, getString(R.string.image_selection_failed_toast), Toast.LENGTH_SHORT).show() //
+                if (result.resultCode != Activity.RESULT_CANCELED) {
+                    Toast.makeText(this, getString(R.string.image_selection_failed_toast), Toast.LENGTH_SHORT).show()
                 }
             }
         }
 
     companion object {
-        /** 请求读取媒体图片权限的请求码。*/
         private const val PERMISSION_REQUEST_READ_MEDIA_IMAGES = 1001
-        /** MainActivity 的日志标签。*/
         private const val TAG = "H2WallpaperMain"
     }
 
-    /**
-     * Activity 创建时调用。
-     * 初始化视图、设置窗口样式 (沉浸式状态栏/导航栏)、
-     * 初始化 ViewModel 和 SharedPreferences Repository、
-     * 设置 ComposeView 的内容、为 WallpaperPreviewView 设置监听器，
-     * 并开始观察 ViewModel 中的数据变化。
-     * @param savedInstanceState 如果 Activity 被重新创建，此参数包含之前保存的状态。
-     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 配置窗口以实现边到边 (edge-to-edge) 的沉浸式效果
-        WindowCompat.setDecorFitsSystemWindows(window, false) //
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            window.statusBarColor = android.graphics.Color.TRANSPARENT // 状态栏透明
-            window.navigationBarColor = android.graphics.Color.TRANSPARENT // 导航栏透明
+            window.statusBarColor = android.graphics.Color.TRANSPARENT
+            window.navigationBarColor = android.graphics.Color.TRANSPARENT
         }
-        // 设置状态栏和导航栏图标为浅色主题（亮色背景，深色图标）
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             var flags = window.decorView.systemUiVisibility
-            flags = flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR //
+            flags = flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                flags = flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR //
+                flags = flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
             }
             window.decorView.systemUiVisibility = flags
         }
 
-        setContentView(R.layout.activity_main) // 加载 XML 布局
+        setContentView(R.layout.activity_main)
 
-        preferencesRepository = WallpaperPreferencesRepository(applicationContext) // 初始化仓库
+        preferencesRepository = WallpaperPreferencesRepository(applicationContext) // 初始化
 
-        // 获取布局中的 View 实例
-        imageLoadingProgressBar = findViewById(R.id.imageLoadingProgressBar) //
-        wallpaperPreviewView = findViewById(R.id.wallpaperPreviewView) //
-        configBottomSheetComposeView = findViewById(R.id.configBottomSheetComposeView) //
+        imageLoadingProgressBar = findViewById(R.id.imageLoadingProgressBar)
+        wallpaperPreviewView = findViewById(R.id.wallpaperPreviewView)
+        configBottomSheetComposeView = findViewById(R.id.configBottomSheetComposeView)
 
-        // 为 ComposeView 设置其 Compose 内容
         configBottomSheetComposeView.setContent {
-            H2WallpaperTheme { // 应用 Compose 主题
-                ConfigBottomSheetContainer( // 底部配置面板的 Compose UI
+            H2WallpaperTheme {
+                ConfigBottomSheetContainer(
                     viewModel = mainViewModel,
-                    activityActions = this@MainActivity // 将 Activity 作为回调接口传递
+                    activityActions = this@MainActivity
                 )
             }
         }
 
-        // 设置 WallpaperPreviewView 的点击监听器
-        wallpaperPreviewView.setOnClickListener { //
-            Log.d(TAG, "WallpaperPreviewView clicked (MainActivity OnClickListener), toggling config sheet.")
-            mainViewModel.toggleConfigSheetVisibility() // 点击预览视图时，切换底部配置面板的显示状态
+        wallpaperPreviewView.setOnClickListener {
+            Log.d(TAG, "WallpaperPreviewView clicked, toggling config sheet.")
+            mainViewModel.toggleConfigSheetVisibility()
         }
 
-        // 设置 WallpaperPreviewView 的 P1 配置编辑回调监听器
-        wallpaperPreviewView.setOnP1ConfigEditedListener { normX, normY, heightRatio, contentScale -> //
-            mainViewModel.updateP1ConfigRealtime(normX, normY, heightRatio, contentScale) //
+        // P1 编辑回调
+        wallpaperPreviewView.setOnP1ConfigEditedListener { normX, normY, heightRatio, contentScale ->
+            // 根据当前样式类型调用不同的 ViewModel 更新方法
+            if (mainViewModel.p1StyleType.value == 1 /* STYLE_B */) {
+                // 对于样式B，P1编辑调整的是P1独立背景图的焦点和缩放
+                // heightRatio 在样式B中不由手势直接调整
+                mainViewModel.updateStyleBP1Config(normX, normY, contentScale)
+            } else { // STYLE_A
+                mainViewModel.updateP1ConfigRealtime(normX, normY, heightRatio, contentScale)
+            }
         }
-        // 设置 WallpaperPreviewView 的请求动作回调监听器
-        wallpaperPreviewView.setOnRequestActionCallback { action -> //
+        wallpaperPreviewView.setOnRequestActionCallback { action ->
             when (action) {
-                WallpaperPreviewView.PreviewViewAction.REQUEST_CANCEL_P1_EDIT_MODE -> { //
-                    // 如果 PreviewView 请求取消 P1 编辑模式（例如因缺少图片无法进入）
-                    if (mainViewModel.isP1EditMode.value == true) mainViewModel.toggleP1EditMode() //
+                WallpaperPreviewView.PreviewViewAction.REQUEST_CANCEL_P1_EDIT_MODE -> {
+                    if (mainViewModel.isP1EditMode.value == true) mainViewModel.toggleP1EditMode()
                     Toast.makeText(this, "P1编辑已退出", Toast.LENGTH_SHORT).show()
                 }
             }
         }
 
-        observeViewModel() // 开始观察 ViewModel 中的数据变化
-        setupWindowInsets() // 处理窗口边衬区，确保 UI 元素不与系统栏重叠
+        observeViewModel()
+        setupWindowInsets()
     }
 
-    /**
-     * 实现 [MainActivityActions] 接口的方法。
-     * 当底部配置面板中的 "选择图片" 按钮被点击时，由 Compose UI 回调此方法，
-     * 触发检查并请求读取媒体图片的权限。
-     */
     override fun requestReadMediaImagesPermission() {
-        checkAndRequestReadMediaImagesPermission() //
+        checkAndRequestReadMediaImagesPermission()
     }
 
-
-    /**
-     * 实现 [MainActivityActions] 接口的方法。
-     * 当底部配置面板中的 "应用壁纸" 按钮被点击时，由 Compose UI 回调此方法。
-     * 此方法会检查是否已选择图片，如果是，则尝试启动系统的动态壁纸设置流程，
-     * 将本应用的 [H2WallpaperService] 设置为动态壁纸。
-     */
     override fun promptToSetWallpaper() {
-        // 如果当前处于P1编辑模式，则提示用户先完成编辑
         if (mainViewModel.isP1EditMode.value == true) {
             Toast.makeText(this, "请先完成P1编辑", Toast.LENGTH_SHORT).show()
             return
         }
-        // 必须先选择图片才能设置壁纸
         if (mainViewModel.selectedImageUri.value != null) {
-            // 保存任何非位图相关的配置（例如滑块调整的参数），并更新版本号
-            // 以确保壁纸服务能加载到最新的配置。
-            mainViewModel.saveNonBitmapConfigAndUpdateVersion() //
+            mainViewModel.saveNonBitmapConfigAndUpdateVersion() // 确保所有最新配置已写入
             try {
-                val componentName = ComponentName(packageName, H2WallpaperService::class.java.name) //
-                val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER) //
-                intent.putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, componentName) //
-                startActivity(intent) // 启动系统壁纸选择器
-                Toast.makeText(this, getString(R.string.wallpaper_set_prompt_toast), Toast.LENGTH_LONG).show() //
+                val cn = ComponentName(packageName, H2WallpaperService::class.java.name)
+                val i = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER)
+                i.putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, cn)
+                startActivity(i)
+                Toast.makeText(this, getString(R.string.wallpaper_set_prompt_toast), Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
                 Log.e(TAG, "Error trying to set wallpaper", e)
-                Toast.makeText(this, getString(R.string.wallpaper_set_failed_toast, e.message ?: "Unknown error"), Toast.LENGTH_LONG).show() //
+                Toast.makeText(this, getString(R.string.wallpaper_set_failed_toast, e.message ?: "Unknown error"), Toast.LENGTH_LONG).show()
             }
         } else {
-            Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show() //
+            Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
         }
     }
 
     /**
-     * 将 ViewModel 中的高级渲染配置参数同步到 [WallpaperPreviewView]。
-     * 当这些参数通过底部配置面板发生变化时，此方法会被调用（通常通过观察 ViewModel 的 LiveData）。
+     * 将 ViewModel 中的所有相关配置参数同步到 [WallpaperPreviewView]。
+     * 这个方法现在会获取包括样式类型和样式B的参数。
+     * 注意：WallpaperPreviewView.setConfigValues 也需要相应扩展。
      */
     private fun syncPreviewViewWithViewModelConfig() {
         Log.d(TAG, "syncPreviewViewWithViewModelConfig called")
-        // 从 ViewModel 获取各项配置值，如果 ViewModel 中尚未加载，则从 Repository 获取默认值或已存值
-        val scrollSensitivity = mainViewModel.scrollSensitivity.value ?: preferencesRepository.getScrollSensitivity() //
-        val p1OverlayFadeRatio = mainViewModel.p1OverlayFadeRatio.value ?: preferencesRepository.getP1OverlayFadeRatio() //
-        val backgroundBlurRadius = mainViewModel.backgroundBlurRadius.value ?: preferencesRepository.getBackgroundBlurRadius() //
-        val backgroundInitialOffset = mainViewModel.backgroundInitialOffset.value ?: preferencesRepository.getBackgroundInitialOffset() //
-        val p2BackgroundFadeInRatio = mainViewModel.p2BackgroundFadeInRatio.value ?: preferencesRepository.getP2BackgroundFadeInRatio() //
-        val blurDownscaleFactor = mainViewModel.blurDownscaleFactor.value ?: (preferencesRepository.getBlurDownscaleFactor() ) //
-        val blurIterations = mainViewModel.blurIterations.value ?: preferencesRepository.getBlurIterations() //
-        val p1ShadowRadius = mainViewModel.p1ShadowRadius.value ?: preferencesRepository.getP1ShadowRadius() //
-        val p1ShadowDx = mainViewModel.p1ShadowDx.value ?: preferencesRepository.getP1ShadowDx() //
-        val p1ShadowDy = mainViewModel.p1ShadowDy.value ?: preferencesRepository.getP1ShadowDy() //
-        val p1ShadowColorFromRepo = preferencesRepository.getP1ShadowColor() // P1投影颜色直接从Repo获取
-        val p1ImageBottomFadeHeight = mainViewModel.p1ImageBottomFadeHeight.value ?: preferencesRepository.getP1ImageBottomFadeHeight() //
+
+        // 从 ViewModel 获取各项配置值
+        // 样式 A 的 P1 参数
+        val imageHeightRatio = mainViewModel.page1ImageHeightRatio.value ?: WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO
+        val p1FocusX = mainViewModel.p1FocusX.value ?: WallpaperConfigConstants.DEFAULT_P1_FOCUS_X
+        val p1FocusY = mainViewModel.p1FocusY.value ?: WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y
+        val p1ContentScaleFactor = mainViewModel.p1ContentScaleFactor.value ?: WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR
+        val p1ShadowRadius = mainViewModel.p1ShadowRadius.value ?: WallpaperConfigConstants.DEFAULT_P1_SHADOW_RADIUS
+        val p1ShadowDx = mainViewModel.p1ShadowDx.value ?: WallpaperConfigConstants.DEFAULT_P1_SHADOW_DX
+        val p1ShadowDy = mainViewModel.p1ShadowDy.value ?: WallpaperConfigConstants.DEFAULT_P1_SHADOW_DY
+        val p1ImageBottomFadeHeight = mainViewModel.p1ImageBottomFadeHeight.value ?: WallpaperConfigConstants.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT
+
+        // 通用参数
+        val scrollSensitivity = mainViewModel.scrollSensitivity.value ?: WallpaperConfigConstants.DEFAULT_SCROLL_SENSITIVITY
+        val p1OverlayFadeRatio = mainViewModel.p1OverlayFadeRatio.value ?: WallpaperConfigConstants.DEFAULT_P1_OVERLAY_FADE_RATIO
+        val backgroundBlurRadius = mainViewModel.backgroundBlurRadius.value ?: WallpaperConfigConstants.DEFAULT_BACKGROUND_BLUR_RADIUS
+        val backgroundInitialOffset = mainViewModel.backgroundInitialOffset.value ?: WallpaperConfigConstants.DEFAULT_BACKGROUND_INITIAL_OFFSET
+        val p2BackgroundFadeInRatio = mainViewModel.p2BackgroundFadeInRatio.value ?: WallpaperConfigConstants.DEFAULT_P2_BACKGROUND_FADE_IN_RATIO
+        val blurDownscaleFactor = mainViewModel.blurDownscaleFactor.value ?: (WallpaperConfigConstants.DEFAULT_BLUR_DOWNSCALE_FACTOR_INT / 100.0f)
+        val blurIterations = mainViewModel.blurIterations.value ?: WallpaperConfigConstants.DEFAULT_BLUR_ITERATIONS
+        val p1ShadowColorFromRepo = preferencesRepository.getP1ShadowColor() // P1投影颜色通常不常变，可直接从Repo或ViewModel获取
+
+        // 新增：获取样式类型和样式 B 的参数
+        val p1StyleType = mainViewModel.p1StyleType.value ?: WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE
+        val styleBMaskAlpha = mainViewModel.styleBMaskAlpha.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_MASK_ALPHA
+        val styleBRotationParamA = mainViewModel.styleBRotationParamA.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_ROTATION_PARAM_A
+        val styleBGapSizeRatio = mainViewModel.styleBGapSizeRatio.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_GAP_SIZE_RATIO
+        val styleBGapPositionYRatio = mainViewModel.styleBGapPositionYRatio.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_GAP_POSITION_Y_RATIO
+        val styleBUpperMaskMaxRotation = mainViewModel.styleBUpperMaskMaxRotation.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_UPPER_MASK_MAX_ROTATION
+        val styleBLowerMaskMaxRotation = mainViewModel.styleBLowerMaskMaxRotation.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_LOWER_MASK_MAX_ROTATION
+        val styleBP1FocusX = mainViewModel.styleBP1FocusX.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_X
+        val styleBP1FocusY = mainViewModel.styleBP1FocusY.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_Y
+        val styleBP1ScaleFactor = mainViewModel.styleBP1ScaleFactor.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_P1_SCALE_FACTOR
 
         // 调用 WallpaperPreviewView 的 setConfigValues 方法更新其渲染参数
-        wallpaperPreviewView.setConfigValues( //
-            scrollSensitivity = scrollSensitivity,
-            p1OverlayFadeRatio = p1OverlayFadeRatio,
-            backgroundBlurRadius = backgroundBlurRadius,
-            snapAnimationDurationMs = WallpaperConfigConstants.DEFAULT_PREVIEW_SNAP_DURATION_MS, // 使用常量中的默认动画时长
-            normalizedInitialBgScrollOffset = backgroundInitialOffset,
-            p2BackgroundFadeInRatio = p2BackgroundFadeInRatio,
-            blurDownscaleFactor = blurDownscaleFactor,
-            blurIterations = blurIterations,
+        // ** 你需要在 WallpaperPreviewView.kt 中扩展 setConfigValues 方法以接收这些新参数 **
+        wallpaperPreviewView.setConfigValues(
+            // 样式 A 的 P1 参数
+            page1ImageHeightRatio = imageHeightRatio,
+            p1FocusX = p1FocusX, // 样式 A 的焦点X
+            p1FocusY = p1FocusY, // 样式 A 的焦点Y
+            p1ContentScaleFactor = p1ContentScaleFactor, // 样式 A 的缩放
             p1ShadowRadius = p1ShadowRadius,
             p1ShadowDx = p1ShadowDx,
             p1ShadowDy = p1ShadowDy,
             p1ShadowColor = p1ShadowColorFromRepo,
-            p1ImageBottomFadeHeight = p1ImageBottomFadeHeight
+            p1ImageBottomFadeHeight = p1ImageBottomFadeHeight,
+
+            // 通用参数
+            scrollSensitivity = scrollSensitivity,
+            p1OverlayFadeRatio = p1OverlayFadeRatio,
+            backgroundBlurRadius = backgroundBlurRadius,
+            snapAnimationDurationMs = WallpaperConfigConstants.DEFAULT_PREVIEW_SNAP_DURATION_MS,
+            normalizedInitialBgScrollOffset = backgroundInitialOffset,
+            p2BackgroundFadeInRatio = p2BackgroundFadeInRatio,
+            blurDownscaleFactor = blurDownscaleFactor,
+            blurIterations = blurIterations,
+
+            // 新增：传递样式类型和样式 B 的参数
+            p1StyleType = p1StyleType,
+            styleBMaskAlpha = styleBMaskAlpha,
+            styleBRotationParamA = styleBRotationParamA,
+            styleBGapSizeRatio = styleBGapSizeRatio,
+            styleBGapPositionYRatio = styleBGapPositionYRatio,
+            styleBUpperMaskMaxRotation = styleBUpperMaskMaxRotation,
+            styleBLowerMaskMaxRotation = styleBLowerMaskMaxRotation,
+            styleBP1FocusX = styleBP1FocusX,
+            styleBP1FocusY = styleBP1FocusY,
+            styleBP1ScaleFactor = styleBP1ScaleFactor
         )
     }
 
 
-    /**
-     * 设置对 [MainViewModel] 中各项 LiveData 的观察。
-     * 当 ViewModel 中的数据发生变化时，此方法中的观察者会接收到通知，
-     * 并据此更新 UI 或 [WallpaperPreviewView] 的状态。
-     */
     private fun observeViewModel() {
-        // 观察选定图片 URI 的变化
-        mainViewModel.selectedImageUri.observe(this) { uri -> //
-            wallpaperPreviewView.setImageUri(uri, true) // 更新预览视图的图片，并强制重载
-            // 如果 URI 为 null (图片被清除) 且当前在P1编辑模式，则退出编辑模式
+        mainViewModel.selectedImageUri.observe(this) { uri ->
+            wallpaperPreviewView.setImageUri(uri, true)
             if (uri == null && (mainViewModel.isP1EditMode.value == true)) {
-                mainViewModel.toggleP1EditMode() //
+                mainViewModel.toggleP1EditMode()
             }
         }
 
-        // 观察选定背景颜色的变化
-        mainViewModel.selectedBackgroundColor.observe(this) { color -> //
-            wallpaperPreviewView.setSelectedBackgroundColor(color) // 更新预览视图的背景色
+        mainViewModel.selectedBackgroundColor.observe(this) { color ->
+            wallpaperPreviewView.setSelectedBackgroundColor(color)
         }
 
-        // 观察 P1 图片高度比例的变化
-        mainViewModel.page1ImageHeightRatio.observe(this) { ratio -> //
-            // 仅当不在P1编辑模式时，才通过此观察者更新预览视图的高度比例
-            // (在编辑模式下，高度由手势直接在 PreviewView 内部处理，并通过回调更新 ViewModel)
-            if (mainViewModel.isP1EditMode.value != true) {
-                wallpaperPreviewView.setPage1ImageHeightRatio(ratio) //
+        // --- 观察样式 A 的 P1 参数 ---
+        mainViewModel.page1ImageHeightRatio.observe(this) { ratio ->
+            if (mainViewModel.p1StyleType.value == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE && mainViewModel.isP1EditMode.value != true) {
+                wallpaperPreviewView.setPage1ImageHeightRatio(ratio)
+            } else if (mainViewModel.p1StyleType.value == 1 /* STYLE_B */ && mainViewModel.isP1EditMode.value == true) {
+                // 在样式B的P1编辑模式下，高度不由滑块控制，而是手势作用于P1独立背景图的其他参数
             }
         }
-        // 观察 P1 焦点 X 坐标的变化
-        mainViewModel.p1FocusX.observe(this) { focusX -> //
-            if (mainViewModel.isP1EditMode.value != true) {
+        mainViewModel.p1FocusX.observe(this) { focusX ->
+            if (mainViewModel.p1StyleType.value == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE && mainViewModel.isP1EditMode.value != true) {
                 mainViewModel.p1FocusY.value?.let { focusY ->
-                    wallpaperPreviewView.setNormalizedFocus(focusX, focusY) //
+                    wallpaperPreviewView.setNormalizedFocus(focusX, focusY) // 这个方法在PreviewView中可能也需要区分样式
                 }
             }
         }
-        // 观察 P1 焦点 Y 坐标的变化
-        mainViewModel.p1FocusY.observe(this) { focusY -> //
-            if (mainViewModel.isP1EditMode.value != true) {
+        mainViewModel.p1FocusY.observe(this) { focusY ->
+            if (mainViewModel.p1StyleType.value == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE && mainViewModel.isP1EditMode.value != true) {
                 mainViewModel.p1FocusX.value?.let { focusX ->
-                    wallpaperPreviewView.setNormalizedFocus(focusX, focusY) //
+                    wallpaperPreviewView.setNormalizedFocus(focusX, focusY)
                 }
             }
         }
-        // 观察 P1 内容缩放因子的变化
-        mainViewModel.p1ContentScaleFactor.observe(this) { scale -> //
-            if (mainViewModel.isP1EditMode.value != true) {
-                wallpaperPreviewView.setP1ContentScaleFactor(scale) //
+        mainViewModel.p1ContentScaleFactor.observe(this) { scale ->
+            if (mainViewModel.p1StyleType.value == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE && mainViewModel.isP1EditMode.value != true) {
+                wallpaperPreviewView.setP1ContentScaleFactor(scale)
             }
         }
-
-        // 观察所有高级渲染配置参数的变化，并在任一参数变化时同步到 PreviewView
-        mainViewModel.scrollSensitivity.observe(this) { syncPreviewViewWithViewModelConfig() } //
-        mainViewModel.p1OverlayFadeRatio.observe(this) { syncPreviewViewWithViewModelConfig() } //
-        mainViewModel.p2BackgroundFadeInRatio.observe(this) { syncPreviewViewWithViewModelConfig() } //
-        mainViewModel.backgroundInitialOffset.observe(this) { syncPreviewViewWithViewModelConfig() } //
-        mainViewModel.backgroundBlurRadius.observe(this) { syncPreviewViewWithViewModelConfig() } //
-        mainViewModel.blurDownscaleFactor.observe(this) { syncPreviewViewWithViewModelConfig() } //
-        mainViewModel.blurIterations.observe(this) { syncPreviewViewWithViewModelConfig() } //
-        mainViewModel.p1ShadowRadius.observe(this) { syncPreviewViewWithViewModelConfig() } //
-        mainViewModel.p1ShadowDx.observe(this) { syncPreviewViewWithViewModelConfig() } //
-        mainViewModel.p1ShadowDy.observe(this) { syncPreviewViewWithViewModelConfig() } //
-        mainViewModel.p1ImageBottomFadeHeight.observe(this) { syncPreviewViewWithViewModelConfig() } //
+        mainViewModel.p1ShadowRadius.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.p1ShadowDx.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.p1ShadowDy.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.p1ImageBottomFadeHeight.observe(this) { syncPreviewViewWithViewModelConfig() }
 
 
-        // 观察 Toast 消息事件
-        mainViewModel.toastMessage.observe(this) { event -> //
-            event.getContentIfNotHandled()?.let { msgContent -> //确保消息只被显示一次
-                Log.d(TAG, "Toast message content: $msgContent")
+        // --- 观察通用高级设置参数 ---
+        mainViewModel.scrollSensitivity.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.p1OverlayFadeRatio.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.p2BackgroundFadeInRatio.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.backgroundInitialOffset.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.backgroundBlurRadius.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.blurDownscaleFactor.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.blurIterations.observe(this) { syncPreviewViewWithViewModelConfig() }
+
+        // --- 新增：观察 P1 样式类型和样式 B 的参数 ---
+        mainViewModel.p1StyleType.observe(this) { styleType ->
+            Log.d(TAG, "P1 Style Type changed to: $styleType, syncing preview.")
+            syncPreviewViewWithViewModelConfig()
+            // 当样式切换时，如果 P1 编辑模式是激活的，可能需要根据新样式重新初始化 PreviewView 的编辑状态
+            if (mainViewModel.isP1EditMode.value == true) {
+                val imageSelected = mainViewModel.selectedImageUri.value != null
+                if (imageSelected) {
+                    if (styleType == 1 /* STYLE_B */) {
+                        wallpaperPreviewView.setP1FocusEditMode(true,
+                            mainViewModel.styleBP1FocusX.value, mainViewModel.styleBP1FocusY.value,
+                            null, // 样式B的高度不由ratio直接控制
+                            mainViewModel.styleBP1ScaleFactor.value
+                        )
+                    } else { // STYLE_A
+                        wallpaperPreviewView.setP1FocusEditMode(true,
+                            mainViewModel.p1FocusX.value, mainViewModel.p1FocusY.value,
+                            mainViewModel.page1ImageHeightRatio.value, mainViewModel.p1ContentScaleFactor.value
+                        )
+                    }
+                }
+            }
+        }
+        mainViewModel.styleBMaskAlpha.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.styleBRotationParamA.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.styleBGapSizeRatio.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.styleBGapPositionYRatio.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.styleBP1FocusX.observe(this) {
+            // 仅当样式B激活且不在P1编辑模式时，才通过此观察者更新PreviewView的特定参数
+            // (在P1编辑模式下，焦点由手势回调直接处理，然后通过syncPreviewViewWithViewModelConfig整体同步)
+            if (mainViewModel.p1StyleType.value == 1 && mainViewModel.isP1EditMode.value != true) {
+                syncPreviewViewWithViewModelConfig() // 或者调用一个PreviewView的特定方法设置样式B的P1焦点
+            }
+        }
+        mainViewModel.styleBP1FocusY.observe(this) {
+            if (mainViewModel.p1StyleType.value == 1 && mainViewModel.isP1EditMode.value != true) {
+                syncPreviewViewWithViewModelConfig()
+            }
+        }
+        mainViewModel.styleBP1ScaleFactor.observe(this) {
+            if (mainViewModel.p1StyleType.value == 1 && mainViewModel.isP1EditMode.value != true) {
+                syncPreviewViewWithViewModelConfig()
+            }
+        }
+        mainViewModel.styleBUpperMaskMaxRotation.observe(this) { syncPreviewViewWithViewModelConfig() }
+        mainViewModel.styleBLowerMaskMaxRotation.observe(this) { syncPreviewViewWithViewModelConfig() }
+
+
+        mainViewModel.toastMessage.observe(this) { event ->
+            event.getContentIfNotHandled()?.let { msgContent ->
                 Toast.makeText(this, msgContent, Toast.LENGTH_LONG).show()
             }
         }
 
-        // 观察 P1 编辑模式状态的变化
-        mainViewModel.isP1EditMode.observe(this) { isEditing -> //
+        mainViewModel.isP1EditMode.observe(this) { isEditing ->
             Log.d(TAG, "isP1EditMode Observer: isEditing = $isEditing")
-            val imageSelected = mainViewModel.selectedImageUri.value != null // 检查是否已选择图片
-            if (isEditing) { // 如果要进入编辑模式
-                if (imageSelected) { // 必须有图片才能进入编辑
-                    wallpaperPreviewView.setP1FocusEditMode(true, //
-                        mainViewModel.p1FocusX.value, mainViewModel.p1FocusY.value,
-                        mainViewModel.page1ImageHeightRatio.value, mainViewModel.p1ContentScaleFactor.value
-                    )
-                } else { // 没有图片，无法进入编辑，则切回非编辑状态并提示
-                    if (isEditing) mainViewModel.toggleP1EditMode() // 立即切回
-                    Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show() //
+            val imageSelected = mainViewModel.selectedImageUri.value != null
+            val currentStyle = mainViewModel.p1StyleType.value ?: WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE
+
+            if (isEditing) {
+                if (imageSelected) {
+                    if (currentStyle == 1 /* STYLE_B */) {
+                        wallpaperPreviewView.setP1FocusEditMode(true,
+                            mainViewModel.styleBP1FocusX.value,
+                            mainViewModel.styleBP1FocusY.value,
+                            null, // 样式B的高度不由ratio直接控制
+                            mainViewModel.styleBP1ScaleFactor.value
+                        )
+                    } else { // STYLE_A
+                        wallpaperPreviewView.setP1FocusEditMode(true,
+                            mainViewModel.p1FocusX.value,
+                            mainViewModel.p1FocusY.value,
+                            mainViewModel.page1ImageHeightRatio.value,
+                            mainViewModel.p1ContentScaleFactor.value
+                        )
+                    }
+                } else {
+                    if (isEditing) mainViewModel.toggleP1EditMode() // 无法进入编辑则切回
+                    Toast.makeText(this, getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
                 }
-            } else { // 如果要退出编辑模式
-                // 将 ViewModel 中的非编辑模式参数同步到 PreviewView
-                mainViewModel.page1ImageHeightRatio.value?.let { wallpaperPreviewView.setPage1ImageHeightRatio(it) } //
-                mainViewModel.p1FocusX.value?.let { fx ->
-                    mainViewModel.p1FocusY.value?.let { fy -> wallpaperPreviewView.setNormalizedFocus(fx, fy) } //
+            } else { // 退出编辑模式
+                if (currentStyle == 1 /* STYLE_B */) {
+                    // 同步样式B的P1参数到PreviewView (如果PreviewView有特定方法)
+                    // 或者依赖 syncPreviewViewWithViewModelConfig()
+                } else { // STYLE_A
+                    mainViewModel.page1ImageHeightRatio.value?.let { wallpaperPreviewView.setPage1ImageHeightRatio(it) }
+                    mainViewModel.p1FocusX.value?.let { fx ->
+                        mainViewModel.p1FocusY.value?.let { fy -> wallpaperPreviewView.setNormalizedFocus(fx, fy) }
+                    }
+                    mainViewModel.p1ContentScaleFactor.value?.let { wallpaperPreviewView.setP1ContentScaleFactor(it) }
                 }
-                mainViewModel.p1ContentScaleFactor.value?.let { wallpaperPreviewView.setP1ContentScaleFactor(it) } //
-                wallpaperPreviewView.setP1FocusEditMode(false) // 通知 PreviewView 退出编辑模式
+                wallpaperPreviewView.setP1FocusEditMode(false) // 通知PreviewView退出编辑模式
             }
-            // 无论进入还是退出编辑模式，都同步一次所有高级配置到预览视图
-            syncPreviewViewWithViewModelConfig() //
-            // 如果是进入编辑模式且有图片，确保预览视图重绘
+            syncPreviewViewWithViewModelConfig() // 确保所有配置同步
             if (isEditing && imageSelected) {
-                wallpaperPreviewView.invalidate() //
+                wallpaperPreviewView.invalidate()
             }
         }
     }
 
-    /**
-     * 设置窗口边衬区 (Window Insets) 的处理。
-     * 用于确保应用内容能够正确布局在系统栏（状态栏、导航栏）的后面，
-     * 实现边到边 (edge-to-edge) 的沉浸式效果，同时避免内容被系统栏遮挡。
-     * 当前实现中，只是设置了一个监听器，但没有具体调整 padding 的逻辑，
-     * 沉浸式效果主要通过主题和 `WindowCompat.setDecorFitsSystemWindows(window, false)` 实现。
-     */
     private fun setupWindowInsets() {
-        val rootLayoutForInsets: View = findViewById(android.R.id.content) // 获取根视图
-        ViewCompat.setOnApplyWindowInsetsListener(rootLayoutForInsets) { _, insets -> //
-            // val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars()) // 获取系统栏的insets
-            // 此处可以根据 systemBars.top, systemBars.bottom 等调整 View 的 padding
-            // 但当前代码仅返回原始 insets，表示由系统自动处理或由 Compose 的 navigationBarsPadding() 等修饰符处理
+        val rootLayoutForInsets: View = findViewById(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayoutForInsets) { _, insets ->
             insets
         }
     }
 
-    /**
-     * Activity 恢复可见时调用。
-     * 在此方法中，会再次同步 ViewModel 中的配置到 [WallpaperPreviewView]，
-     * 并根据当前的 P1 编辑模式状态和图片选择状态，确保预览视图显示正确。
-     */
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "MainActivity onResume.")
-        syncPreviewViewWithViewModelConfig() // 同步所有高级配置
+        syncPreviewViewWithViewModelConfig() // 确保配置是最新的
 
-        // 根据当前的P1编辑模式状态，正确设置PreviewView的模式和参数
-        if (mainViewModel.isP1EditMode.value == true) { // 如果应处于P1编辑模式
-            if (mainViewModel.selectedImageUri.value != null) { // 且有图片
-                wallpaperPreviewView.setP1FocusEditMode(true, // 进入编辑模式并传入当前参数
-                    mainViewModel.p1FocusX.value, mainViewModel.p1FocusY.value,
-                    mainViewModel.page1ImageHeightRatio.value, mainViewModel.p1ContentScaleFactor.value
-                )
-            } else { // 无图则退出编辑模式
-                mainViewModel.toggleP1EditMode() //
+        val isEditing = mainViewModel.isP1EditMode.value == true
+        val imageSelected = mainViewModel.selectedImageUri.value != null
+        val currentStyle = mainViewModel.p1StyleType.value ?: WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE
+
+        if (isEditing) {
+            if (imageSelected) {
+                if (currentStyle == 1 /* STYLE_B */) {
+                    wallpaperPreviewView.setP1FocusEditMode(true,
+                        mainViewModel.styleBP1FocusX.value, mainViewModel.styleBP1FocusY.value,
+                        null, mainViewModel.styleBP1ScaleFactor.value
+                    )
+                } else { // STYLE_A
+                    wallpaperPreviewView.setP1FocusEditMode(true,
+                        mainViewModel.p1FocusX.value, mainViewModel.p1FocusY.value,
+                        mainViewModel.page1ImageHeightRatio.value, mainViewModel.p1ContentScaleFactor.value
+                    )
+                }
+            } else {
+                mainViewModel.toggleP1EditMode() // 如果不能进入编辑，则退出
             }
-        } else { // 如果不应处于P1编辑模式
-            wallpaperPreviewView.setP1FocusEditMode(false) // 确保退出编辑模式
-            // 将 ViewModel 中的P1相关参数（图片URI、高度、焦点、缩放）同步到PreviewView
-            mainViewModel.selectedImageUri.value?.let { wallpaperPreviewView.setImageUri(it, false) } ?: wallpaperPreviewView.setImageUri(null, false) //
-            mainViewModel.page1ImageHeightRatio.value?.let { wallpaperPreviewView.setPage1ImageHeightRatio(it) } //
-            mainViewModel.p1FocusX.value?.let { fx ->
-                mainViewModel.p1FocusY.value?.let { fy -> wallpaperPreviewView.setNormalizedFocus(fx, fy) } //
+        } else { // 非编辑模式
+            wallpaperPreviewView.setP1FocusEditMode(false)
+            mainViewModel.selectedImageUri.value?.let { wallpaperPreviewView.setImageUri(it, false) } ?: wallpaperPreviewView.setImageUri(null, false)
+
+            if (currentStyle == 1 /* STYLE_B */) {
+                // 对于样式B，高度、焦点、缩放由样式B的参数控制，主要通过syncPreviewViewWithViewModelConfig同步
+                // wallpaperPreviewView.setPage1ImageHeightRatio() 等特定于样式A的方法不应在此处针对样式B调用
+            } else { // STYLE_A
+                mainViewModel.page1ImageHeightRatio.value?.let { wallpaperPreviewView.setPage1ImageHeightRatio(it) }
+                mainViewModel.p1FocusX.value?.let { fx ->
+                    mainViewModel.p1FocusY.value?.let { fy -> wallpaperPreviewView.setNormalizedFocus(fx, fy) }
+                }
+                mainViewModel.p1ContentScaleFactor.value?.let { wallpaperPreviewView.setP1ContentScaleFactor(it) }
             }
-            mainViewModel.p1ContentScaleFactor.value?.let { wallpaperPreviewView.setP1ContentScaleFactor(it) } //
         }
-        // 同步背景色并重绘
-        mainViewModel.selectedBackgroundColor.value?.let { wallpaperPreviewView.setSelectedBackgroundColor(it) } //
-        wallpaperPreviewView.invalidate() // 触发重绘
+        mainViewModel.selectedBackgroundColor.value?.let { wallpaperPreviewView.setSelectedBackgroundColor(it) }
+        wallpaperPreviewView.invalidate()
     }
 
-    /**
-     * 检查并请求读取媒体图片的权限。
-     * 根据 Android 版本，请求 [Manifest.permission.READ_MEDIA_IMAGES] (API 33+)
-     * 或 [Manifest.permission.READ_EXTERNAL_STORAGE] (API 32及以下)。
-     * 如果已有权限，则直接打开图库；否则，发起权限请求。
-     */
     private fun checkAndRequestReadMediaImagesPermission() {
-        // 根据Android版本确定要请求的权限
-        val permissionToRequest = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_IMAGES // API 33+
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE // API 32 及以下
-        }
-        // 检查是否已有权限
+        val permissionToRequest = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
         if (ContextCompat.checkSelfPermission(this, permissionToRequest) != PackageManager.PERMISSION_GRANTED) {
-            // 如果没有权限，则请求权限
-            ActivityCompat.requestPermissions(this, arrayOf(permissionToRequest), PERMISSION_REQUEST_READ_MEDIA_IMAGES) //
+            ActivityCompat.requestPermissions(this, arrayOf(permissionToRequest), PERMISSION_REQUEST_READ_MEDIA_IMAGES)
         } else {
-            // 如果已有权限，则直接打开图库
-            openGallery() //
+            openGallery()
         }
     }
 
-    /**
-     * 处理权限请求的结果。
-     * @param requestCode 请求权限时使用的请求码。
-     * @param permissions 请求的权限数组。
-     * @param grantResults 对应权限的授予结果数组。
-     */
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_REQUEST_READ_MEDIA_IMAGES) { //
-            // 如果请求已授予
+        if (requestCode == PERMISSION_REQUEST_READ_MEDIA_IMAGES) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                openGallery() // 打开图库
-            } else { // 如果权限被拒绝
-                Toast.makeText(this, getString(R.string.permission_needed_toast), Toast.LENGTH_LONG).show() //
+                openGallery()
+            } else {
+                Toast.makeText(this, getString(R.string.permission_needed_toast), Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    /**
-     * 打开系统图库以供用户选择图片。
-     * 使用 [ActivityResultLauncher] (`pickImageLauncher`) 来启动 Intent 并处理返回结果。
-     */
     private fun openGallery() {
-        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI) //
+        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
         try {
-            pickImageLauncher.launch(intent) // 启动图片选择器
+            pickImageLauncher.launch(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch gallery picker", e)
-            Toast.makeText(this, getString(R.string.image_selection_failed_toast), Toast.LENGTH_SHORT).show() //
+            Toast.makeText(this, getString(R.string.image_selection_failed_toast), Toast.LENGTH_SHORT).show()
         }
     }
 
-    /**
-     * 处理用户按下返回键的逻辑。
-     * 优先顺序：
-     * 1. 如果底部配置面板正在显示，则关闭它。
-     * 2. 如果当前处于 P1 编辑模式，则退出编辑模式。
-     * 3. 否则，执行默认的返回操作 (通常是关闭 Activity)。
-     */
     override fun onBackPressed() {
-        if (mainViewModel.showConfigSheet.value) { // 如果配置面板显示
-            mainViewModel.closeConfigSheet() // 关闭配置面板
-        } else if (mainViewModel.isP1EditMode.value == true) { // 如果在P1编辑模式
-            mainViewModel.toggleP1EditMode() // 退出P1编辑模式
+        if (mainViewModel.showConfigSheet.value) {
+            mainViewModel.closeConfigSheet()
+        } else if (mainViewModel.isP1EditMode.value == true) {
+            mainViewModel.toggleP1EditMode()
             Toast.makeText(this, "已退出P1编辑", Toast.LENGTH_SHORT).show()
-        } else { // 否则，执行默认返回操作
+        } else {
             super.onBackPressed()
         }
     }

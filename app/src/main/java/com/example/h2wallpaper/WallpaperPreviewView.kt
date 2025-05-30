@@ -32,15 +32,12 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.coroutineContext
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 
-import com.example.h2wallpaper.WallpaperConfigConstants
 import kotlinx.coroutines.cancel
 
 /**
@@ -127,6 +124,19 @@ class WallpaperPreviewView @JvmOverloads constructor(
     /** P1 层图片底部融入背景的渐变高度 */
     private var currentP1ImageBottomFadeHeight: Float =
         WallpaperConfigConstants.DEFAULT_P1_IMAGE_BOTTOM_FADE_HEIGHT
+
+    // --- 新增 P1 风格参数 ---
+    private var currentP1StyleType: Int = WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE
+    private var currentStyleBMaskAlpha: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_MASK_ALPHA
+    private var currentStyleBRotationParamA: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_ROTATION_PARAM_A
+    private var currentStyleBGapSizeRatio: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_GAP_SIZE_RATIO
+    private var currentStyleBGapPositionYRatio: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_GAP_POSITION_Y_RATIO
+    private var currentStyleBUpperMaskMaxRotation: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_UPPER_MASK_MAX_ROTATION
+    private var currentStyleBLowerMaskMaxRotation: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_LOWER_MASK_MAX_ROTATION
+    private var currentStyleBP1FocusX: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_X
+    private var currentStyleBP1FocusY: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_Y
+    private var currentStyleBP1ScaleFactor: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_P1_SCALE_FACTOR
+    // --- 结束新增 P1 风格参数 ---
 
     /** 持有渲染所需的各种位图资源 */
     private var wallpaperBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
@@ -1352,14 +1362,31 @@ class WallpaperPreviewView @JvmOverloads constructor(
             if (currentWallBitmaps?.sourceSampledBitmap != null) { // 如果有源图
                 // 构建渲染配置对象
                 val config = SharedWallpaperRenderer.WallpaperConfig(
-                    viewWidth, viewHeight, selectedBackgroundColor,
-                    nonEditModePage1ImageHeightRatio, // 使用非编辑模式下的P1高度
-                    currentPreviewXOffset, // 当前页面滚动偏移
-                    numVirtualPages, // 预览的虚拟页数
-                    currentP1OverlayFadeRatio,
-                    currentScrollSensitivity, currentNormalizedInitialBgScrollOffset,
-                    currentP2BackgroundFadeInRatio, currentP1ShadowRadius, currentP1ShadowDx,
-                    currentP1ShadowDy, currentP1ShadowColor, currentP1ImageBottomFadeHeight
+                    viewWidth, viewHeight, selectedBackgroundColor, currentEffectiveP1HeightRatio,
+                    currentPreviewXOffset,
+                    numVirtualPages,
+                    p1OverlayFadeTransitionRatio = currentP1OverlayFadeRatio,
+                    scrollSensitivityFactor = currentScrollSensitivity,
+                    normalizedInitialBgScrollOffset = currentNormalizedInitialBgScrollOffset,
+                    p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio,
+                    p1ShadowRadius = currentP1ShadowRadius,
+                    p1ShadowDx = currentP1ShadowDx,
+                    p1ShadowDy = currentP1ShadowDy,
+                    p1ShadowColor = currentP1ShadowColor,
+                    p1ImageBottomFadeHeight = currentP1ImageBottomFadeHeight,
+
+                    // 更新为使用 WallpaperPreviewView 的成员变量
+                    p1StyleType = currentP1StyleType, // 使用 this.currentP1StyleType
+                    styleBMaskAlpha = currentStyleBMaskAlpha, // 使用 this.currentStyleBMaskAlpha
+                    styleBRotationParamA = currentStyleBRotationParamA, // 使用 this.currentStyleBRotationParamA
+                    styleBGapSizeRatio = currentStyleBGapSizeRatio, // 使用 this.currentStyleBGapSizeRatio
+
+                    styleBGapPositionYRatio = currentStyleBGapPositionYRatio, // 使用 this.currentStyleBGapPositionYRatio
+                    styleBUpperMaskMaxRotation = currentStyleBUpperMaskMaxRotation, // 使用 this.currentStyleBUpperMaskMaxRotation
+                    styleBLowerMaskMaxRotation = currentStyleBLowerMaskMaxRotation, // 使用 this.currentStyleBLowerMaskMaxRotation
+                    styleBP1FocusX = currentStyleBP1FocusX, // 使用 this.currentStyleBP1FocusX
+                    styleBP1FocusY = currentStyleBP1FocusY, // 使用 this.currentStyleBP1FocusY
+                    styleBP1ScaleFactor = currentStyleBP1ScaleFactor // 使用 this.currentStyleBP1ScaleFactor
                 )
                 // 调用共享渲染器绘制完整的一帧预览
                 SharedWallpaperRenderer.drawFrame(canvas, config, currentWallBitmaps)
@@ -1397,11 +1424,33 @@ class WallpaperPreviewView @JvmOverloads constructor(
      * @param p1ImageBottomFadeHeight P1 图片底部融入高度。
      */
     fun setConfigValues(
-        scrollSensitivity: Float, p1OverlayFadeRatio: Float, backgroundBlurRadius: Float,
-        snapAnimationDurationMs: Long, normalizedInitialBgScrollOffset: Float,
-        p2BackgroundFadeInRatio: Float, blurDownscaleFactor: Float, blurIterations: Int,
-        p1ShadowRadius: Float, p1ShadowDx: Float, p1ShadowDy: Float,
-        p1ShadowColor: Int, p1ImageBottomFadeHeight: Float
+        scrollSensitivity: Float,
+        p1OverlayFadeRatio: Float,
+        backgroundBlurRadius: Float,
+        snapAnimationDurationMs: Long,
+        normalizedInitialBgScrollOffset: Float,
+        p2BackgroundFadeInRatio: Float,
+        blurDownscaleFactor: Float,
+        blurIterations: Int,
+        p1ShadowRadius: Float,
+        p1ShadowDx: Float,
+        p1ShadowDy: Float,
+        p1ShadowColor: Int,
+        p1ImageBottomFadeHeight: Float,
+        styleBP1FocusX: Float,
+        p1StyleType: Int,
+        styleBMaskAlpha: Float,
+        styleBRotationParamA: Float,
+        styleBGapSizeRatio: Float,
+        styleBGapPositionYRatio: Float,
+        styleBUpperMaskMaxRotation: Float,
+        styleBLowerMaskMaxRotation: Float,
+        styleBP1FocusY: Float,
+        styleBP1ScaleFactor: Float,
+        p1FocusY: Float,
+        p1FocusX: Float,
+        p1ContentScaleFactor: Float,
+        page1ImageHeightRatio: Float
     ) {
         // 保存旧的参数值，用于比较是否发生变化
         val oldBgBlurR = this.currentBackgroundBlurRadius
@@ -1426,6 +1475,26 @@ class WallpaperPreviewView @JvmOverloads constructor(
         this.currentP1ShadowDy = p1ShadowDy
         this.currentP1ShadowColor = p1ShadowColor
         this.currentP1ImageBottomFadeHeight = p1ImageBottomFadeHeight
+
+        // --- 更新新增的 P1 风格参数 ---
+        this.currentP1StyleType = p1StyleType
+        this.currentStyleBMaskAlpha = styleBMaskAlpha
+        this.currentStyleBRotationParamA = styleBRotationParamA
+        this.currentStyleBGapSizeRatio = styleBGapSizeRatio
+        this.currentStyleBGapPositionYRatio = styleBGapPositionYRatio
+        this.currentStyleBUpperMaskMaxRotation = styleBUpperMaskMaxRotation
+        this.currentStyleBLowerMaskMaxRotation = styleBLowerMaskMaxRotation
+        this.currentStyleBP1FocusX = styleBP1FocusX
+        this.currentStyleBP1FocusY = styleBP1FocusY
+        this.currentStyleBP1ScaleFactor = styleBP1ScaleFactor
+        // --- 结束更新 P1 风格参数 ---
+
+        // 更新 P1 通用配置参数 (确保这些也在 setConfigValues 中被正确处理)
+        this.currentNormalizedFocusX = p1FocusX
+        this.currentNormalizedFocusY = p1FocusY
+        this.currentP1ContentScaleFactor = p1ContentScaleFactor
+        this.nonEditModePage1ImageHeightRatio = page1ImageHeightRatio
+
 
         // 检测某些参数（如P1底部融入、P1阴影）的变化是否只需要立即重绘
         val needsImmediateRedrawOnly = oldP1ImageBottomFadeHeight != p1ImageBottomFadeHeight ||
@@ -1732,7 +1801,6 @@ class WallpaperPreviewView @JvmOverloads constructor(
             invalidate() // 重绘以显示占位符
         }
     }
-// ... (先前已注释的部分)
 
     /**
      * 异步从给定的 URI 加载所有渲染所需的位图资源。
@@ -2280,7 +2348,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
     }
 
     /**
-     * 当 View 从窗口分离时被调用。
+     * 当 View 从窗口分离时调用。
      * 在此方法中，应清理所有持有的资源，以防止内存泄漏。
      * 包括：取消所有正在运行的协程、关闭 Channel、回收位图资源、回收速度追踪器等。
      */

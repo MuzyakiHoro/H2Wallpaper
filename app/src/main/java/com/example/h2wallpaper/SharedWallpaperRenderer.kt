@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -155,8 +156,21 @@ object SharedWallpaperRenderer {
         val p1ShadowDx: Float,
         val p1ShadowDy: Float,
         val p1ShadowColor: Int,
-        val p1ImageBottomFadeHeight: Float
+        val p1ImageBottomFadeHeight: Float,
         // p1ContentScaleFactor 在 preparePage1TopCroppedBitmap 时已应用
+        // 新增：样式B 特有参数
+        val styleBMaskAlpha: Float,
+        val styleBRotationParamA: Float,
+        val styleBGapSizeRatio: Float,
+        val styleBGapPositionYRatio: Float,
+        val styleBUpperMaskMaxRotation: Float,
+        val styleBLowerMaskMaxRotation: Float,
+
+        // 新增：样式B 的 P1独立背景图的编辑参数
+        val styleBP1FocusX: Float,
+        val styleBP1FocusY: Float,
+        val styleBP1ScaleFactor: Float,
+        val p1StyleType: Int,
     )
 
     // --- Paint 对象定义 ---
@@ -460,60 +474,19 @@ object SharedWallpaperRenderer {
             p1OverallAlpha = 255 // 单页时总是完全显示
         }
 
-        if (p1OverallAlpha > 0 && topImageActualHeight > 0) {
-            // 使用 saveLayerAlpha 创建一个带有透明度的图层，P1内的所有绘制都将应用此透明度
-            canvas.saveLayerAlpha(0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(), p1OverallAlpha)
+        //绘制P1层样式
+        if (p1OverallAlpha > 0) { // 只有当P1层不是完全透明时才进行绘制
+            // 从 config 中获取当前 P1 样式类型
+            // val currentP1Style = config.p1StyleType // 假设 config 中有这个属性
 
-            // 绘制P1图片下方的纯色背景区域
-            p1OverlayBgPaint.shader = null // 确保没有残留的shader
-            p1OverlayBgPaint.color = config.page1BackgroundColor
-            canvas.drawRect(0f, topImageActualHeight.toFloat(), config.screenWidth.toFloat(), config.screenHeight.toFloat(), p1OverlayBgPaint)
-
-            // 绘制P1顶部的裁剪图片
-            bitmaps.page1TopCroppedBitmap?.let { topBmp ->
-                if (!topBmp.isRecycled && topBmp.width > 0 && topBmp.height > 0) {
-                    // 绘制投影效果 (如果配置了)
-                    if (config.p1ShadowRadius > 0.01f && Color.alpha(config.p1ShadowColor) > 0) {
-                        rectShadowPaint.apply {
-                            color = Color.TRANSPARENT // 绘制的矩形本身是透明的，只显示阴影
-                            setShadowLayer(config.p1ShadowRadius, config.p1ShadowDx, config.p1ShadowDy, config.p1ShadowColor)
-                        }
-                        // 绘制一个与 topBmp 相同大小的透明矩形来承载阴影
-                        canvas.drawRect(0f, 0f, topBmp.width.toFloat(), topBmp.height.toFloat(), rectShadowPaint)
-                    }
-
-                    // 绘制P1图片本身
-                    p1OverlayImagePaint.clearShadowLayer() // 确保绘制图片时不带阴影
-                    canvas.drawBitmap(topBmp, 0f, 0f, p1OverlayImagePaint)
-
-                    // 绘制P1图片底部的融入渐变效果 (如果配置了)
-                    val fadeActualHeight = config.p1ImageBottomFadeHeight.coerceIn(0f, topBmp.height.toFloat())
-                    if (fadeActualHeight > 0.1f) {
-                        val fadeStartY = topBmp.height.toFloat() // 从图片底部开始
-                        val fadeEndY = topBmp.height.toFloat() - fadeActualHeight // 向上渐变到此高度
-
-                        // 使用多色点实现先急后缓的非线性渐变
-                        val colors = intArrayOf(
-                            config.page1BackgroundColor,                       // 底部颜色（完全不透明，与下方背景色一致）
-                            adjustAlpha(config.page1BackgroundColor, 0.8f),    // 30%高度位置（80%不透明）
-                            adjustAlpha(config.page1BackgroundColor, 0.3f),    // 70%高度位置（30%不透明）
-                            Color.TRANSPARENT                                  // 顶部颜色（完全透明，融入图片）
-                        )
-                        val positions = floatArrayOf(0f, 0.3f, 0.7f, 1f) // 渐变色点的位置
-
-                        overlayFadePaint.shader = LinearGradient(
-                            0f, fadeStartY, 0f, fadeEndY, // 从下往上渐变
-                            colors, positions, Shader.TileMode.CLAMP
-                        )
-                        canvas.drawRect(0f, fadeEndY, topBmp.width.toFloat(), fadeStartY, overlayFadePaint)
-                    } else {
-                        overlayFadePaint.shader = null // 确保没有残留的shader
-                    }
-                } else { Log.w(TAG, "drawFrame (P1): Top cropped bitmap is invalid or recycled.") }
-            } ?: Log.d(TAG, "drawFrame (P1): No top cropped bitmap available.")
-
-            // 恢复图层，应用整体透明度
-            canvas.restore()
+            // 为了测试，我们先假设一个样式类型，你需要从配置中实际获取
+            val currentP1Style =config.p1StyleType// WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE // 或者你从 ViewModel 获取后传入的
+            if (currentP1Style == 0 /* STYLE_A */) { // 使用常量或枚举替代魔法数字 0
+                drawStyleALayer(canvas, config, bitmaps, p1OverallAlpha)
+            } else if (currentP1Style == 1 /* STYLE_B */) {
+                drawStyleBLayer(canvas, config, bitmaps, p1OverallAlpha)
+            }
+            // 未来可以增加 else if (currentP1Style == STYLE_C) { drawStyleCLayer(...) }
         }
     }
 
@@ -1043,5 +1016,162 @@ object SharedWallpaperRenderer {
         placeholderTextPaint.alpha = 200
         val textY = height / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f) // 计算文字垂直居中的Y坐标
         canvas.drawText(text, width / 2f, textY, placeholderTextPaint)
+    }
+    /**
+     * 绘制 P1 层 - 样式 A (顶部小窗图片 + 图片下方背景色)
+     */
+    private fun drawStyleALayer(
+        canvas: Canvas,
+        config: WallpaperConfig,
+        bitmaps: WallpaperBitmaps,
+        p1OverallAlpha: Int // 将整体透明度传入
+    ) {
+        canvas.saveLayerAlpha(0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(), p1OverallAlpha)
+
+        val topImageActualHeight = (config.screenHeight * config.page1ImageHeightRatio).roundToInt()
+        if (topImageActualHeight > 0) {
+            p1OverlayBgPaint.shader = null
+            p1OverlayBgPaint.color = config.page1BackgroundColor
+            canvas.drawRect(0f, topImageActualHeight.toFloat(), config.screenWidth.toFloat(), config.screenHeight.toFloat(), p1OverlayBgPaint)
+
+            bitmaps.page1TopCroppedBitmap?.let { topBmp ->
+                if (!topBmp.isRecycled && topBmp.width > 0 && topBmp.height > 0) {
+                    // ... (样式A的投影、图片绘制、底部融入逻辑) ...
+                    // (从你之前注释掉的代码块中恢复这部分)
+                    if (config.p1ShadowRadius > 0.01f && Color.alpha(config.p1ShadowColor) > 0) {
+                        rectShadowPaint.apply {
+                            color = Color.TRANSPARENT
+                            setShadowLayer(config.p1ShadowRadius, config.p1ShadowDx, config.p1ShadowDy, config.p1ShadowColor)
+                        }
+                        canvas.drawRect(0f, 0f, topBmp.width.toFloat(), topBmp.height.toFloat(), rectShadowPaint)
+                    }
+                    p1OverlayImagePaint.clearShadowLayer()
+                    canvas.drawBitmap(topBmp, 0f, 0f, p1OverlayImagePaint)
+                    val fadeActualHeight = config.p1ImageBottomFadeHeight.coerceIn(0f, topBmp.height.toFloat())
+                    if (fadeActualHeight > 0.1f) {
+                        val fadeStartY = topBmp.height.toFloat(); val fadeEndY = topBmp.height.toFloat() - fadeActualHeight
+                        val colors = intArrayOf(
+                            config.page1BackgroundColor,
+                            adjustAlpha(config.page1BackgroundColor, 0.8f),
+                            adjustAlpha(config.page1BackgroundColor, 0.3f),
+                            Color.TRANSPARENT
+                        )
+                        val positions = floatArrayOf(0f, 0.3f, 0.7f, 1f)
+                        overlayFadePaint.shader = LinearGradient(
+                            0f, fadeStartY, 0f, fadeEndY,
+                            colors, positions, Shader.TileMode.CLAMP
+                        )
+                        canvas.drawRect(0f, fadeEndY, topBmp.width.toFloat(), fadeStartY, overlayFadePaint)
+                    } else {
+                        overlayFadePaint.shader = null
+                    }
+                } else { Log.w(TAG, "drawFrame (P1 Style A): Top cropped bitmap is invalid or recycled.") }
+            } ?: Log.d(TAG, "drawFrame (P1 Style A): No top cropped bitmap available for Style A.")
+        } else {
+            // 如果样式A的图片高度为0，P1层除了透明度外基本是空的。
+            // 可以考虑如果 page1BackgroundColor 不是完全透明，是否要用它填充整个 P1 区域。
+            // 但当前的逻辑是，如果 topImageActualHeight <=0，则不绘制任何样式A的内容。
+            // 为了保持与之前一致，可以暂时保留这个行为。
+            // 或者，如果希望即使图片高度为0，下方背景色也显示：
+            // p1OverlayBgPaint.shader = null
+            // p1OverlayBgPaint.color = config.page1BackgroundColor
+            // canvas.drawRect(0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(), p1OverlayBgPaint)
+        }
+        canvas.restore()
+    }
+
+    /**
+     * 绘制 P1 层 - 样式 B (P1独立背景图 + 上下旋转遮罩 + 中间间隔)
+     */
+    private fun drawStyleBLayer(
+        canvas: Canvas,
+        config: WallpaperConfig, // 确保 WallpaperConfig 包含样式B的参数
+        bitmaps: WallpaperBitmaps,
+        p1OverallAlpha: Int // 将整体透明度传入
+    ) {
+        canvas.saveLayerAlpha(0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(), p1OverallAlpha)
+
+        Log.d(TAG, "Drawing P1 Layer with Style B")
+        val p1FullScreenBackgroundBitmap = bitmaps.sourceSampledBitmap
+        if (p1FullScreenBackgroundBitmap != null && !p1FullScreenBackgroundBitmap.isRecycled) {
+            // 1. 绘制 P1 层的“铺满的独立背景图”
+            val p1BgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            val bgMatrix = Matrix() // 确保 Matrix 已导入
+            // TODO: 此处需要根据样式B的P1编辑参数 (焦点、缩放) 来设置 bgMatrix
+            // 以下为简化的 centerCrop 逻辑，你需要替换为实际的参数化逻辑
+            val scale: Float
+            val dx: Float
+            val dy: Float
+            if (p1FullScreenBackgroundBitmap.width * config.screenHeight > config.screenWidth * p1FullScreenBackgroundBitmap.height) {
+                scale = config.screenHeight.toFloat() / p1FullScreenBackgroundBitmap.height.toFloat()
+                dx = (config.screenWidth.toFloat() - p1FullScreenBackgroundBitmap.width * scale) * 0.5f
+                dy = 0f
+            } else {
+                scale = config.screenWidth.toFloat() / p1FullScreenBackgroundBitmap.width.toFloat()
+                dx = 0f
+                dy = (config.screenHeight.toFloat() - p1FullScreenBackgroundBitmap.height * scale) * 0.5f
+            }
+            bgMatrix.setScale(scale, scale)
+            bgMatrix.postTranslate(dx, dy)
+            canvas.drawBitmap(p1FullScreenBackgroundBitmap, bgMatrix, p1BgPaint)
+
+            // 2. 从 config 中获取样式 B 的参数
+            //    (你需要确保 config 对象能提供这些值，或者从 WallpaperConfigConstants 获取默认值/测试值)
+            val parameterA = config.styleBRotationParamA // 假设已在 WallpaperConfig 中定义
+            val gapSizeRatio = config.styleBGapSizeRatio
+            val gapPositionYRatio = config.styleBGapPositionYRatio
+            val maskAlpha = config.styleBMaskAlpha
+            val maskColor = config.page1BackgroundColor // 使用P1背景色作为遮罩颜色
+            val upperMaxRotation = config.styleBUpperMaskMaxRotation
+            val lowerMaxRotation = config.styleBLowerMaskMaxRotation
+
+            // 3. 计算间隔区域的 Y 坐标
+            val currentGapHeight = config.screenHeight * gapSizeRatio
+            val gapCenterY = config.screenHeight * gapPositionYRatio
+            val gapTopY = (gapCenterY - currentGapHeight / 2f).coerceIn(0f, config.screenHeight.toFloat() - currentGapHeight.coerceAtLeast(0f))
+            val gapBottomY = (gapTopY + currentGapHeight).coerceIn(currentGapHeight.coerceAtLeast(0f), config.screenHeight.toFloat())
+
+            // 4. 计算旋转角度
+            val actualRotationUpper = -upperMaxRotation * parameterA
+            val actualRotationLower = -lowerMaxRotation * parameterA
+
+            // 5. 准备遮罩的 Paint
+            val styleBMaskPaint = Paint().apply {
+                style = Paint.Style.FILL
+                isAntiAlias = true
+                color = maskColor
+                alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
+            }
+
+            val overdrawExtension = config.screenWidth * 2f; // 扩展量
+
+            // 6. 绘制上部旋转遮罩
+            canvas.save()
+            canvas.rotate(actualRotationUpper, 0f, gapTopY)
+            val upperMaskPath = Path() // 确保 Path 已导入
+            upperMaskPath.addRect(0f, 0f, config.screenWidth.toFloat() + overdrawExtension, gapTopY, Path.Direction.CW)
+            canvas.drawPath(upperMaskPath, styleBMaskPaint)
+            canvas.restore()
+
+            // 7. 绘制下部旋转遮罩
+            canvas.save()
+            canvas.rotate(actualRotationLower, config.screenWidth.toFloat(), gapBottomY)
+            val lowerMaskPath = Path()
+            lowerMaskPath.addRect(0f - overdrawExtension, gapBottomY, config.screenWidth.toFloat(), config.screenHeight.toFloat(), Path.Direction.CW)
+            canvas.drawPath(lowerMaskPath, styleBMaskPaint)
+            canvas.restore()
+
+            // 8. 最终裁剪 (如果需要，且尚未在更外层处理)
+            // canvas.clipRect(0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat())
+
+        } else {
+            Log.w(TAG, "drawFrame (P1 Style B): Source bitmap for P1 full background is null or recycled.")
+            placeholderBgPaint.color = adjustAlpha(config.page1BackgroundColor, 0.5f)
+            canvas.drawRect(0f,0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(), placeholderBgPaint)
+            placeholderTextPaint.alpha = 150
+            val textY = config.screenHeight / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
+            canvas.drawText("样式B: P1背景图缺失", config.screenWidth / 2f, textY, placeholderTextPaint)
+        }
+        canvas.restore()
     }
 }
