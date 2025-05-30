@@ -24,52 +24,84 @@ import kotlin.math.roundToInt
 
 // import com.example.h2wallpaper.WallpaperConfigConstants // 通常此文件独立
 
+/**
+ * 单例对象，封装了动态壁纸的核心渲染逻辑。
+ * 这个对象被 `H2WallpaperService` 和 `WallpaperPreviewView` 共用，
+ * 以确保动态壁纸的实际渲染和应用内预览效果的一致性。
+ *
+ * 它负责处理位图的加载、裁剪、缩放、模糊以及将处理后的图像绘制到 Canvas 上。
+ */
 object SharedWallpaperRenderer {
 
     private const val TAG = "SharedRenderer"
     private const val DEBUG_TAG_RENDERER = "SharedRenderer_Debug"
-    private const val MIN_DOWNSCALED_DIMENSION = 16
+    private const val MIN_DOWNSCALED_DIMENSION = 16 // 降采样后的最小尺寸
 
     // 性能数据统计相关
-    private const val PERF_TAG = "BlurPerf"
-    private var blurTestCounter = 0
-    private var totalDownscaleTimeStats = PerfStats()
-    private var totalBlurTimeStats = PerfStats()
-    private var totalUpscaleTimeStats = PerfStats()
-    private var totalProcessTimeStats = PerfStats()
+    private const val PERF_TAG = "BlurPerf" // 模糊性能测试的日志标签
+    private var blurTestCounter = 0 // 模糊测试计数器
+    private var totalDownscaleTimeStats = PerfStats() // 降采样总耗时统计
+    private var totalBlurTimeStats = PerfStats() // 模糊处理总耗时统计
+    private var totalUpscaleTimeStats = PerfStats() // 放大处理总耗时统计
+    private var totalProcessTimeStats = PerfStats() // 总处理时间统计
 
-    // 性能统计数据类
+    /**
+     * 用于存储和管理性能统计数据的数据类。
+     * @property total 总耗时。
+     * @property count 执行次数。
+     * @property min 最小耗时。
+     * @property max 最大耗时。
+     * @property average 平均耗时 (只读)。
+     */
     private data class PerfStats(
         var total: Long = 0,
         var count: Int = 0,
         var min: Long = Long.MAX_VALUE,
         var max: Long = 0
     ) {
+        /** 计算平均耗时 */
         val average: Long get() = if (count > 0) total / count else 0
-        
+
+        /**
+         * 更新性能统计数据。
+         * @param value 本次操作的耗时。
+         */
         fun update(value: Long) {
             total += value
             count++
             min = min.coerceAtMost(value)
             max = max.coerceAtLeast(value)
         }
-        
+
+        /**
+         * 重置所有性能统计数据。
+         */
         fun reset() {
             total = 0
             count = 0
             min = Long.MAX_VALUE
             max = 0
         }
-        
+
         override fun toString(): String = "平均=${average}ms, 最小=${min}ms, 最大=${max}ms, 样本数=$count"
     }
 
+    /**
+     * 数据类，用于封装动态壁纸渲染所需的各种位图资源。
+     * @property sourceSampledBitmap 经过采样处理的原始图片位图，用于P1前景和P2背景的基础。
+     * @property page1TopCroppedBitmap 经过裁剪和缩放处理，用于P1前景显示的位图。
+     * @property scrollingBackgroundBitmap 用于P2背景滚动的位图（通常未模糊或轻微处理）。
+     * @property blurredScrollingBackgroundBitmap 经过模糊处理的P2背景滚动位图。
+     */
     data class WallpaperBitmaps(
         var sourceSampledBitmap: Bitmap?,
         var page1TopCroppedBitmap: Bitmap?, // 这个现在会考虑 contentScaleFactor
         var scrollingBackgroundBitmap: Bitmap?,
         var blurredScrollingBackgroundBitmap: Bitmap?
     ) {
+        /**
+         * 回收内部持有的所有位图资源，防止内存泄漏。
+         */
         fun recycleInternals() {
             Log.d(TAG, "Recycling WallpaperBitmaps internals...")
             sourceSampledBitmap?.recycle()
@@ -82,11 +114,32 @@ object SharedWallpaperRenderer {
             blurredScrollingBackgroundBitmap = null
         }
 
+        /**
+         * 判断当前持有的所有位图是否都为 null。
+         */
         val isEmpty: Boolean
             get() = sourceSampledBitmap == null && page1TopCroppedBitmap == null &&
                     scrollingBackgroundBitmap == null && blurredScrollingBackgroundBitmap == null
     }
 
+    /**
+     * 数据类，用于封装渲染动态壁纸单帧所需的配置参数。
+     * @property screenWidth 目标屏幕/画布的宽度。
+     * @property screenHeight 目标屏幕/画布的高度。
+     * @property page1BackgroundColor P1层下半部分（图片未覆盖区域）的背景颜色。
+     * @property page1ImageHeightRatio P1层图片部分相对于屏幕高度的比例。
+     * @property currentXOffset 当前壁纸的横向滚动偏移量 (0.0 到 1.0)。
+     * @property numVirtualPages 虚拟页面数量，用于计算过渡效果的进度。
+     * @property p1OverlayFadeTransitionRatio P1层前景开始淡出的滚动偏移比例。
+     * @property scrollSensitivityFactor 背景滚动灵敏度因子。
+     * @property normalizedInitialBgScrollOffset P2背景层在第一页的归一化初始横向偏移。
+     * @property p2BackgroundFadeInRatio P2层背景开始淡入的滚动偏移比例。
+     * @property p1ShadowRadius P1层图片的投影半径。
+     * @property p1ShadowDx P1层图片的投影在X轴上的偏移。
+     * @property p1ShadowDy P1层图片的投影在Y轴上的偏移。
+     * @property p1ShadowColor P1层图片的投影颜色。
+     * @property p1ImageBottomFadeHeight P1层图片底部融入背景的渐变高度。
+     */
     data class WallpaperConfig(
         val screenWidth: Int,
         val screenHeight: Int,
@@ -106,21 +159,29 @@ object SharedWallpaperRenderer {
         // p1ContentScaleFactor 在 preparePage1TopCroppedBitmap 时已应用
     )
 
+    // --- Paint 对象定义 ---
+    /** 用于绘制P2滚动背景的Paint对象 */
     private val scrollingBgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
+    /** 用于绘制P1层下半部分纯色背景的Paint对象 */
     private val p1OverlayBgPaint = Paint()
+    /** 用于绘制P1层前景图片的Paint对象 */
     private val p1OverlayImagePaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
+    /** 用于在图片未加载时绘制占位文字的Paint对象 */
     private val placeholderTextPaint = Paint().apply {
         color = Color.WHITE; textSize = 40f; textAlign = Paint.Align.CENTER; isAntiAlias = true
     }
+    /** 用于在图片未加载时绘制占位背景的Paint对象 */
     private val placeholderBgPaint = Paint().apply { color = Color.DKGRAY }
+    /** 用于绘制P1图片投影效果的Paint对象 */
     private val rectShadowPaint = Paint().apply { isAntiAlias = true }
+    /** 用于绘制P1图片底部融入渐变效果的Paint对象 */
     private val overlayFadePaint = Paint().apply { isAntiAlias = true }
 
     /**
-     * 调整颜色的透明度
-     * @param color 原始颜色
-     * @param factor 透明度因子（0.0-1.0，1.0表示完全不透明）
-     * @return 调整透明度后的颜色
+     * 调整给定颜色的透明度。
+     * @param color 原始颜色值。
+     * @param factor 透明度调整因子 (0.0 表示完全透明, 1.0 表示完全不透明)。
+     * @return 调整透明度后的颜色值。
      */
     private fun adjustAlpha(color: Int, factor: Float): Int {
         val alpha = (Color.alpha(color) * factor).toInt().coerceIn(0, 255)
@@ -132,6 +193,13 @@ object SharedWallpaperRenderer {
         )
     }
 
+    /**
+     * 绘制动态壁纸的单帧。
+     * 此方法会先绘制背景层(P2)，然后在其上叠加绘制前景层(P1)。
+     * @param canvas 目标画布。
+     * @param config 当前壁纸的渲染配置。
+     * @param bitmaps 包含渲染所需位图的 [WallpaperBitmaps] 对象。
+     */
     fun drawFrame(
         canvas: Canvas,
         config: WallpaperConfig,
@@ -141,30 +209,44 @@ object SharedWallpaperRenderer {
             Log.w(TAG, "drawFrame: Screen dimensions are zero, cannot draw.")
             return
         }
+        // 先用P1的背景色填充整个画布，作为最底层
         canvas.drawColor(config.page1BackgroundColor)
+        // 绘制P2背景层 (模糊滚动图)
         drawPage2Layer(canvas, config, bitmaps)
+        // 绘制P1前景层 (顶部图片及其下方纯色区域)
         drawPage1Layer(canvas, config, bitmaps)
     }
 
+    /**
+     * 绘制P2背景层。
+     * 包括模糊的滚动背景图，并根据滚动偏移计算其透明度和位置。
+     * @param canvas 目标画布。
+     * @param config 当前壁纸的渲染配置。
+     * @param bitmaps 包含渲染所需位图的 [WallpaperBitmaps] 对象。
+     */
     private fun drawPage2Layer(
         canvas: Canvas,
         config: WallpaperConfig,
         bitmaps: WallpaperBitmaps
     ) {
         val safeNumVirtualPages = config.numVirtualPages.coerceAtLeast(1)
-        var p2BackgroundAlpha = 255
+        var p2BackgroundAlpha = 255 // P2背景的透明度
 
+        // 根据当前滚动偏移和P2淡入比例计算P2背景的透明度
         if (safeNumVirtualPages > 1) {
             val fadeInEndXOffset = (1.0f / safeNumVirtualPages.toFloat()) * config.p2BackgroundFadeInRatio.coerceIn(0.01f, 1.0f)
             if (config.currentXOffset < fadeInEndXOffset) {
                 val p2TransitionProgress = (config.currentXOffset / fadeInEndXOffset).coerceIn(0f, 1f)
+                // 使用平方增加过渡的非线性感
                 p2BackgroundAlpha = (255 * p2TransitionProgress.pow(2.0f)).toInt().coerceIn(0, 255)
             } else {
-                p2BackgroundAlpha = 255
+                p2BackgroundAlpha = 255 // 完全显示
             }
         } else {
-            p2BackgroundAlpha = 255
+            p2BackgroundAlpha = 255 // 单页时总是完全显示
         }
+
+        // 选择要绘制的背景图：优先使用模糊图，如果不存在则使用未模糊的滚动背景图
         val backgroundToDraw = bitmaps.blurredScrollingBackgroundBitmap ?: bitmaps.scrollingBackgroundBitmap
         backgroundToDraw?.let { bgBmp ->
             if (!bgBmp.isRecycled && bgBmp.width > 0 && bgBmp.height > 0) {
@@ -172,44 +254,37 @@ object SharedWallpaperRenderer {
                 val imageActualHeight = bgBmp.height.toFloat()
                 val screenActualWidth = config.screenWidth.toFloat()
                 val screenActualHeight = config.screenHeight.toFloat()
-                
-                // 计算缩放比例以确保图像铺满屏幕
+
+                // 计算缩放比例以确保背景图像至少填满屏幕（通常是高度填满，宽度超出用于滚动）
                 val scaleX = screenActualWidth / imageActualWidth
                 val scaleY = screenActualHeight / imageActualHeight
-                val scale = max(scaleX, scaleY)
-                
-                // 计算缩放后的尺寸
+                val scale = max(scaleX, scaleY) // 通常会是 scaleY，因为背景图是按屏幕高度缩放的
+
                 val scaledWidth = imageActualWidth * scale
                 val scaledHeight = imageActualHeight * scale
-                
-                // 计算垂直居中偏移（只保留垂直方向的居中）
+
+                // 计算垂直居中偏移（如果缩放后高度与屏幕高度不完全一致）
                 val offsetY = (screenActualHeight - scaledHeight) / 2f
-                
-                // 计算滚动效果
+
+                // 计算背景图的横向滚动
                 val totalScrollableWidthPx = (scaledWidth - screenActualWidth).coerceAtLeast(0f)
-                // 控制初始位置 - 修改为使用初始偏移在可滚动范围内的位置
                 val initialScrollPosition = totalScrollableWidthPx * config.normalizedInitialBgScrollOffset.coerceIn(0f, 1f)
-                // 剩余可滚动范围
                 val scrollRangeForSensitivity = totalScrollableWidthPx * (1f - config.normalizedInitialBgScrollOffset.coerceIn(0f, 1f))
-                // 根据页面偏移计算当前动态滚动位置
                 var currentDynamicScrollPx = config.currentXOffset * config.scrollSensitivityFactor * scrollRangeForSensitivity
                 currentDynamicScrollPx = currentDynamicScrollPx.coerceIn(0f, scrollRangeForSensitivity)
-                // 最终滚动位置 = 初始位置 + 动态滚动量
                 val currentScrollPxFloat = initialScrollPosition + currentDynamicScrollPx
-                
-                // 绘制背景
+
+                // 保存画布状态，设置透明度，绘制背景图，然后恢复画布状态
                 canvas.save()
                 scrollingBgPaint.alpha = p2BackgroundAlpha
-                
-                // 创建目标矩形，从最左边开始绘制，只应用垂直居中
+
                 val dstRect = RectF(
-                    -currentScrollPxFloat,  // 从最左边开始，只应用滚动偏移
-                    offsetY, 
-                    scaledWidth - currentScrollPxFloat, 
+                    -currentScrollPxFloat,  // X轴根据滚动偏移
+                    offsetY,
+                    scaledWidth - currentScrollPxFloat,
                     offsetY + scaledHeight
                 )
-                
-                // 使用drawBitmap的矩形版本，将图像缩放并绘制到目标矩形中
+                // 使用 drawBitmap(bitmap, srcRect, dstRect, paint) 的形式绘制，这里 srcRect 为 null 表示使用整个 bitmap
                 canvas.drawBitmap(bgBmp, null, dstRect, scrollingBgPaint)
                 canvas.restore()
             } else {
@@ -217,19 +292,20 @@ object SharedWallpaperRenderer {
             }
         }
     }
-
     /**
      * 仅根据已有的基础Bitmap和新的模糊参数重新生成模糊后的Bitmap。
+     * 此函数设计用于在模糊参数变化时，避免重新加载和处理原始图片，从而优化性能。
      *
-     * @param context Context
-     * @param baseBitmap 要应用模糊效果的基础Bitmap (例如，未模糊的滚动背景图)
-     * @param targetWidth 最终模糊图的目标宽度 (通常与baseBitmap宽度一致)
-     * @param targetHeight 最终模糊图的目标高度 (通常与baseBitmap高度一致)
-     * @param blurRadius 模糊半径
-     * @param blurDownscaleFactor 模糊前的降采样因子
-     * @param blurIterations 模糊迭代次数
-     * @return 新的模糊后的Bitmap，如果失败则返回null
-     */    fun regenerateBlurredBitmap(
+     * @param context Context 对象，用于访问 RenderScript。
+     * @param baseBitmap 要应用模糊效果的基础 Bitmap (例如，未模糊的滚动背景图)。
+     * @param targetWidth 最终模糊图的目标宽度 (通常与 baseBitmap 宽度一致)。
+     * @param targetHeight 最终模糊图的目标高度 (通常与 baseBitmap 高度一致)。
+     * @param blurRadius 模糊半径 (有效范围 0.1f 到 25.0f)。
+     * @param blurDownscaleFactor 模糊前的降采样因子 (0.01f 到 0.5f)，用于加速模糊处理。较小的值意味着更小的图被模糊。
+     * @param blurIterations 模糊迭代次数，多次迭代可以增强模糊效果，但也会增加处理时间。
+     * @return 新的模糊后的 Bitmap；如果基础 Bitmap 无效、无需模糊或处理失败，则返回 null 或原始 Bitmap 的副本。
+     */
+    fun regenerateBlurredBitmap(
         context: Context,
         baseBitmap: Bitmap?,
         targetWidth: Int,
@@ -242,114 +318,125 @@ object SharedWallpaperRenderer {
             Log.w(TAG, "regenerateBlurredBitmap: Invalid baseBitmap or target dimensions.")
             return null
         }
-        if (blurRadius <= 0.01f) { // 如果不需要模糊，可以返回null或baseBitmap的副本
-            return null // 或者 baseBitmap.copy(baseBitmap.config, true) 如果希望返回一个未模糊的图
+        // 如果模糊半径过小，几乎等于不模糊，可以直接返回（或返回副本）
+        if (blurRadius <= 0.01f) {
+            // return baseBitmap.copy(baseBitmap.config, true) // 如果希望在不模糊时返回一个副本
+            return null // 或者根据业务需求，返回null表示“无模糊版本”
         }
 
-        var downscaledForBlur: Bitmap? = null
-        var blurredDownscaled: Bitmap? = null
-        var upscaledBlurredBitmap: Bitmap? = null
-        
+        var downscaledForBlur: Bitmap? = null // 降采样后用于模糊的位图
+        var blurredDownscaled: Bitmap? = null // 降采样并模糊后的位图
+        var upscaledBlurredBitmap: Bitmap? = null // 最终的模糊位图 (可能是 blurredDownscaled 或其放大版本)
+
         // 性能统计初始化
         val totalStartTime = SystemClock.elapsedRealtime()
         var downscaleTime = 0L
         var blurTime = 0L
-        var upscaleTime = 0L
-        var isFallbackPath = false
+        var upscaleTime = 0L // 注意：当前代码路径下，upscaleTime 通常为0，因为直接使用降采样模糊后的图
+        var isFallbackPath = false // 标记是否走了备用路径（直接模糊原图）
 
         try {
-            val sourceForActualBlur = baseBitmap
-            val actualDownscaleFactor = blurDownscaleFactor.coerceIn(0.01f, 0.5f)
+            val sourceForActualBlur = baseBitmap // 将要进行模糊操作的源泉
+            val actualDownscaleFactor = blurDownscaleFactor.coerceIn(0.01f, 0.5f) // 确保降采样因子在合理范围
+
+            // 计算降采样后的目标尺寸
             val downscaledWidth = (sourceForActualBlur.width * actualDownscaleFactor).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
             val downscaledHeight = (sourceForActualBlur.height * actualDownscaleFactor).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
-            if (actualDownscaleFactor < 0.99f && (downscaledWidth < sourceForActualBlur.width || downscaledHeight < sourceForActualBlur.height)) {                // 计时：降采样开始
+
+            // 判断是否真的需要执行降采样 (如果因子接近1或计算出的尺寸没有变小)
+            if (actualDownscaleFactor < 0.99f && (downscaledWidth < sourceForActualBlur.width || downscaledHeight < sourceForActualBlur.height)) {
                 val downscaleStartTime = SystemClock.elapsedRealtime()
-                // 使用Bitmap.createScaledBitmap进行降采样（回退优化）
                 downscaledForBlur = Bitmap.createScaledBitmap(sourceForActualBlur, downscaledWidth, downscaledHeight, true)
                 downscaleTime = SystemClock.elapsedRealtime() - downscaleStartTime
-                
-                // 计时：模糊开始
+
                 val blurStartTime = SystemClock.elapsedRealtime()
                 blurredDownscaled = blurBitmapUsingRenderScript(context, downscaledForBlur, blurRadius.coerceIn(0.1f, 25.0f), blurIterations)
                 blurTime = SystemClock.elapsedRealtime() - blurStartTime
-                  if (blurredDownscaled != null) {
-                    // 不进行放大，直接使用降采样后的模糊图像
-                    upscaledBlurredBitmap = blurredDownscaled
-                    upscaleTime = 0L // 没有放大操作，时间为0
-                    Log.d(TAG, "使用降采样后的模糊图像，跳过放大步骤")
+
+                if (blurredDownscaled != null) {
+                    // 当前逻辑：不进行放大，直接使用降采样后的模糊图像作为最终结果。
+                    // 这是因为在 loadAndProcessInitialBitmaps 中，如果进行了低分辨率加载，
+                    // 那么这里的 baseBitmap (即 scrollingBackgroundBitmap) 已经是高质量的了。
+                    // 而 regenerateBlurredBitmap 的目的是基于这个高质量的 scrollingBackgroundBitmap 生成一个 *新的* blurredScrollingBackgroundBitmap。
+                    // 为了性能，我们对 baseBitmap 进行降采样 -> 模糊 -> (可选)放大。
+                    // 当前的实现是 降采样 -> 模糊，然后直接使用这个模糊后的较小图像。
+                    // 这意味着最终的 blurredScrollingBackgroundBitmap 尺寸可能小于 scrollingBackgroundBitmap。
+                    // 如果要求模糊图和原图尺寸一致，则需要在此处添加放大步骤。
+                    upscaledBlurredBitmap = blurredDownscaled // 直接赋值，不放大
+                    upscaleTime = 0L // 没有放大操作
+                    Log.d(TAG, "Using downscaled blurred image, skipping upscale. Final blur size: ${upscaledBlurredBitmap.width}x${upscaledBlurredBitmap.height}")
                 } else {
+                    // 如果降采样后的图模糊失败，则尝试直接模糊原始传入的 baseBitmap (作为后备)
                     Log.w(TAG, "regenerateBlurredBitmap: Blurred downscaled bitmap is null, falling back to blur on base bitmap.")
                     isFallbackPath = true
-                    // 计时：模糊开始 (后备路径)
-                    val blurStartTime = SystemClock.elapsedRealtime()
+                    val blurFallbackStartTime = SystemClock.elapsedRealtime()
                     upscaledBlurredBitmap = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
-                    blurTime = SystemClock.elapsedRealtime() - blurStartTime
-                    // 如果fallback也需要缩放到targetWidth/Height，但通常sourceForActualBlur已经是正确尺寸了
+                    blurTime = SystemClock.elapsedRealtime() - blurFallbackStartTime // 更新模糊时间为后备路径的
+                    // 此时 upscaledBlurredBitmap 的尺寸与 sourceForActualBlur (即 baseBitmap) 一致
                 }
             } else {
-                // 不需要降采样，直接模糊
+                // 不需要降采样 (例如 downscaleFactor 接近 1.0)，直接模糊原始传入的 baseBitmap
                 isFallbackPath = true
-                // 计时：模糊开始 (无降采样路径)
-                val blurStartTime = SystemClock.elapsedRealtime()
+                val blurDirectStartTime = SystemClock.elapsedRealtime()
                 upscaledBlurredBitmap = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
-                blurTime = SystemClock.elapsedRealtime() - blurStartTime
+                blurTime = SystemClock.elapsedRealtime() - blurDirectStartTime
             }
-            
-            // 总耗时统计
+
+            // 性能日志记录
             val totalTime = SystemClock.elapsedRealtime() - totalStartTime
-            
-            // 更新性能统计数据
             totalProcessTimeStats.update(totalTime)
-            if (!isFallbackPath) {
+            if (!isFallbackPath) { // 只有在非后备路径（即执行了降采样）时才记录降采样和放大时间
                 totalDownscaleTimeStats.update(downscaleTime)
-                totalUpscaleTimeStats.update(upscaleTime)
+                totalUpscaleTimeStats.update(upscaleTime) // upscaleTime 当前为0
             }
             totalBlurTimeStats.update(blurTime)
-            
             blurTestCounter++
-            
-            // 单个log输出当前操作的性能数据
+
             val sb = StringBuilder()
-            sb.append("【模糊性能测试 #$blurTestCounter】\n")
-            sb.append("图像尺寸: ${baseBitmap.width}x${baseBitmap.height}, ")
-            sb.append("降采样因子: $actualDownscaleFactor, ")
-            sb.append("模糊半径: $blurRadius, ")
-            sb.append("迭代次数: $blurIterations\n")
-            
+            sb.append("【Blur Perf Test #$blurTestCounter】\n")
+            sb.append("BaseImg: ${baseBitmap.width}x${baseBitmap.height}, Factor: $actualDownscaleFactor, Radius: $blurRadius, Iter: $blurIterations\n")
             if (isFallbackPath) {
-                sb.append("[直接模糊路径]\n")
-                sb.append("模糊处理: ${blurTime}ms\n")
-                sb.append("总处理时间: ${totalTime}ms")
+                sb.append("[Direct Blur Path]\n")
+                sb.append("Blur: ${blurTime}ms\n")
             } else {
-                sb.append("降采样(${sourceForActualBlur.width}x${sourceForActualBlur.height}→${downscaledWidth}x${downscaledHeight}): ${downscaleTime}ms\n")
-                sb.append("模糊处理: ${blurTime}ms\n")
-                sb.append("放大处理: ${upscaleTime}ms\n")
-                sb.append("总处理时间: ${totalTime}ms")
+                sb.append("Downscale(${sourceForActualBlur.width}x${sourceForActualBlur.height}→${downscaledWidth}x${downscaledHeight}): ${downscaleTime}ms\n")
+                sb.append("Blur: ${blurTime}ms\n")
+                if (upscaleTime > 0) sb.append("Upscale: ${upscaleTime}ms\n")
             }
-            
+            sb.append("Total: ${totalTime}ms. Result: ${upscaledBlurredBitmap?.width ?: 0}x${upscaledBlurredBitmap?.height ?: 0}")
             Log.d(PERF_TAG, sb.toString())
-            
-            // 当测试达到10次时，输出汇总统计
-            if (blurTestCounter >= 10) {
+
+            if (blurTestCounter >= 10) { // 每10次测试输出一次汇总统计
                 outputPerformanceStats()
                 resetPerformanceStats()
             }
-            
+
             return upscaledBlurredBitmap
         } catch (e: Exception) {
             Log.e(TAG, "Error during regenerateBlurredBitmap", e)
-            upscaledBlurredBitmap?.recycle() // newBitmapHolder?.recycleInternals() in H2WallpaperService
-            blurredDownscaled?.recycle()
+            // 确保回收过程中创建的临时位图
+            upscaledBlurredBitmap?.recycle()
+            blurredDownscaled?.recycle() // 即使 upscaledBlurredBitmap 是它，重复回收是安全的 (内部有检查)
             downscaledForBlur?.recycle()
             return null
         } finally {
-            // 清理中间位图，除非它们是返回的结果
+            // 再次确保中间位图被回收，除非它们是返回的结果
+            // 如果 upscaledBlurredBitmap 是 blurredDownscaled，则 blurredDownscaled 不应在此处回收
+            // 如果 upscaledBlurredBitmap 是 downscaledForBlur (理论上不太可能)，则 downscaledForBlur 不应在此处回收
             if (upscaledBlurredBitmap != blurredDownscaled) blurredDownscaled?.recycle()
             if (upscaledBlurredBitmap != downscaledForBlur && blurredDownscaled != downscaledForBlur) downscaledForBlur?.recycle()
         }
     }
 
 
+    /**
+     * 绘制P1前景层。
+     * 包括顶部的裁剪图片、图片下方的纯色背景、图片的投影效果以及底部融入效果。
+     * P1层的整体透明度会根据滚动偏移和P1淡出比例进行计算。
+     * @param canvas 目标画布。
+     * @param config 当前壁纸的渲染配置。
+     * @param bitmaps 包含渲染所需位图的 [WallpaperBitmaps] 对象。
+     */
     private fun drawPage1Layer(
         canvas: Canvas,
         config: WallpaperConfig,
@@ -357,116 +444,171 @@ object SharedWallpaperRenderer {
     ) {
         val safeNumVirtualPages = config.numVirtualPages.coerceAtLeast(1)
         val topImageActualHeight = (config.screenHeight * config.page1ImageHeightRatio).roundToInt()
-        var p1OverallAlpha = 255
+        var p1OverallAlpha = 255 // P1层整体透明度
 
+        // 根据当前滚动偏移和P1淡出比例计算P1层的整体透明度
         if (safeNumVirtualPages > 1) {
             val fadeOutEndXOffset = (1.0f / safeNumVirtualPages.toFloat()) * config.p1OverlayFadeTransitionRatio.coerceIn(0.01f, 1.0f)
             if (config.currentXOffset < fadeOutEndXOffset) {
                 val p1TransitionProgress = (config.currentXOffset / fadeOutEndXOffset).coerceIn(0f, 1f)
+                // 使用 (1 - progress)^2 使淡出效果更明显
                 p1OverallAlpha = (255 * (1.0f - p1TransitionProgress.pow(2.0f))).toInt().coerceIn(0, 255)
             } else {
-                p1OverallAlpha = 0
+                p1OverallAlpha = 0 // 完全透明
             }
         } else {
-            p1OverallAlpha = 255
+            p1OverallAlpha = 255 // 单页时总是完全显示
         }
 
         if (p1OverallAlpha > 0 && topImageActualHeight > 0) {
+            // 使用 saveLayerAlpha 创建一个带有透明度的图层，P1内的所有绘制都将应用此透明度
             canvas.saveLayerAlpha(0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(), p1OverallAlpha)
-            p1OverlayBgPaint.shader = null
+
+            // 绘制P1图片下方的纯色背景区域
+            p1OverlayBgPaint.shader = null // 确保没有残留的shader
             p1OverlayBgPaint.color = config.page1BackgroundColor
             canvas.drawRect(0f, topImageActualHeight.toFloat(), config.screenWidth.toFloat(), config.screenHeight.toFloat(), p1OverlayBgPaint)
 
+            // 绘制P1顶部的裁剪图片
             bitmaps.page1TopCroppedBitmap?.let { topBmp ->
                 if (!topBmp.isRecycled && topBmp.width > 0 && topBmp.height > 0) {
+                    // 绘制投影效果 (如果配置了)
                     if (config.p1ShadowRadius > 0.01f && Color.alpha(config.p1ShadowColor) > 0) {
-                        rectShadowPaint.apply { color = Color.TRANSPARENT
+                        rectShadowPaint.apply {
+                            color = Color.TRANSPARENT // 绘制的矩形本身是透明的，只显示阴影
                             setShadowLayer(config.p1ShadowRadius, config.p1ShadowDx, config.p1ShadowDy, config.p1ShadowColor)
                         }
+                        // 绘制一个与 topBmp 相同大小的透明矩形来承载阴影
                         canvas.drawRect(0f, 0f, topBmp.width.toFloat(), topBmp.height.toFloat(), rectShadowPaint)
                     }
-                    p1OverlayImagePaint.clearShadowLayer()
+
+                    // 绘制P1图片本身
+                    p1OverlayImagePaint.clearShadowLayer() // 确保绘制图片时不带阴影
                     canvas.drawBitmap(topBmp, 0f, 0f, p1OverlayImagePaint)
+
+                    // 绘制P1图片底部的融入渐变效果 (如果配置了)
                     val fadeActualHeight = config.p1ImageBottomFadeHeight.coerceIn(0f, topBmp.height.toFloat())
                     if (fadeActualHeight > 0.1f) {
-                        val fadeStartY = topBmp.height.toFloat(); val fadeEndY = topBmp.height.toFloat() - fadeActualHeight
-                        
+                        val fadeStartY = topBmp.height.toFloat() // 从图片底部开始
+                        val fadeEndY = topBmp.height.toFloat() - fadeActualHeight // 向上渐变到此高度
+
                         // 使用多色点实现先急后缓的非线性渐变
                         val colors = intArrayOf(
-                            config.page1BackgroundColor,                       // 底部颜色（完全不透明）
+                            config.page1BackgroundColor,                       // 底部颜色（完全不透明，与下方背景色一致）
                             adjustAlpha(config.page1BackgroundColor, 0.8f),    // 30%高度位置（80%不透明）
                             adjustAlpha(config.page1BackgroundColor, 0.3f),    // 70%高度位置（30%不透明）
-                            Color.TRANSPARENT                                  // 顶部颜色（完全透明）
+                            Color.TRANSPARENT                                  // 顶部颜色（完全透明，融入图片）
                         )
-                        val positions = floatArrayOf(0f, 0.3f, 0.7f, 1f)
-                        
+                        val positions = floatArrayOf(0f, 0.3f, 0.7f, 1f) // 渐变色点的位置
+
                         overlayFadePaint.shader = LinearGradient(
-                            0f, fadeStartY, 0f, fadeEndY,
+                            0f, fadeStartY, 0f, fadeEndY, // 从下往上渐变
                             colors, positions, Shader.TileMode.CLAMP
                         )
-                        
                         canvas.drawRect(0f, fadeEndY, topBmp.width.toFloat(), fadeStartY, overlayFadePaint)
                     } else {
-                        overlayFadePaint.shader = null
+                        overlayFadePaint.shader = null // 确保没有残留的shader
                     }
                 } else { Log.w(TAG, "drawFrame (P1): Top cropped bitmap is invalid or recycled.") }
             } ?: Log.d(TAG, "drawFrame (P1): No top cropped bitmap available.")
+
+            // 恢复图层，应用整体透明度
             canvas.restore()
         }
     }
 
+    /**
+     * 根据给定的源位图、目标屏幕尺寸、P1图片高度比例、焦点和内容缩放因子，
+     * 准备用于P1前景显示的裁剪和缩放后的位图。
+     *
+     * @param sourceBitmap 原始的、采样处理过的位图。
+     * @param targetScreenWidth P1前景图片的目标宽度（通常等于屏幕宽度）。
+     * @param targetScreenHeight 目标屏幕的总高度（用于计算P1实际高度）。
+     * @param page1ImageHeightRatio P1图片部分相对于屏幕高度的比例。
+     * @param normalizedFocusX 归一化的焦点X坐标 (0.0 到 1.0)，表示图片中被关注的横向中心点。
+     * @param normalizedFocusY 归一化的焦点Y坐标 (0.0 到 1.0)，表示图片中被关注的纵向中心点。
+     * @param contentScaleFactor P1内容的缩放因子，大于等于1.0，用于在基础填充之上进一步放大内容。
+     * @return 处理完成的P1前景位图；如果输入无效或处理失败，则返回 null。
+     */
     fun preparePage1TopCroppedBitmap(
         sourceBitmap: Bitmap?, targetScreenWidth: Int, targetScreenHeight: Int,
         page1ImageHeightRatio: Float,
         normalizedFocusX: Float = 0.5f, normalizedFocusY: Float = 0.5f,
-        contentScaleFactor: Float = 1.0f // 新增参数
+        contentScaleFactor: Float = 1.0f
     ): Bitmap? {
         if (sourceBitmap == null || sourceBitmap.isRecycled) return null
         if (targetScreenWidth <= 0 || targetScreenHeight <= 0 || page1ImageHeightRatio <= 0f) return null
+
+        // 计算P1图片区域的实际目标高度
         val targetP1ActualHeight = (targetScreenHeight * page1ImageHeightRatio).roundToInt()
         if (targetP1ActualHeight <= 0) return null
 
-        val bmWidth = sourceBitmap.width; val bmHeight = sourceBitmap.height
+        val bmWidth = sourceBitmap.width
+        val bmHeight = sourceBitmap.height
         if (bmWidth <= 0 || bmHeight <= 0) return null
 
         var finalP1Bitmap: Bitmap? = null
         try {
-            // 1. P1区域的基础填充缩放 (使源图刚好填满P1区域的短边所需的缩放)
+            // 1. 计算基础填充缩放比例：使源图刚好填满P1区域的短边所需的最小缩放。
+            //    例如，如果P1区域是宽的，就按高度填满；如果P1区域是高的，就按宽度填满。
+            //    目标是 "cover" P1区域。
             val baseScaleXToFillP1 = targetScreenWidth.toFloat() / bmWidth.toFloat()
             val baseScaleYToFillP1 = targetP1ActualHeight.toFloat() / bmHeight.toFloat()
             val baseFillScale = max(baseScaleXToFillP1, baseScaleYToFillP1)
 
-            // 2. 应用用户自定义的内容缩放因子
-            val totalEffectiveScale = baseFillScale * contentScaleFactor.coerceAtLeast(1.0f) // 内容缩放至少为1倍（相对于基础填充）
+            // 2. 应用用户自定义的内容缩放因子。
+            //    总的有效缩放 = 基础填充缩放 * 用户内容缩放。
+            //    用户内容缩放至少为1.0（即不小于基础填充效果）。
+            val totalEffectiveScale = baseFillScale * contentScaleFactor.coerceAtLeast(1.0f)
 
-            // 3. 计算在源图像上需要裁剪的区域的尺寸（这个区域在经过totalEffectiveScale缩放后，将等于P1的目标显示尺寸）
+            // 3. 根据总有效缩放，反向计算在源图像上需要裁剪的区域的尺寸。
+            //    这个源图像上的裁剪区域，在经过 totalEffectiveScale 缩放后，将正好等于P1的目标显示尺寸。
             val cropWidthInSourcePx = targetScreenWidth / totalEffectiveScale
             val cropHeightInSourcePx = targetP1ActualHeight / totalEffectiveScale
 
-            // 4. 计算裁剪区域在源图像中的左上角坐标(srcX, srcY)
-            // 目标是：源图像上由(normalizedFocusX, normalizedFocusY)指定的点，成为裁剪出的小区域的中心点。
+            // 4. 计算裁剪区域在源图像中的左上角坐标(srcX, srcY)。
+            //    目标是：源图像上由(normalizedFocusX, normalizedFocusY)指定的点，成为这个裁剪出的小区域的中心点。
             var srcX = (normalizedFocusX * bmWidth) - (cropWidthInSourcePx / 2f)
             var srcY = (normalizedFocusY * bmHeight) - (cropHeightInSourcePx / 2f)
 
-            // 5. 边界检查，确保裁剪区域不超出源图像边界
+            // 5. 边界检查和校正：确保裁剪区域完全位于源图像内部。
             srcX = srcX.coerceIn(0f, bmWidth - cropWidthInSourcePx)
             srcY = srcY.coerceIn(0f, bmHeight - cropHeightInSourcePx)
-            // 再次确保裁剪宽高不超过源图像的剩余有效尺寸
+            // 再次确保裁剪的宽度和高度不超过源图像在 (srcX, srcY) 之后剩余的有效尺寸。
             val finalCropWidth = min(cropWidthInSourcePx, bmWidth - srcX).roundToInt()
             val finalCropHeight = min(cropHeightInSourcePx, bmHeight - srcY).roundToInt()
 
             if (finalCropWidth > 0 && finalCropHeight > 0) {
+                // 从源图像中裁剪出计算好的区域
                 val croppedBmp = Bitmap.createBitmap(sourceBitmap, srcX.roundToInt(), srcY.roundToInt(), finalCropWidth, finalCropHeight)
+                // 将裁剪出的位图缩放到P1区域的目标尺寸
                 finalP1Bitmap = Bitmap.createScaledBitmap(croppedBmp, targetScreenWidth, targetP1ActualHeight, true)
+                // 如果 croppedBmp 和 finalP1Bitmap 不是同一个对象（createScaledBitmap 可能会返回新对象），则回收中间的 croppedBmp
                 if (croppedBmp != finalP1Bitmap && !croppedBmp.isRecycled) croppedBmp.recycle()
-            } else { Log.w(TAG, "preparePage1TopCroppedBitmap: Calculated crop dimensions are zero or negative.") }
+            } else {
+                Log.w(TAG, "preparePage1TopCroppedBitmap: Calculated crop dimensions are zero or negative. W=$finalCropWidth, H=$finalCropHeight")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error in preparePage1TopCroppedBitmap (contentScale: $contentScaleFactor)", e)
-            finalP1Bitmap?.recycle(); finalP1Bitmap = null
+            finalP1Bitmap?.recycle() // 清理可能已创建的位图
+            finalP1Bitmap = null
         }
         return finalP1Bitmap
     }
 
+    /**
+     * 准备用于P2背景滚动的位图和其模糊版本。
+     *
+     * @param context Context 对象。
+     * @param sourceBitmap 原始的、采样处理过的位图。
+     * @param targetScreenWidth 目标屏幕宽度。
+     * @param targetScreenHeight 目标屏幕高度。
+     * @param blurRadius 背景模糊半径。
+     * @param blurDownscaleFactor 模糊处理前的降采样因子。
+     * @param blurIterations 模糊处理迭代次数。
+     * @return 返回一个 Pair，第一个元素是用于滚动的背景位图 (可能未模糊)，第二个元素是其模糊版本。
+     * 如果输入无效或处理失败，则对应的位图可能为 null。
+     */
     fun prepareScrollingAndBlurredBitmaps(
         context: Context, sourceBitmap: Bitmap?, targetScreenWidth: Int, targetScreenHeight: Int,
         blurRadius: Float, blurDownscaleFactor: Float, blurIterations: Int
@@ -474,209 +616,253 @@ object SharedWallpaperRenderer {
         if (sourceBitmap == null || sourceBitmap.isRecycled) return Pair(null, null)
         if (targetScreenWidth <= 0 || targetScreenHeight <= 0) return Pair(null, null)
 
-        var finalScrollingBackground: Bitmap? = null
-        var finalBlurredScrollingBackground: Bitmap? = null
+        var finalScrollingBackground: Bitmap? = null // 未模糊（或基础）的滚动背景
+        var finalBlurredScrollingBackground: Bitmap? = null // 模糊后的滚动背景
 
         val originalBitmapWidth = sourceBitmap.width.toFloat()
-        val originalBitmapHeight = sourceBitmap.height.toFloat() //修正：使用 sourceBitmap
+        val originalBitmapHeight = sourceBitmap.height.toFloat()
 
         if (originalBitmapWidth <= 0 || originalBitmapHeight <= 0) return Pair(null, null)
 
+        // 计算滚动背景图的尺寸：通常按屏幕高度缩放，宽度自适应，以提供横向滚动空间
         val scaleToFitScreenHeight = targetScreenHeight / originalBitmapHeight
         val scaledWidthForScrollingBg = (originalBitmapWidth * scaleToFitScreenHeight).roundToInt()
 
         if (scaledWidthForScrollingBg <= 0) return Pair(null, null)
 
-        var baseScrollingBitmap: Bitmap? = null // 用于滚动的底图
-        var downscaledForBlur: Bitmap? = null   // 为模糊而降采样的图
-        var blurredDownscaled: Bitmap? = null   // 降采样后模糊的图
-        var upscaledBlurredBitmap: Bitmap? = null // 模糊后又放大回来的图
+        var baseScrollingBitmap: Bitmap? = null    // 经过缩放，用于滚动的底图
+        var downscaledForBlur: Bitmap? = null      // 为优化模糊而降采样的图
+        var blurredDownscaled: Bitmap? = null      // 降采样后并模糊的图
+        var upscaledBlurredBitmap: Bitmap? = null  // （未使用）如果需要，这是模糊后又放大回来的图
 
         try {
+            // 1. 准备基础的滚动背景图 (未模糊)
             baseScrollingBitmap = Bitmap.createScaledBitmap(
                 sourceBitmap,
                 scaledWidthForScrollingBg,
                 targetScreenHeight,
-                true
+                true //启用filter以获得更好的缩放质量
             )
             finalScrollingBackground = baseScrollingBitmap // 至少这个是准备好了的
 
+            // 2. 如果需要模糊，则处理模糊背景图
             if (blurRadius > 0.01f && baseScrollingBitmap != null && !baseScrollingBitmap.isRecycled) {
-                val sourceForActualBlur = baseScrollingBitmap
+                val sourceForActualBlur = baseScrollingBitmap // 将要进行模糊操作的源泉
                 val actualDownscaleFactor = blurDownscaleFactor.coerceIn(0.01f, 0.5f)
                 val downscaledWidth = (sourceForActualBlur.width * actualDownscaleFactor).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
                 val downscaledHeight = (sourceForActualBlur.height * actualDownscaleFactor).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
+
                 if (actualDownscaleFactor < 0.99f && (downscaledWidth < sourceForActualBlur.width || downscaledHeight < sourceForActualBlur.height)) {
-                    // 使用Bitmap.createScaledBitmap进行降采样（回退优化）
+                    // 执行降采样
                     downscaledForBlur = Bitmap.createScaledBitmap(sourceForActualBlur, downscaledWidth, downscaledHeight, true)
-                      blurredDownscaled = blurBitmapUsingRenderScript(context, downscaledForBlur, blurRadius.coerceIn(0.1f, 25.0f), blurIterations)
+                    // 模糊降采样后的图
+                    blurredDownscaled = blurBitmapUsingRenderScript(context, downscaledForBlur, blurRadius.coerceIn(0.1f, 25.0f), blurIterations)
+
                     if (blurredDownscaled != null) {
-                        // 不进行放大，直接使用降采样后的模糊图像
+                        // 当前策略：直接使用模糊后的降采样图像，不进行放大。
+                        // 这意味着 finalBlurredScrollingBackground 的尺寸可能小于 finalScrollingBackground。
+                        // 这个选择是为了性能，如果需要模糊图和原滚动图尺寸一致，则需要在此处添加放大步骤。
                         finalBlurredScrollingBackground = blurredDownscaled
-                        Log.d(TAG, "prepareScrollingAndBlurredBitmaps: 使用降采样后的模糊图像，跳过放大步骤")
+                        Log.d(TAG, "prepareScrollingAndBlurredBitmaps: Using downscaled blurred image, size: ${blurredDownscaled.width}x${blurredDownscaled.height}")
                     } else {
-                        // 降采样或模糊降采样图失败，直接在原始缩放图上模糊作为后备
+                        // 如果降采样或模糊降采样图失败，作为后备，直接在原始缩放的滚动图 (baseScrollingBitmap) 上进行模糊
                         Log.w(TAG, "Blurred downscaled bitmap is null, falling back to blur on base scrolling bitmap.")
                         finalBlurredScrollingBackground = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
                     }
                 } else {
-                    // 不需要降采样，直接模糊
+                    // 不需要降采样 (例如，downscaleFactor 接近 1.0)，直接在 baseScrollingBitmap 上模糊
                     finalBlurredScrollingBackground = blurBitmapUsingRenderScript(context, sourceForActualBlur, blurRadius, blurIterations)
                 }
             } else if (baseScrollingBitmap != null && !baseScrollingBitmap.isRecycled) {
-                // 不需要模糊，但要确保 finalBlurredScrollingBackground 不是 null (例如，可以复制 baseScrollingBitmap)
-                // 或者保持为 null，取决于上层逻辑如何处理。通常如果没有模糊，它就是 null。
-                // finalBlurredScrollingBackground = baseScrollingBitmap.copy(baseScrollingBitmap.config, true) // 如果不模糊时希望它等于原图
+                // 不需要模糊，finalBlurredScrollingBackground 保持为 null 或根据需要设置为 baseScrollingBitmap 的副本。
+                // 当前行为是保持为 null。
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error during prepareScrollingAndBlurredBitmaps", e)
-            // 出错时，回收所有中间产物，并将最终结果设为null
+            // 出错时，回收所有可能已创建的中间位图，并将最终结果设为null
             upscaledBlurredBitmap?.recycle()
             blurredDownscaled?.recycle()
             downscaledForBlur?.recycle()
-            // baseScrollingBitmap 可能是 finalScrollingBackground，也可能不是，要小心回收
-            if (finalScrollingBackground != baseScrollingBitmap) finalScrollingBackground?.recycle() // 如果 final 和 base 不是同一个对象
-            baseScrollingBitmap?.recycle() // base 总是要尝试回收，因为它在这里创建
+            // baseScrollingBitmap 可能是 finalScrollingBackground，也可能已被赋值给 finalScrollingBackground
+            // 如果 finalScrollingBackground 不是 baseScrollingBitmap（理论上在此代码块中它们在成功路径是同一个），则单独回收
+            if (finalScrollingBackground != baseScrollingBitmap) finalScrollingBackground?.recycle()
+            baseScrollingBitmap?.recycle() // baseScrollingBitmap 是在此函数内创建的，总应尝试回收
 
             finalScrollingBackground = null
             finalBlurredScrollingBackground = null
         } finally {
-            // 确保在 finally 中回收那些在 try 块中成功创建但在 catch 中可能未被处理的中间位图
-            // blurredDownscaled 和 downscaledForBlur 应该只在它们不是最终返回的 upscaledBlurredBitmap 的一部分时回收
-            // 但由于 upscaledBlurredBitmap 是从 blurredDownscaled 创建的，所以 blurredDownscaled 和 downscaledForBlur 在成功路径下可以被安全回收
-            if (upscaledBlurredBitmap != blurredDownscaled) blurredDownscaled?.recycle() // 如果 upscaled 不是 blurredDownscaled 本身
-            if (upscaledBlurredBitmap != downscaledForBlur && blurredDownscaled != downscaledForBlur) downscaledForBlur?.recycle() // 如果也不是 downscaledForBlur
+            // 清理那些在 try 块中成功创建但在 catch 中可能未被处理的中间位图
+            // 确保不会回收最终返回的位图对象
+            if (finalBlurredScrollingBackground != blurredDownscaled) blurredDownscaled?.recycle()
+            if (finalBlurredScrollingBackground != downscaledForBlur && blurredDownscaled != downscaledForBlur) downscaledForBlur?.recycle()
+            // upscaledBlurredBitmap 在当前逻辑下通常不会被赋值给最终结果，所以可以安全回收（如果它被创建过）
+            // 但为了保险，如果它被意外赋值，这里的逻辑需要更严谨。当前代码路径下，它基本用不上。
         }
         return Pair(finalScrollingBackground, finalBlurredScrollingBackground)
-    }    fun loadAndProcessInitialBitmaps(
+    }
+
+    /**
+     * 从给定的 URI 加载图片，并处理生成所有初始状态所需的位图版本。
+     * 包括：经过采样的高质量源图、P1前景裁剪图、P2滚动背景图及其模糊版本。
+     *
+     * @param context Context 对象。
+     * @param imageUri 要加载的图片的 URI。
+     * @param targetScreenWidth 目标屏幕/画布的宽度。
+     * @param targetScreenHeight 目标屏幕/画布的高度。
+     * @param page1ImageHeightRatio P1前景图片相对于屏幕高度的比例。
+     * @param normalizedFocusX P1前景的归一化焦点X坐标。
+     * @param normalizedFocusY P1前景的归一化焦点Y坐标。
+     * @param contentScaleFactorForP1 P1前景的内容缩放因子。
+     * @param blurRadiusForBackground P2背景的模糊半径。
+     * @param blurDownscaleFactor P2背景模糊处理时的降采样因子。
+     * @param blurIterations P2背景模糊处理的迭代次数。
+     * @return 返回一个 [WallpaperBitmaps] 对象，包含所有处理好的位图；如果加载或处理失败，则对应位图可能为 null。
+     */
+    fun loadAndProcessInitialBitmaps(
         context: Context, imageUri: Uri?, targetScreenWidth: Int, targetScreenHeight: Int,
         page1ImageHeightRatio: Float, normalizedFocusX: Float, normalizedFocusY: Float,
-        contentScaleFactorForP1: Float, 
+        contentScaleFactorForP1: Float,
         blurRadiusForBackground: Float, blurDownscaleFactor: Float, blurIterations: Int
     ): WallpaperBitmaps {
-        if (imageUri == null || targetScreenWidth <= 0 || targetScreenHeight <= 0) return WallpaperBitmaps(null, null, null, null)
-        
-        var sourceSampled: Bitmap? = null
-        var blurSourceBitmap: Bitmap? = null
-        
+        if (imageUri == null || targetScreenWidth <= 0 || targetScreenHeight <= 0) {
+            return WallpaperBitmaps(null, null, null, null)
+        }
+
+        var sourceSampled: Bitmap? = null // 高质量的、经过内存优化的源图
+        var blurSourceBitmap: Bitmap? = null // （可选）专门为模糊处理加载的低分辨率源图
+
         try {
-            // 第一步：检查图像尺寸
+            // --- 第一步：获取图片原始尺寸信息 ---
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(imageUri)?.use { BitmapFactory.decodeStream(it, null, opts) }
-            if (opts.outWidth <= 0 || opts.outHeight <= 0) return WallpaperBitmaps(null, null, null, null)
-            
-            // 第二步：加载高质量图像（用于非模糊的显示）
-            val highQualityOpts = BitmapFactory.Options().apply { 
-                inSampleSize = calculateInSampleSize(opts, targetScreenWidth * 2, targetScreenHeight * 2)
-                inJustDecodeBounds = false
-                inPreferredConfig = Bitmap.Config.ARGB_8888
+            if (opts.outWidth <= 0 || opts.outHeight <= 0) {
+                Log.e(TAG, "Failed to get image bounds for $imageUri")
+                return WallpaperBitmaps(null, null, null, null)
             }
-            
-            context.contentResolver.openInputStream(imageUri)?.use { 
-                sourceSampled = BitmapFactory.decodeStream(it, null, highQualityOpts) 
+
+            // --- 第二步：加载高质量的源图 (sourceSampled) ---
+            // 用于 P1 前景和未模糊的 P2 滚动背景。
+            // 采样率基于屏幕尺寸的两倍，以保证在缩放和裁剪后仍有足够细节。
+            val highQualityOpts = BitmapFactory.Options().apply {
+                inSampleSize = calculateInSampleSize(opts, targetScreenWidth * 2, targetScreenHeight * 2) // 计算合适的采样率
+                inJustDecodeBounds = false // 实际解码图片
+                inPreferredConfig = Bitmap.Config.ARGB_8888 // 偏好高质量的颜色配置
             }
-            
-            if (sourceSampled == null || sourceSampled!!.isRecycled) { 
-                Log.e(TAG, "Fail decode sourceSampled $imageUri")
-                return WallpaperBitmaps(null, null, null, null) 
+            context.contentResolver.openInputStream(imageUri)?.use {
+                sourceSampled = BitmapFactory.decodeStream(it, null, highQualityOpts)
             }
-            
-            // 准备第一页顶部裁剪的图像 - 始终使用高质量图像
+            if (sourceSampled == null || sourceSampled!!.isRecycled) {
+                Log.e(TAG, "Failed to decode high-quality sourceSampled from $imageUri")
+                return WallpaperBitmaps(null, null, null, null)
+            }
+
+            // --- 第三步：准备 P1 前景裁剪图 ---
+            // 始终基于高质量的 sourceSampled 图进行处理。
             val topCropped = preparePage1TopCroppedBitmap(
-                sourceSampled, targetScreenWidth, targetScreenHeight, 
+                sourceSampled, targetScreenWidth, targetScreenHeight,
                 page1ImageHeightRatio, normalizedFocusX, normalizedFocusY, contentScaleFactorForP1
             )
-            
-            // 准备滚动背景和模糊背景
-            var scrollingBackground: Bitmap? = null
+
+            // --- 第四步：准备 P2 滚动背景图 和 模糊背景图 ---
+            var scrollingBackground: Bitmap?
             var blurredBackground: Bitmap? = null
-              // 如果需要模糊效果，优化处理：针对模糊背景使用较低分辨率的图像源
-            if (blurRadiusForBackground > 0.01f) {
-                // 对于需要模糊的图片，使用更大的采样率直接加载低分辨率版本
-                // 根据模糊降采样因子计算合适的采样大小
-                val effectiveBlurDownscale = blurDownscaleFactor.coerceIn(0.05f, 1.0f)
-                val blurSampleSize = (1.0f / effectiveBlurDownscale).toInt().coerceAtLeast(1)
-                
-                // 针对模糊效果专门加载低分辨率图像
-                val blurOpts = BitmapFactory.Options().apply { 
-                    inSampleSize = highQualityOpts.inSampleSize * blurSampleSize
+
+            if (blurRadiusForBackground > 0.01f) { // 如果需要模糊效果
+                // 优化策略：为模糊背景专门加载一个分辨率更低的源图 (blurSourceBitmap)
+                val effectiveBlurDownscaleForLoad = blurDownscaleFactor.coerceIn(0.05f, 1.0f) // 降采样因子
+                // 基于高质量图的采样率，进一步增加采样率来获得低分辨率图
+                val blurSampleSize = (1.0f / effectiveBlurDownscaleForLoad).toInt().coerceAtLeast(1)
+                val finalBlurLoadSampleSize = highQualityOpts.inSampleSize * blurSampleSize
+
+                val blurSpecificOpts = BitmapFactory.Options().apply {
+                    inSampleSize = finalBlurLoadSampleSize
                     inJustDecodeBounds = false
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                    inPreferredConfig = Bitmap.Config.ARGB_8888 // 通常模糊对颜色配置要求不高，但保持一致
                 }
-                
-                Log.d(PERF_TAG, "模糊图像使用采样率: ${blurOpts.inSampleSize} (高质量采样率: ${highQualityOpts.inSampleSize} × 模糊采样: $blurSampleSize)")
-                
-                context.contentResolver.openInputStream(imageUri)?.use { 
-                    blurSourceBitmap = BitmapFactory.decodeStream(it, null, blurOpts) 
+                Log.d(PERF_TAG, "Loading low-res bitmap for blur with sampleSize: $finalBlurLoadSampleSize (HQ_SS=${highQualityOpts.inSampleSize} * Blur_SS=$blurSampleSize)")
+                context.contentResolver.openInputStream(imageUri)?.use {
+                    blurSourceBitmap = BitmapFactory.decodeStream(it, null, blurSpecificOpts)
                 }
-                
-                if (blurSourceBitmap != null) {
-                    // 创建高质量无模糊的滚动背景
+
+                if (blurSourceBitmap != null && !blurSourceBitmap!!.isRecycled) {
+                    // 1. 准备高质量的、未模糊的滚动背景图 (scrollingBackground)
+                    //    仍然基于 sourceSampled (高质量源图)
                     scrollingBackground = prepareScrollingBitmap(sourceSampled, targetScreenWidth, targetScreenHeight)
-                    
-                    // 直接在低分辨率图上应用模糊，然后缩放到目标尺寸
+
+                    // 2. 在低分辨率的 blurSourceBitmap 上直接应用模糊
                     val blurStartTime = SystemClock.elapsedRealtime()
-                    
-                    // 对低分辨率图直接应用模糊
                     val blurredLowRes = blurBitmapUsingRenderScript(context, blurSourceBitmap, blurRadiusForBackground, blurIterations)
-                      if (blurredLowRes != null) {
-                        // 不进行放大，直接使用低分辨率模糊图像
+
+                    if (blurredLowRes != null) {
+                        // 当前策略：直接使用这个低分辨率模糊后的图像作为最终的 blurredBackground，不进行放大。
+                        // 这是因为壁纸服务在绘制时，会将此图拉伸到屏幕大小。
+                        // 如果希望模糊图和高质量滚动图在处理前尺寸一致，这里需要对 blurredLowRes 进行放大。
                         blurredBackground = blurredLowRes
-                        Log.d(TAG, "loadAndProcessInitialBitmaps: 使用低分辨率模糊图像，跳过放大步骤")
+                        Log.d(TAG, "Using low-resolution pre-blurred bitmap. Size: ${blurredBackground.width}x${blurredBackground.height}")
                     }
-                    
                     val totalBlurTime = SystemClock.elapsedRealtime() - blurStartTime
-                    Log.d(PERF_TAG, "优化的模糊处理总耗时: ${totalBlurTime}ms")
+                    Log.d(PERF_TAG, "Optimized blur processing (on low-res source) total time: ${totalBlurTime}ms")
                 } else {
-                    Log.w(TAG, "Failed to load low resolution bitmap for blur, falling back to standard method")
-                    // 如果低分辨率图加载失败，回退到标准方法
+                    // 如果加载低分辨率图失败，则回退到标准方法：
+                    // 即在高质量的 sourceSampled 图上进行缩放、然后降采样模糊。
+                    Log.w(TAG, "Failed to load low-resolution bitmap for blur. Falling back to standard blur path on high-quality source.")
                     val (scrolling, blurred) = prepareScrollingAndBlurredBitmaps(
-                        context, sourceSampled, targetScreenWidth, targetScreenHeight, 
+                        context, sourceSampled, targetScreenWidth, targetScreenHeight,
                         blurRadiusForBackground, blurDownscaleFactor, blurIterations
                     )
                     scrollingBackground = scrolling
                     blurredBackground = blurred
                 }
             } else {
-                // 如果不需要模糊效果，只准备滚动背景
+                // 不需要模糊效果，只准备未模糊的滚动背景图
                 scrollingBackground = prepareScrollingBitmap(sourceSampled, targetScreenWidth, targetScreenHeight)
+                // blurredBackground 保持为 null
             }
 
-            // 清理临时资源
+            // 清理临时的低分辨率源图 (如果加载过)
             blurSourceBitmap?.recycle()
-            
+
             return WallpaperBitmaps(sourceSampled, topCropped, scrollingBackground, blurredBackground)
-        } catch (e: Exception) { 
-            Log.e(TAG, "Error loadAndProcessInitialBitmaps $imageUri", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in loadAndProcessInitialBitmaps for $imageUri", e)
             sourceSampled?.recycle()
             blurSourceBitmap?.recycle()
-            return WallpaperBitmaps(null, null, null, null) 
+            return WallpaperBitmaps(null, null, null, null)
         }
     }
-    
-    // 辅助方法：只准备滚动背景（不包含模糊处理）
+
+    /**
+     * 辅助方法：仅准备用于滚动的背景位图 (不进行模糊处理)。
+     * 将源位图缩放到适合屏幕高度，宽度按比例调整。
+     *
+     * @param sourceBitmap 原始位图。
+     * @param targetScreenWidth 目标屏幕宽度。
+     * @param targetScreenHeight 目标屏幕高度。
+     * @return 处理好的滚动背景位图；如果失败则返回 null。
+     */
     private fun prepareScrollingBitmap(
         sourceBitmap: Bitmap?, targetScreenWidth: Int, targetScreenHeight: Int
     ): Bitmap? {
         if (sourceBitmap == null || sourceBitmap.isRecycled) return null
         if (targetScreenWidth <= 0 || targetScreenHeight <= 0) return null
-        
+
         val originalBitmapWidth = sourceBitmap.width.toFloat()
         val originalBitmapHeight = sourceBitmap.height.toFloat()
-        
+
         if (originalBitmapWidth <= 0 || originalBitmapHeight <= 0) return null
-        
+
+        // 按屏幕高度缩放，宽度自适应
         val scaleToFitScreenHeight = targetScreenHeight / originalBitmapHeight
         val scaledWidthForScrollingBg = (originalBitmapWidth * scaleToFitScreenHeight).roundToInt()
-        
+
         if (scaledWidthForScrollingBg <= 0) return null
-        
+
         return try {
             Bitmap.createScaledBitmap(
                 sourceBitmap,
                 scaledWidthForScrollingBg,
                 targetScreenHeight,
-                true
+                true // filter
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error in prepareScrollingBitmap", e)
@@ -684,69 +870,154 @@ object SharedWallpaperRenderer {
         }
     }
 
+    /**
+     * 计算 BitmapFactory.Options 的 inSampleSize 值。
+     * 用于在解码图片时进行下采样，以减少内存占用。
+     * @param options 包含原始图片尺寸的 BitmapFactory.Options 对象。
+     * @param reqWidth 期望的目标宽度。
+     * @param reqHeight 期望的目标高度。
+     * @return 计算得到的 inSampleSize 值 (总是2的幂，最小为1)。
+     */
     private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
-        val (h, w) = options.outHeight to options.outWidth; var sample = 1
-        if (h > reqHeight || w > reqWidth) { val halfH = h / 2; val halfW = w / 2
-            while (halfH / sample >= reqHeight && halfW / sample >= reqWidth) { sample *= 2; if (sample > 8) break }
+        val (h, w) = options.outHeight to options.outWidth
+        var sample = 1
+        if (h > reqHeight || w > reqWidth) {
+            val halfH = h / 2
+            val halfW = w / 2
+            // 循环减半尺寸，直到采样后的尺寸小于等于请求尺寸
+            while (halfH / sample >= reqHeight && halfW / sample >= reqWidth) {
+                sample *= 2
+                if (sample > 8) break // 限制最大采样率，避免过度缩小
+            }
         }
         return sample
-    }    private fun blurBitmapUsingRenderScript(context: Context, bitmap: Bitmap, radius: Float, iterations: Int = 1): Bitmap? {
-        if (bitmap.isRecycled || bitmap.width == 0 || bitmap.height == 0) return null
-        val cRadius = radius.coerceIn(0.1f, 25.0f); val actualIter = iterations.coerceAtLeast(1)
-        if (cRadius < 0.1f && actualIter == 1) { try { return bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true) } catch (e: Exception) { Log.e(TAG, "Fail copy no-blur", e); return null } }
-        var rs: RenderScript? = null; var script: ScriptIntrinsicBlur? = null
-        var currentBmp: Bitmap = bitmap; var outBmp: Bitmap? = null
-        
-        // 模糊过程中的详细计时 (不输出详细log，仅在汇总时使用)
-        val blurDetailStartTime = SystemClock.elapsedRealtime()
-        var scriptInitTime = 0L
-        var iterationTimes = mutableListOf<Long>()
-        
-        try {
-            val rsStartTime = SystemClock.elapsedRealtime()
-            rs = RenderScript.create(context); 
-            script = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs)); 
-            script.setRadius(cRadius)
-            scriptInitTime = SystemClock.elapsedRealtime() - rsStartTime
-            
-            for (i in 0 until actualIter) {
-                val iterStartTime = SystemClock.elapsedRealtime()
-                outBmp = Bitmap.createBitmap(currentBmp.width, currentBmp.height, currentBmp.config ?: Bitmap.Config.ARGB_8888)
-                val ain = Allocation.createFromBitmap(rs, currentBmp); val aout = Allocation.createFromBitmap(rs, outBmp)
-                script.setInput(ain); script.forEach(aout); aout.copyTo(outBmp)
-                ain.destroy(); aout.destroy()
-                if (currentBmp != bitmap && currentBmp != outBmp) currentBmp.recycle()
-                currentBmp = outBmp!!
-                iterationTimes.add(SystemClock.elapsedRealtime() - iterStartTime)
-            }
-            
-            // 不再单独输出模糊详细统计信息，改为在汇总统计时处理
-            
-            return currentBmp
-        } catch (e: Exception) { 
-            Log.e(TAG, "RS blur fail", e); 
-            outBmp?.recycle(); 
-            if (currentBmp != bitmap && currentBmp != outBmp) currentBmp.recycle(); 
+    }
+    /**
+     * 使用 RenderScript 对给定的 Bitmap 应用高斯模糊效果。
+     *
+     * @param context Context 对象，用于创建 RenderScript 实例。
+     * @param bitmap 要模糊的原始 Bitmap。
+     * @param radius 模糊半径，有效值范围建议为 0.1f 到 25.0f。值越大，模糊程度越高。
+     * @param iterations 模糊迭代次数，默认为1。多次迭代可以增强模糊效果，但会增加处理时间。
+     * @return 返回模糊处理后的新 Bitmap 对象。如果原始 Bitmap 无效、无需模糊（半径过小且迭代1次）或处理失败，则可能返回原始 Bitmap 的副本或 null。
+     */
+    private fun blurBitmapUsingRenderScript(context: Context, bitmap: Bitmap, radius: Float, iterations: Int = 1): Bitmap? {
+        // 输入校验
+        if (bitmap.isRecycled || bitmap.width == 0 || bitmap.height == 0) {
+            Log.w(TAG, "blurBitmapUsingRenderScript: Input bitmap is invalid.")
             return null
-        } finally { 
-            script?.destroy(); 
-            rs?.destroy() 
+        }
+
+        // 规范化参数
+        val clampedRadius = radius.coerceIn(0.1f, 25.0f) // RenderScript 模糊半径通常限制在 (0, 25]
+        val actualIterations = iterations.coerceAtLeast(1)
+
+        // 如果模糊半径非常小且只有一次迭代，可以认为不需要模糊，直接返回副本以避免不必要的处理
+        if (clampedRadius < 0.1f && actualIterations == 1) {
+            return try {
+                bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to copy bitmap for no-blur case", e)
+                null
+            }
+        }
+
+        var rs: RenderScript? = null
+        var script: ScriptIntrinsicBlur? = null
+        var currentIterationBitmap: Bitmap = bitmap // 当前迭代的输入位图
+        var outputBitmap: Bitmap? = null          // 当前迭代的输出位图
+
+        // 性能计时相关 (可以根据需要启用或移除详细日志)
+        // val totalBlurProcessStartTime = SystemClock.elapsedRealtime()
+        // var scriptInitTime = 0L
+        // val iterationTimes = mutableListOf<Long>()
+
+        try {
+            // val rsCreateStartTime = SystemClock.elapsedRealtime()
+            rs = RenderScript.create(context)
+            script = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs)) // U8_4 对应 ARGB_8888
+            script.setRadius(clampedRadius)
+            // scriptInitTime = SystemClock.elapsedRealtime() - rsCreateStartTime
+
+            for (i in 0 until actualIterations) {
+                // val iterStartTime = SystemClock.elapsedRealtime()
+
+                // 为本次迭代的输出创建一个新的 Bitmap
+                // 如果是第一次迭代，且 currentIterationBitmap 就是传入的 bitmap，
+                // 那么 outputBitmap 必须是一个新的实例。
+                // 如果不是第一次迭代，currentIterationBitmap 是上一次的 outputBitmap，
+                // 我们可以考虑复用，但为了逻辑清晰和避免潜在问题，每次都创建新的 outputBitmap 更安全，
+                // 并在迭代结束时回收不再需要的 currentIterationBitmap (如果它不是原始输入 bitmap)。
+                outputBitmap = Bitmap.createBitmap(
+                    currentIterationBitmap.width,
+                    currentIterationBitmap.height,
+                    currentIterationBitmap.config ?: Bitmap.Config.ARGB_8888
+                )
+
+                val ain = Allocation.createFromBitmap(rs, currentIterationBitmap) // 输入 Allocation
+                val aout = Allocation.createFromBitmap(rs, outputBitmap)          // 输出 Allocation
+
+                script.setInput(ain)    // 设置模糊脚本的输入
+                script.forEach(aout)    // 执行模糊操作，结果写入 aout
+                aout.copyTo(outputBitmap) // 将结果从 Allocation 复制回 outputBitmap
+
+                // 清理本次迭代的 Allocation 对象
+                ain.destroy()
+                aout.destroy()
+
+                // 如果 currentIterationBitmap 不是原始传入的 bitmap (即它是上一次迭代的输出)，
+                // 并且它也不同于本次新创建的 outputBitmap，那么它可以被回收了。
+                if (currentIterationBitmap != bitmap && currentIterationBitmap != outputBitmap) {
+                    currentIterationBitmap.recycle()
+                }
+                // 更新 currentIterationBitmap 为本次的输出，作为下一次迭代的输入 (如果还有迭代)
+                currentIterationBitmap = outputBitmap
+
+                // iterationTimes.add(SystemClock.elapsedRealtime() - iterStartTime)
+            }
+            // val totalBlurTime = SystemClock.elapsedRealtime() - totalBlurProcessStartTime
+            // Log.d(PERF_TAG, "RS Blur Detail: Init=${scriptInitTime}ms, Iterations(${iterationTimes.size}): ${iterationTimes.joinToString()}ms, TotalBlurInternal=${totalBlurTime}ms")
+
+            // 经过所有迭代后，currentIterationBitmap (即最后一次的 outputBitmap) 就是最终的模糊结果
+            return currentIterationBitmap
+
+        } catch (e: Exception) {
+            Log.e(TAG, "RenderScript blur failed", e)
+            // 发生异常时，尝试回收可能已创建的 outputBitmap
+            outputBitmap?.recycle()
+            // 如果 currentIterationBitmap 在异常发生时不是原始 bitmap，也不是刚创建失败的 outputBitmap，也尝试回收
+            if (currentIterationBitmap != bitmap && currentIterationBitmap != outputBitmap) {
+                currentIterationBitmap.recycle()
+            }
+            return null
+        } finally {
+            // 确保 RenderScript 和 ScriptIntrinsicBlur 对象被销毁
+            script?.destroy()
+            rs?.destroy()
+            // 注意：最终返回的 currentIterationBitmap (即模糊结果) 不应在此处回收。
+            // 如果在循环中 currentIterationBitmap 被赋值为 outputBitmap，而 outputBitmap 在异常时被回收，
+            // 那么 currentIterationBitmap 也指向了那个被回收的位图，这需要注意。
+            // 上面的逻辑确保了只有中间迭代产生的、不再被引用的位图会被回收。
         }
     }
 
-    // 输出性能统计汇总数据
+    /**
+     * 输出性能统计的汇总数据到日志。
+     * 通常在进行一系列模糊测试后调用。
+     */
     private fun outputPerformanceStats() {
         val sb = StringBuilder()
-        sb.append("【模糊性能汇总统计】共${blurTestCounter}次测试\n")
-        sb.append("降采样阶段: ${totalDownscaleTimeStats}\n")
-        sb.append("模糊处理阶段: ${totalBlurTimeStats}\n")
-        sb.append("放大处理阶段: ${totalUpscaleTimeStats}\n")
-        sb.append("总处理时间: ${totalProcessTimeStats}")
-        
+        sb.append("【Blur Performance Summary】Total ${blurTestCounter} tests:\n")
+        sb.append("Downscale Phase: ${totalDownscaleTimeStats}\n")
+        sb.append("Blur Process Phase: ${totalBlurTimeStats}\n")
+        sb.append("Upscale Phase: ${totalUpscaleTimeStats}\n") // 当前通常为0
+        sb.append("Total Processing Time: ${totalProcessTimeStats}")
         Log.d(PERF_TAG, sb.toString())
     }
-    
-    // 重置性能统计数据
+
+    /**
+     * 重置所有性能统计数据，以便开始新的测试周期。
+     */
     private fun resetPerformanceStats() {
         blurTestCounter = 0
         totalDownscaleTimeStats.reset()
@@ -755,10 +1026,22 @@ object SharedWallpaperRenderer {
         totalProcessTimeStats.reset()
     }
 
+    /**
+     * 在给定的画布上绘制占位符。
+     * 通常在图片尚未加载或加载失败时调用。
+     * @param canvas 目标画布。
+     * @param width 画布宽度。
+     * @param height 画布高度。
+     * @param text 要显示的占位文本。
+     */
     fun drawPlaceholder(canvas: Canvas, width: Int, height: Int, text: String) {
         if (width <= 0 || height <= 0) return
-        placeholderBgPaint.alpha = 255; canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), placeholderBgPaint)
-        placeholderTextPaint.alpha = 200; val textY = height / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
+        // 绘制深灰色背景
+        placeholderBgPaint.alpha = 255
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), placeholderBgPaint)
+        // 绘制居中的白色提示文字
+        placeholderTextPaint.alpha = 200
+        val textY = height / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f) // 计算文字垂直居中的Y坐标
         canvas.drawText(text, width / 2f, textY, placeholderTextPaint)
     }
 }
