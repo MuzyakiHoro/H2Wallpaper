@@ -186,7 +186,8 @@ class MainActivity : AppCompatActivity(), MainActivityActions {
         val styleBP1FocusX = mainViewModel.styleBP1FocusX.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_X
         val styleBP1FocusY = mainViewModel.styleBP1FocusY.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_Y
         val styleBP1ScaleFactor = mainViewModel.styleBP1ScaleFactor.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_P1_SCALE_FACTOR
-
+        val styleBMasksFlippedState = mainViewModel.styleBMasksHorizontallyFlipped.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_MASKS_HORIZONTALLY_FLIPPED
+        // ...
         // 调用 WallpaperPreviewView 的 setConfigValues 方法更新其渲染参数
         // ** 你需要在 WallpaperPreviewView.kt 中扩展 setConfigValues 方法以接收这些新参数 **
         wallpaperPreviewView.setConfigValues(
@@ -221,7 +222,8 @@ class MainActivity : AppCompatActivity(), MainActivityActions {
             styleBLowerMaskMaxRotation = styleBLowerMaskMaxRotation,
             styleBP1FocusX = styleBP1FocusX,
             styleBP1FocusY = styleBP1FocusY,
-            styleBP1ScaleFactor = styleBP1ScaleFactor
+            styleBP1ScaleFactor = styleBP1ScaleFactor,
+            styleBMasksHorizontallyFlipped = if (p1StyleType == 1) styleBMasksFlippedState else false,
         )
     }
 
@@ -279,7 +281,7 @@ class MainActivity : AppCompatActivity(), MainActivityActions {
         mainViewModel.backgroundBlurRadius.observe(this) { syncPreviewViewWithViewModelConfig() }
         mainViewModel.blurDownscaleFactor.observe(this) { syncPreviewViewWithViewModelConfig() }
         mainViewModel.blurIterations.observe(this) { syncPreviewViewWithViewModelConfig() }
-
+        mainViewModel.styleBMasksHorizontallyFlipped.observe(this) { syncPreviewViewWithViewModelConfig() }
         // --- 新增：观察 P1 样式类型和样式 B 的参数 ---
         mainViewModel.p1StyleType.observe(this) { styleType ->
             Log.d(TAG, "P1 Style Type changed to: $styleType, syncing preview.")

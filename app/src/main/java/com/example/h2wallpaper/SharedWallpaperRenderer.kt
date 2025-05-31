@@ -171,6 +171,7 @@ object SharedWallpaperRenderer {
         val styleBP1FocusY: Float,
         val styleBP1ScaleFactor: Float,
         val p1StyleType: Int,
+        val styleBMasksHorizontallyFlipped: Boolean,
     )
 
     // --- Paint 对象定义 ---
@@ -1135,6 +1136,9 @@ object SharedWallpaperRenderer {
             val actualRotationUpper = -upperMaxRotation * parameterA
             val actualRotationLower = -lowerMaxRotation * parameterA
 
+            if (config.styleBMasksHorizontallyFlipped) {
+                canvas.scale(-1f, 1f, config.screenWidth / 2f, config.screenHeight / 2f)
+            }
             // 5. 准备遮罩的 Paint
             val styleBMaskPaint = Paint().apply {
                 style = Paint.Style.FILL

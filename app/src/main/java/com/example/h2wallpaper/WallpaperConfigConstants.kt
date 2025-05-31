@@ -78,6 +78,9 @@ object WallpaperConfigConstants {
     const val KEY_STYLE_B_UPPER_MASK_MAX_ROTATION = "styleBUpperMaskMaxRotation"
     /** (样式 B) 存储下遮罩最大旋转角度的键名 */
     const val KEY_STYLE_B_LOWER_MASK_MAX_ROTATION = "styleBLowerMaskMaxRotation"
+    /** (样式 B) 存储遮罩是否水平翻转的键名 */
+    const val KEY_STYLE_B_MASKS_HORIZONTALLY_FLIPPED = "styleBMasksHorizontallyFlipped"
+
 
 
     // --- Default Values (原有部分) ---
@@ -143,6 +146,8 @@ object WallpaperConfigConstants {
     const val DEFAULT_STYLE_B_UPPER_MASK_MAX_ROTATION: Float = 60.0f
     /** (样式 B) 默认下遮罩最大旋转角度 (例如 15 度, 在使用时通常乘以-1以作对称) */
     const val DEFAULT_STYLE_B_LOWER_MASK_MAX_ROTATION: Float = 60.0f
+    /** (样式 B) 默认遮罩是否水平翻转 */
+    const val DEFAULT_STYLE_B_MASKS_HORIZONTALLY_FLIPPED: Boolean = false
 
 
     // --- UI Related Defaults (原有部分) ---

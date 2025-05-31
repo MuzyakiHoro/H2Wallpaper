@@ -138,6 +138,7 @@ class H2WallpaperService : WallpaperService() {
         /** 样式 B P1 缩放因子。*/
         private var currentStyleBP1ScaleFactor: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_P1_SCALE_FACTOR
         // ---
+        private var currentStyleBMasksHorizontallyFlipped: Boolean = WallpaperConfigConstants.DEFAULT_STYLE_B_MASKS_HORIZONTALLY_FLIPPED
 
         /** 启动器报告的实际页面数量，用于更精确的滚动计算。*/
         private var numPagesReportedByLauncher = 1
@@ -447,6 +448,7 @@ class H2WallpaperService : WallpaperService() {
             currentStyleBP1FocusX = preferencesRepository.getStyleBP1FocusX()
             currentStyleBP1FocusY = preferencesRepository.getStyleBP1FocusY()
             currentStyleBP1ScaleFactor = preferencesRepository.getStyleBP1ScaleFactor()
+            currentStyleBMasksHorizontallyFlipped = preferencesRepository.getStyleBMasksHorizontallyFlipped()
 
             Log.i(DEBUG_TAG, "Prefs loaded (Service): URI=$imageUriString, P1H=$page1ImageHeightRatio, P1F=(${currentP1FocusX},${currentP1FocusY}), P1S=$currentP1ContentScaleFactor, Version=$currentImageContentVersion, P1Style=$currentP1StyleType")
         }
@@ -784,7 +786,8 @@ class H2WallpaperService : WallpaperService() {
                             styleBLowerMaskMaxRotation = currentStyleBLowerMaskMaxRotation,
                             styleBP1FocusX = currentStyleBP1FocusX,
                             styleBP1FocusY = currentStyleBP1FocusY,
-                            styleBP1ScaleFactor = currentStyleBP1ScaleFactor
+                            styleBP1ScaleFactor = currentStyleBP1ScaleFactor,
+                            styleBMasksHorizontallyFlipped = if (currentP1StyleType == 1) currentStyleBMasksHorizontallyFlipped else false,
                             // 确保没有遗漏 WallpaperConfig 中定义的其他参数
                         )
                         // 调用共享渲染器绘制完整的一帧

@@ -137,6 +137,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
     private var currentStyleBP1FocusY: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_Y
     private var currentStyleBP1ScaleFactor: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_P1_SCALE_FACTOR
     // --- 结束新增 P1 风格参数 ---
+    private var currentStyleBMasksHorizontallyFlipped: Boolean = WallpaperConfigConstants.DEFAULT_STYLE_B_MASKS_HORIZONTALLY_FLIPPED
+
 
     /** 持有渲染所需的各种位图资源 */
     private var wallpaperBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
@@ -1386,7 +1388,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
                     styleBLowerMaskMaxRotation = currentStyleBLowerMaskMaxRotation, // 使用 this.currentStyleBLowerMaskMaxRotation
                     styleBP1FocusX = currentStyleBP1FocusX, // 使用 this.currentStyleBP1FocusX
                     styleBP1FocusY = currentStyleBP1FocusY, // 使用 this.currentStyleBP1FocusY
-                    styleBP1ScaleFactor = currentStyleBP1ScaleFactor // 使用 this.currentStyleBP1ScaleFactor
+                    styleBP1ScaleFactor = currentStyleBP1ScaleFactor, // 使用 this.currentStyleBP1ScaleFactor
+                    styleBMasksHorizontallyFlipped = if (this.currentP1StyleType == 1) this.currentStyleBMasksHorizontallyFlipped else false,
                 )
                 // 调用共享渲染器绘制完整的一帧预览
                 SharedWallpaperRenderer.drawFrame(canvas, config, currentWallBitmaps)
@@ -1450,7 +1453,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
         p1FocusY: Float,
         p1FocusX: Float,
         p1ContentScaleFactor: Float,
-        page1ImageHeightRatio: Float
+        page1ImageHeightRatio: Float,
+        styleBMasksHorizontallyFlipped: Boolean, // 新增
     ) {
         // 保存旧的参数值，用于比较是否发生变化
         val oldBgBlurR = this.currentBackgroundBlurRadius
@@ -1494,6 +1498,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
         this.currentNormalizedFocusY = p1FocusY
         this.currentP1ContentScaleFactor = p1ContentScaleFactor
         this.nonEditModePage1ImageHeightRatio = page1ImageHeightRatio
+        this.currentStyleBMasksHorizontallyFlipped = styleBMasksHorizontallyFlipped
 
 
         // 检测某些参数（如P1底部融入、P1阴影）的变化是否只需要立即重绘

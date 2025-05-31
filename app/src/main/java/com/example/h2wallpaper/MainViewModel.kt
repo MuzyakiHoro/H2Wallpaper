@@ -147,6 +147,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val _showStyleSelection = MutableStateFlow(false) // 私有 MutableStateFlow
     open val showStyleSelection: StateFlow<Boolean> = _showStyleSelection.asStateFlow() // 公开为 StateFlow
 
+    private val _styleBMasksHorizontallyFlipped = MutableLiveData<Boolean>()
+    val styleBMasksHorizontallyFlipped: LiveData<Boolean> get() = _styleBMasksHorizontallyFlipped
 
     private val paramUpdateTimes = mutableMapOf<String, Long>()
     private val throttleInterval = 20f
@@ -184,6 +186,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _styleBP1ScaleFactor.value = preferencesRepository.getStyleBP1ScaleFactor()
         _styleBUpperMaskMaxRotation.value = preferencesRepository.getStyleBUpperMaskMaxRotation()
         _styleBLowerMaskMaxRotation.value = preferencesRepository.getStyleBLowerMaskMaxRotation()
+        _styleBMasksHorizontallyFlipped.value = preferencesRepository.getStyleBMasksHorizontallyFlipped()
 
         viewModelScope.launch {
             val currentUri = _selectedImageUri.value
@@ -548,5 +551,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         updateP1StyleType(styleType)
         _showStyleSelection.value = false
         _subCategoryForAdjustmentIdInSheet.value = null
+    }
+    open fun toggleStyleBMasksFlip() {
+        val newState = !(_styleBMasksHorizontallyFlipped.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_MASKS_HORIZONTALLY_FLIPPED)
+        _styleBMasksHorizontallyFlipped.value = newState
+        preferencesRepository.saveBooleanSetting(WallpaperConfigConstants.KEY_STYLE_B_MASKS_HORIZONTALLY_FLIPPED, newState)
+        preferencesRepository.updateImageContentVersion()
+        Log.d("MainViewModel", "Style B Masks Horizontally Flipped toggled to: $newState")
     }
 }

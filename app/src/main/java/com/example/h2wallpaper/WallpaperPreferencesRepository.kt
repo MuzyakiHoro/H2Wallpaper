@@ -237,6 +237,11 @@ class WallpaperPreferencesRepository(context: Context) {
     fun getStyleBLowerMaskMaxRotation(): Float =
         prefs.getInt(WallpaperConfigConstants.KEY_STYLE_B_LOWER_MASK_MAX_ROTATION, WallpaperConfigConstants.DEFAULT_STYLE_B_LOWER_MASK_MAX_ROTATION_INT).toFloat()
 
+    fun getStyleBMasksHorizontallyFlipped(): Boolean =
+        prefs.getBoolean(
+            WallpaperConfigConstants.KEY_STYLE_B_MASKS_HORIZONTALLY_FLIPPED,
+            WallpaperConfigConstants.DEFAULT_STYLE_B_MASKS_HORIZONTALLY_FLIPPED
+        )
 
     // --- Setters (原有部分，保持不变，因为 MainViewModel 使用通用保存方法) ---
     /**
@@ -373,5 +378,8 @@ class WallpaperPreferencesRepository(context: Context) {
      */
     fun removeImageUri() {
         prefs.edit().remove(WallpaperConfigConstants.KEY_IMAGE_URI).apply()
+    }
+    fun saveBooleanSetting(key: String, value: Boolean) {
+        prefs.edit().putBoolean(key, value).apply()
     }
 }

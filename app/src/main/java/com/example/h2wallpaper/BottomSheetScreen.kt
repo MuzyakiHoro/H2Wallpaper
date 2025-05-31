@@ -91,6 +91,7 @@ val p1StyleBSubCategories = listOf(
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO, "顶部高度", type = "parameter_slider", icon = Icons.Filled.Tune),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO, "中间高度", type = "parameter_slider", icon = Icons.Filled.Tune),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A, "倾斜角度", type = "parameter_slider", icon = Icons.Filled.Tune),
+    SubCategory(WallpaperConfigConstants.KEY_STYLE_B_MASKS_HORIZONTALLY_FLIPPED, "翻转方向", type = "action", icon = Icons.Filled.Flip ),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA, "遮罩透明度", type = "parameter_slider", icon = Icons.Filled.Tune),
 )
 
@@ -506,6 +507,13 @@ fun handleSubCategoryAction(
                 onHideSheet()
             } else {
                 Toast.makeText(context, context.getString(R.string.please_select_image_first_toast), Toast.LENGTH_SHORT).show()
+            }
+        }
+        WallpaperConfigConstants.KEY_STYLE_B_MASKS_HORIZONTALLY_FLIPPED -> {
+            viewModel.toggleStyleBMasksFlip() // 调用ViewModel中的方法
+            // 确保没有其他编辑面板是打开的，或者这个点击不会尝试打开滑块区
+            if (viewModel.subCategoryForAdjustmentIdInSheet.value != null) {
+                viewModel.onSubCategoryForAdjustmentSelectedInSheet(null)
             }
         }
         else -> { Log.w("ConfigSheet", "Unhandled action for subCategory ID: ${subCategory.id}") }
