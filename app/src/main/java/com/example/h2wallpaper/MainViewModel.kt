@@ -319,21 +319,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (internalFileUri != null) {
                     val oldUri = _selectedImageUri.value
                     if (oldUri != null && oldUri != internalFileUri) deleteInternalImage(oldUri)
+
+
                     _selectedImageUri.postValue(internalFileUri)
                     // _selectedImageUriForUi.postValue(internalFileUri) // 如果保留
-
-                    // Reset Style A P1 params
-                    _p1FocusX.postValue(WallpaperConfigConstants.DEFAULT_P1_FOCUS_X)
-                    _p1FocusY.postValue(WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y)
-                    _page1ImageHeightRatio.postValue(WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO)
-                    _p1ContentScaleFactor.postValue(WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR)
-                    // Reset Style B P1 params
-                    _styleBP1FocusX.postValue(WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_X)
-                    _styleBP1FocusY.postValue(WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_Y)
-                    _styleBP1ScaleFactor.postValue(WallpaperConfigConstants.DEFAULT_STYLE_B_P1_SCALE_FACTOR)
-
-                    preferencesRepository.resetSettingsForNewImage(internalFileUri)
-                    preferencesRepository.updateImageContentVersion()
+                    /*
+                                        // Reset Style A P1 params
+                                        _p1FocusX.postValue(WallpaperConfigConstants.DEFAULT_P1_FOCUS_X)
+                                        _p1FocusY.postValue(WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y)
+                                        _page1ImageHeightRatio.postValue(WallpaperConfigConstants.DEFAULT_HEIGHT_RATIO)
+                                        _p1ContentScaleFactor.postValue(WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR)
+                                        // Reset Style B P1 params
+                                        _styleBP1FocusX.postValue(WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_X)
+                                        _styleBP1FocusY.postValue(WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_Y)
+                                        _styleBP1ScaleFactor.postValue(WallpaperConfigConstants.DEFAULT_STYLE_B_P1_SCALE_FACTOR)
+*/
+                                        preferencesRepository.resetSettingsForNewImage(internalFileUri)
+                                        preferencesRepository.updateImageContentVersion()
                     try { extractColorsFromUri(internalFileUri, isNewImage = true) }
                     catch (e: Exception) {
                         _toastMessage.postValue(Event("颜色提取失败: ${e.message}"))

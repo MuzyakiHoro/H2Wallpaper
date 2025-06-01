@@ -483,7 +483,7 @@ fun getMinRawValueForParam(paramKey: String): Float {
 fun getMaxRawValueForParam(paramKey: String): Float {
     return when (paramKey) {
         WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> 2.0f; WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO -> 1.0f; WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> 1.0f; WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> 1.0f; WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> 25f; WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> 0.5f; WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> 3f;
-        WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO -> WallpaperConfigConstants.MAX_HEIGHT_RATIO; WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR -> 4.0f; WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> 20f; WallpaperConfigConstants.KEY_P1_SHADOW_DX -> 20f; WallpaperConfigConstants.KEY_P1_SHADOW_DY -> 20f; WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> 600f;
+        WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO -> WallpaperConfigConstants.MAX_HEIGHT_RATIO; WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR -> 4.0f; WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> 20f; WallpaperConfigConstants.KEY_P1_SHADOW_DX -> 20f; WallpaperConfigConstants.KEY_P1_SHADOW_DY -> 20f; WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> 2560f;
         WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA -> 1.0f; WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A -> 1.0f; WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO -> 0.8f; WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO -> 1.0f; WallpaperConfigConstants.KEY_STYLE_B_UPPER_MASK_MAX_ROTATION -> 60f; WallpaperConfigConstants.KEY_STYLE_B_LOWER_MASK_MAX_ROTATION -> 60f;
         else -> 1f
     }

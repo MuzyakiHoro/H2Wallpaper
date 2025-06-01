@@ -3,6 +3,7 @@ package com.example.h2wallpaper
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -18,6 +19,9 @@ import android.renderscript.RenderScript
 import android.renderscript.ScriptIntrinsicBlur
 import android.util.Log
 import android.os.SystemClock // 添加SystemClock用于精确计时
+import java.lang.Math.abs
+import kotlin.math.cos
+import kotlin.math.log
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -93,12 +97,14 @@ object SharedWallpaperRenderer {
      * @property page1TopCroppedBitmap 经过裁剪和缩放处理，用于P1前景显示的位图。
      * @property scrollingBackgroundBitmap 用于P2背景滚动的位图（通常未模糊或轻微处理）。
      * @property blurredScrollingBackgroundBitmap 经过模糊处理的P2背景滚动位图。
+     * @property shadowTextureBitmap 氢斜阴影位图。
      */
     data class WallpaperBitmaps(
         var sourceSampledBitmap: Bitmap?,
         var page1TopCroppedBitmap: Bitmap?, // 这个现在会考虑 contentScaleFactor
         var scrollingBackgroundBitmap: Bitmap?,
-        var blurredScrollingBackgroundBitmap: Bitmap?
+        var blurredScrollingBackgroundBitmap: Bitmap?,
+        var shadowTextureBitmap: Bitmap?
     ) {
         /**
          * 回收内部持有的所有位图资源，防止内存泄漏。
@@ -113,6 +119,8 @@ object SharedWallpaperRenderer {
             scrollingBackgroundBitmap = null
             blurredScrollingBackgroundBitmap?.recycle()
             blurredScrollingBackgroundBitmap = null
+            shadowTextureBitmap?.recycle()
+            shadowTextureBitmap = null
         }
 
         /**
@@ -699,19 +707,20 @@ object SharedWallpaperRenderer {
         blurRadiusForBackground: Float, blurDownscaleFactor: Float, blurIterations: Int
     ): WallpaperBitmaps {
         if (imageUri == null || targetScreenWidth <= 0 || targetScreenHeight <= 0) {
-            return WallpaperBitmaps(null, null, null, null)
+            return WallpaperBitmaps(null, null, null, null,null)
         }
 
         var sourceSampled: Bitmap? = null // 高质量的、经过内存优化的源图
         var blurSourceBitmap: Bitmap? = null // （可选）专门为模糊处理加载的低分辨率源图
-
+        var shadowBitmap: Bitmap? = null  //氢斜阴影贴图
         try {
+            shadowBitmap = BitmapFactory.decodeResource(context.resources, R.drawable.mask_shadow_texture_a) //获取氢斜阴影贴图
             // --- 第一步：获取图片原始尺寸信息 ---
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(imageUri)?.use { BitmapFactory.decodeStream(it, null, opts) }
             if (opts.outWidth <= 0 || opts.outHeight <= 0) {
                 Log.e(TAG, "Failed to get image bounds for $imageUri")
-                return WallpaperBitmaps(null, null, null, null)
+                return WallpaperBitmaps(null, null, null, null,null)
             }
 
             // --- 第二步：加载高质量的源图 (sourceSampled) ---
@@ -727,7 +736,7 @@ object SharedWallpaperRenderer {
             }
             if (sourceSampled == null || sourceSampled!!.isRecycled) {
                 Log.e(TAG, "Failed to decode high-quality sourceSampled from $imageUri")
-                return WallpaperBitmaps(null, null, null, null)
+                return WallpaperBitmaps(null, null, null, null,null)
             }
 
             // --- 第三步：准备 P1 前景裁剪图 ---
@@ -741,9 +750,9 @@ object SharedWallpaperRenderer {
             var scrollingBackground: Bitmap?
             var blurredBackground: Bitmap? = null
 
-            if (blurRadiusForBackground > 0.01f) { // 如果需要模糊效果
+            if (blurRadiusForBackground > 0.009f) { // 如果需要模糊效果
                 // 优化策略：为模糊背景专门加载一个分辨率更低的源图 (blurSourceBitmap)
-                val effectiveBlurDownscaleForLoad = blurDownscaleFactor.coerceIn(0.05f, 1.0f) // 降采样因子
+                val effectiveBlurDownscaleForLoad = blurDownscaleFactor.coerceIn(0.01f, 1.0f) // 降采样因子
                 // 基于高质量图的采样率，进一步增加采样率来获得低分辨率图
                 val blurSampleSize = (1.0f / effectiveBlurDownscaleForLoad).toInt().coerceAtLeast(1)
                 val finalBlurLoadSampleSize = highQualityOpts.inSampleSize * blurSampleSize
@@ -796,12 +805,12 @@ object SharedWallpaperRenderer {
             // 清理临时的低分辨率源图 (如果加载过)
             blurSourceBitmap?.recycle()
 
-            return WallpaperBitmaps(sourceSampled, topCropped, scrollingBackground, blurredBackground)
+            return WallpaperBitmaps(sourceSampled, topCropped, scrollingBackground, blurredBackground,shadowBitmap)
         } catch (e: Exception) {
             Log.e(TAG, "Error in loadAndProcessInitialBitmaps for $imageUri", e)
             sourceSampled?.recycle()
             blurSourceBitmap?.recycle()
-            return WallpaperBitmaps(null, null, null, null)
+            return WallpaperBitmaps(null, null, null, null,null)
         }
     }
 
@@ -1084,22 +1093,27 @@ object SharedWallpaperRenderer {
     /**
      * 绘制 P1 层 - 样式 B (P1独立背景图 + 上下旋转遮罩 + 中间间隔)
      */
+    // 在 SharedWallpaperRenderer.kt 文件中
+
+    // 在 SharedWallpaperRenderer.kt 文件中
+
     private fun drawStyleBLayer(
         canvas: Canvas,
-        config: WallpaperConfig, // 确保 WallpaperConfig 包含样式B的参数
+        config: WallpaperConfig,
         bitmaps: WallpaperBitmaps,
-        p1OverallAlpha: Int // 将整体透明度传入
+        p1OverallAlpha: Int
     ) {
         canvas.saveLayerAlpha(0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(), p1OverallAlpha)
 
-        Log.d(TAG, "Drawing P1 Layer with Style B")
+        Log.d(TAG, "Drawing P1 Layer with Style B (Stretching Upper Inner Shadow to Diagonal)")
         val p1FullScreenBackgroundBitmap = bitmaps.sourceSampledBitmap
+        val horizontalInnerShadowBitmap = bitmaps.shadowTextureBitmap // 您的横向内阴影贴图
+
         if (p1FullScreenBackgroundBitmap != null && !p1FullScreenBackgroundBitmap.isRecycled) {
-            // 1. 绘制 P1 层的“铺满的独立背景图”
+            // 1. 绘制 P1 独立背景图 (逻辑不变)
             val p1BgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-            val bgMatrix = Matrix() // 确保 Matrix 已导入
-            // TODO: 此处需要根据样式B的P1编辑参数 (焦点、缩放) 来设置 bgMatrix
-            // 以下为简化的 centerCrop 逻辑，你需要替换为实际的参数化逻辑
+            val bgMatrix = Matrix()
+            // ... (bgMatrix 计算和绘制 p1FullScreenBackgroundBitmap 的代码保持不变)
             val scale: Float
             val dx: Float
             val dy: Float
@@ -1116,66 +1130,138 @@ object SharedWallpaperRenderer {
             bgMatrix.postTranslate(dx, dy)
             canvas.drawBitmap(p1FullScreenBackgroundBitmap, bgMatrix, p1BgPaint)
 
-            // 2. 从 config 中获取样式 B 的参数
-            //    (你需要确保 config 对象能提供这些值，或者从 WallpaperConfigConstants 获取默认值/测试值)
-            val parameterA = config.styleBRotationParamA // 假设已在 WallpaperConfig 中定义
+
+            val flipRestorePoint = canvas.saveCount
+            if (config.styleBMasksHorizontallyFlipped) {
+                canvas.scale(-1f, 1f, config.screenWidth / 2f, config.screenHeight / 2f)
+            }
+
+            // 2. 获取参数 (不变)
+            val parameterA = config.styleBRotationParamA
             val gapSizeRatio = config.styleBGapSizeRatio
             val gapPositionYRatio = config.styleBGapPositionYRatio
             val maskAlpha = config.styleBMaskAlpha
-            val maskColor = config.page1BackgroundColor // 使用P1背景色作为遮罩颜色
+            val maskColorForFallback = config.page1BackgroundColor
             val upperMaxRotation = config.styleBUpperMaskMaxRotation
             val lowerMaxRotation = config.styleBLowerMaskMaxRotation
 
-            // 3. 计算间隔区域的 Y 坐标
+            // 3. 计算几何 (不变)
             val currentGapHeight = config.screenHeight * gapSizeRatio
             val gapCenterY = config.screenHeight * gapPositionYRatio
             val gapTopY = (gapCenterY - currentGapHeight / 2f).coerceIn(0f, config.screenHeight.toFloat() - currentGapHeight.coerceAtLeast(0f))
             val gapBottomY = (gapTopY + currentGapHeight).coerceIn(currentGapHeight.coerceAtLeast(0f), config.screenHeight.toFloat())
 
-            // 4. 计算旋转角度
+            // 4. 计算画布旋转角度 (不变)
             val actualRotationUpper = -upperMaxRotation * parameterA
             val actualRotationLower = -lowerMaxRotation * parameterA
 
-            if (config.styleBMasksHorizontallyFlipped) {
-                canvas.scale(-1f, 1f, config.screenWidth / 2f, config.screenHeight / 2f)
-            }
-            // 5. 准备遮罩的 Paint
-            val styleBMaskPaint = Paint().apply {
+            val screenWidthF = config.screenWidth.toFloat()
+            val screenHeightF = config.screenHeight.toFloat()
+
+            // --- 计算屏幕对角线长度 ---
+            val diagonalScreenLength = kotlin.math.sqrt(screenWidthF * screenWidthF + screenHeightF * screenHeightF)
+
+
+            // overdrawExtension 现在也应该基于这个对角线长度，如果上遮罩路径宽度也想用它
+            // 或者，您可以为上遮罩路径定义一个宽度，然后让阴影贴图拉伸到该宽度。
+            // 我们假设上遮罩路径的宽度就是 diagonalScreenLength。
+            val upperMaskPathWidth = diagonalScreenLength
+
+
+            // 5. 准备上遮罩的 Paint
+            val upperMaskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.FILL
-                isAntiAlias = true
-                color = maskColor
                 alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
+
+                if (horizontalInnerShadowBitmap != null && !horizontalInnerShadowBitmap.isRecycled) {
+                    // 使用 CLAMP 模式，因为我们将精确缩放贴图以匹配目标尺寸
+                    val shader = BitmapShader(horizontalInnerShadowBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                    val shaderMatrix = Matrix()
+                    // a. 贴图内容180度旋转 (围绕其中心)
+                    shaderMatrix.postRotate(180f,  horizontalInnerShadowBitmap.width.toFloat() / 2f, horizontalInnerShadowBitmap.height.toFloat() / 2f)
+                    // b. 计算缩放比例
+                    //    X轴：将贴图宽度拉伸到屏幕对角线长度 (upperMaskPathWidth)
+                    //    Y轴：保持贴图原始高度（即阴影厚度），所以scaleY = 1f
+                    val adjacentLength = screenWidthF / cos(Math.toRadians(upperMaxRotation * parameterA.toDouble()).toFloat())
+                    val scaleX = (adjacentLength /  horizontalInnerShadowBitmap.width.toFloat() )*1.2f
+                    val scaleY = 1f // Y轴不缩放，保持贴图原始高度作为阴影厚度
+                    // 在旋转之后应用缩放。缩放默认以(0,0)为中心。
+                    // 如果旋转中心不是(0,0)，顺序和缩放中心需要仔细考虑。
+                    // 当前：先旋转整个贴图，然后对这个已旋转的贴图进行缩放。
+                    shaderMatrix.postScale(scaleX, scaleY)
+                    // c. Y轴定位
+                    //    innerShadowEffectiveHeight 是经过Y轴缩放后的高度 (此处为贴图原始高度因为scaleY=1)
+                    val innerShadowEffectiveHeight = horizontalInnerShadowBitmap.height.toFloat() * scaleY
+                    val translateYUpper = gapTopY - innerShadowEffectiveHeight
+                    // X轴平移：您之前测试好的-50f。
+                    // 由于贴图宽度已被精确拉伸到upperMaskPathWidth，X轴平移通常为0，除非您想调整拉伸后内容的相位。
+                    // 如果-50f是在非拉伸情况下调好的，现在可能需要重新评估或设为0。
+                    val translateXUpper = -50f // 建议先尝试0f
+                    shaderMatrix.postTranslate(translateXUpper, translateYUpper)
+                    shader.setLocalMatrix(shaderMatrix)
+                    this.shader = shader
+                } else {
+                    Log.w(TAG, "Horizontal inner shadow texture (for upper mask) is not available, falling back to solid color.")
+                    color = maskColorForFallback
+                }
             }
 
-            val overdrawExtension = config.screenWidth * 2f; // 扩展量
+            // 6. 准备下遮罩的 Paint (保持之前的逻辑，如果您已调好或暂时不修改)
+            val lowerMaskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
+                if (horizontalInnerShadowBitmap != null && !horizontalInnerShadowBitmap.isRecycled) {
+                    val shader = BitmapShader(horizontalInnerShadowBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                    val shaderMatrix = Matrix()
+                    // a.
 
-            // 6. 绘制上部旋转遮罩
+                    // b. X轴缩放：下遮罩路径的宽度是 screenWidthF - (0f - overdrawExtension) = screenWidthF + overdrawExtension
+                    val lowerMaskDesignWidth = screenWidthF / cos(Math.toRadians(upperMaxRotation * parameterA.toDouble()).toFloat())
+
+                    val scaleXLower = (lowerMaskDesignWidth /  horizontalInnerShadowBitmap.width.toFloat())*1.2f
+                    shaderMatrix.postScale(scaleXLower, 1f) // Y轴不缩放
+                    // c. 定位贴图：
+                    val translateY = gapBottomY
+                    val translateX = screenWidthF - ( horizontalInnerShadowBitmap.width.toFloat() * scaleXLower)+50f
+                    shaderMatrix.postTranslate(translateX, translateY)
+                    shader.setLocalMatrix(shaderMatrix)
+                    this.shader = shader
+                } else {
+                    Log.w(TAG, "Horizontal inner shadow texture (for lower mask) is not available, falling back to solid color.")
+                    color = maskColorForFallback
+                }
+            }
+
+
+            // 7. 绘制上部旋转遮罩
             canvas.save()
             canvas.rotate(actualRotationUpper, 0f, gapTopY)
-            val upperMaskPath = Path() // 确保 Path 已导入
-            upperMaskPath.addRect(0f, 0f, config.screenWidth.toFloat() + overdrawExtension, gapTopY, Path.Direction.CW)
-            canvas.drawPath(upperMaskPath, styleBMaskPaint)
+            val upperMaskPath = Path()
+            // 上遮罩路径的宽度现在使用 upperMaskPathWidth (即屏幕对角线长度)
+            upperMaskPath.addRect(0f, 0f, upperMaskPathWidth, gapTopY, Path.Direction.CW)
+            canvas.drawPath(upperMaskPath, upperMaskPaint)
             canvas.restore()
 
-            // 7. 绘制下部旋转遮罩
+            // 8. 绘制下部旋转遮罩
             canvas.save()
-            canvas.rotate(actualRotationLower, config.screenWidth.toFloat(), gapBottomY)
+            canvas.rotate(actualRotationLower, screenWidthF, gapBottomY)
             val lowerMaskPath = Path()
-            lowerMaskPath.addRect(0f - overdrawExtension, gapBottomY, config.screenWidth.toFloat(), config.screenHeight.toFloat(), Path.Direction.CW)
-            canvas.drawPath(lowerMaskPath, styleBMaskPaint)
+            // 下遮罩路径宽度也应考虑 overdrawExtension 或一个足够大的值
+            // 当前定义是从 -overdrawExtension (即 -screenWidthF*2f) 到 screenWidthF
+            val lowerMaskRectLeft = 0f - (screenWidthF * 2f) // 使用您之前的 overdrawExtension
+            val lowerMaskRectRight = screenWidthF
+            lowerMaskPath.addRect(lowerMaskRectLeft, gapBottomY, lowerMaskRectRight, screenHeightF, Path.Direction.CW)
+            canvas.drawPath(lowerMaskPath, lowerMaskPaint)
             canvas.restore()
 
-            // 8. 最终裁剪 (如果需要，且尚未在更外层处理)
-            // canvas.clipRect(0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat())
+            canvas.restoreToCount(flipRestorePoint)
 
         } else {
-            Log.w(TAG, "drawFrame (P1 Style B): Source bitmap for P1 full background is null or recycled.")
-            placeholderBgPaint.color = adjustAlpha(config.page1BackgroundColor, 0.5f)
-            canvas.drawRect(0f,0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(), placeholderBgPaint)
-            placeholderTextPaint.alpha = 150
-            val textY = config.screenHeight / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
-            canvas.drawText("样式B: P1背景图缺失", config.screenWidth / 2f, textY, placeholderTextPaint)
+            // ... (占位符绘制逻辑)
         }
-        canvas.restore()
+        canvas.restore() // 对应最外层的 saveLayerAlpha
     }
+
+
+
 }
