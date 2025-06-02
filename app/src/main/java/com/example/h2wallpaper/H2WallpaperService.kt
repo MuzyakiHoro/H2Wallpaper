@@ -140,10 +140,17 @@ class H2WallpaperService : WallpaperService() {
         // ---
         private var currentStyleBMasksHorizontallyFlipped: Boolean = WallpaperConfigConstants.DEFAULT_STYLE_B_MASKS_HORIZONTALLY_FLIPPED
 
+        // 新增：样式 B P1 遮罩专属模糊参数的成员变量
+        private var currentStyleBP1MaskBlurRadius: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_RADIUS
+        private var currentStyleBP1MaskBlurDownscale: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_DOWNSCALE_FACTOR
+        private var currentStyleBP1MaskBlurIterations: Int = WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_ITERATIONS
+
         /** 启动器报告的实际页面数量，用于更精确的滚动计算。*/
         private var numPagesReportedByLauncher = 1
         /** 当前正在执行的仅更新模糊背景的任务。*/
         private var currentBlurUpdateJob: Job? = null
+        /** 当前正在执行的仅用于样式B P1遮罩模糊更新。*/
+        private var currentStyleBBlurUpdateJob: Job? = null // <--- 新增：
         /** 当前壁纸的横向滚动偏移量 (由系统通过 onOffsetsChanged 更新)。*/
         private var currentPageOffset = 0f
 
@@ -190,22 +197,27 @@ class H2WallpaperService : WallpaperService() {
         override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
             Log.i(DEBUG_TAG, "onSharedPreferenceChanged: key=$key received by service.")
             var needsFullReload = false       // 标记是否需要完全重载所有位图
-            var needsP1TopUpdate = false      // 标记是否只需要更新 P1 顶部裁剪图
-            var needsOnlyBlurUpdate = false   // 标记是否只需要更新模糊背景图
+            var needsP1TopUpdate = false      // 标记是否只需要更新 P1 顶部裁剪图 (主要用于样式 A)
+            var needsOnlyGlobalBlurUpdate = false   // 标记是否只需要更新 P2 全局背景模糊图
+            var needsStyleBP1MaskBlurUpdate = false // 新增标记: 是否只需要更新样式 B 的 P1 遮罩模糊图
             var needsRedrawOnly = false       // 标记是否只需要重绘当前帧
 
-            // 保存变化前的关键参数，用于比较
+            // --- 1. 保存变化前的关键参数 ---
             val oldImageUriString = imageUriString
             val oldImageContentVersion = currentImageContentVersion
+
+            // 样式 A 相关 P1 参数
             val oldP1FocusX = currentP1FocusX
             val oldP1FocusY = currentP1FocusY
             val oldPage1ImageHeightRatio = page1ImageHeightRatio
             val oldP1ContentScaleFactor = currentP1ContentScaleFactor
+
+            // 全局背景模糊参数 (主要用于 P2)
             val oldBackgroundBlurRadius = currentBackgroundBlurRadius
             val oldBlurDownscaleFactor = currentBlurDownscaleFactor
             val oldBlurIterations = currentBlurIterations
 
-            // Save old values of new style parameters
+            // 样式 B 相关参数 (非模糊部分)
             val oldP1StyleType = currentP1StyleType
             val oldStyleBMaskAlpha = currentStyleBMaskAlpha
             val oldStyleBRotationParamA = currentStyleBRotationParamA
@@ -213,124 +225,180 @@ class H2WallpaperService : WallpaperService() {
             val oldStyleBGapPositionYRatio = currentStyleBGapPositionYRatio
             val oldStyleBUpperMaskMaxRotation = currentStyleBUpperMaskMaxRotation
             val oldStyleBLowerMaskMaxRotation = currentStyleBLowerMaskMaxRotation
-            val oldStyleBP1FocusX = currentStyleBP1FocusX
+            val oldStyleBP1FocusX = currentStyleBP1FocusX // 样式 B 的 P1 焦点
             val oldStyleBP1FocusY = currentStyleBP1FocusY
             val oldStyleBP1ScaleFactor = currentStyleBP1ScaleFactor
+            val oldStyleBMasksHorizontallyFlipped = currentStyleBMasksHorizontallyFlipped
 
-            loadPreferencesFromStorage() // 重新从 SharedPreferences 加载所有当前配置
+            // 样式 B P1 遮罩专属模糊参数
+            val oldStyleBP1MaskBlurRadius = currentStyleBP1MaskBlurRadius
+            val oldStyleBP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale
+            val oldStyleBP1MaskBlurIterations = currentStyleBP1MaskBlurIterations
 
-            // 优先检查图片内容版本号的变化，它通常指示了需要视觉更新
-            if (oldImageContentVersion != currentImageContentVersion) {
-                Log.i(DEBUG_TAG, "Image Content Version changed ($oldImageContentVersion -> $currentImageContentVersion).")
-                if (oldImageUriString != imageUriString) { // 如果 URI 也变了，必须完全重载
-                    Log.i(DEBUG_TAG, "Image URI changed with version. Triggering full reload.")
-                    needsFullReload = true
-                } else if (oldP1FocusX != currentP1FocusX || oldP1FocusY != currentP1FocusY ||
-                    oldPage1ImageHeightRatio != page1ImageHeightRatio ||
-                    oldP1ContentScaleFactor != currentP1ContentScaleFactor) { // P1视觉参数变化
-                    Log.i(DEBUG_TAG, "P1 visual params (Focus/Height/Scale) changed with version. Triggering P1 top update.")
-                    needsP1TopUpdate = true
-                } else if (oldBackgroundBlurRadius != currentBackgroundBlurRadius ||
-                    oldBlurDownscaleFactor != currentBlurDownscaleFactor ||
-                    oldBlurIterations != currentBlurIterations) { // 仅模糊参数变化
-                    Log.i(DEBUG_TAG, "Blur params changed with version. Triggering blur-only update.")
-                    needsOnlyBlurUpdate = true
-                } else { // 其他参数（如阴影、颜色、滚动灵敏度等）变化
-                    Log.i(DEBUG_TAG, "Other rendering params changed with version. Triggering redraw.")
-                    needsRedrawOnly = true
-                }
-            }
-            // 如果版本号未变 (理论上不太可能，因为 ViewModel 更新参数后应更新版本号)，
-            // 则再根据具体的 key 判断 (作为一种保险措施)
-            else if (key != null) {
-                when (key) {
-                    WallpaperConfigConstants.KEY_IMAGE_URI -> { //
-                        if (oldImageUriString != imageUriString) needsFullReload = true
-                    }
-                    // P1 相关参数变化
-                    WallpaperConfigConstants.KEY_P1_FOCUS_X, //
-                    WallpaperConfigConstants.KEY_P1_FOCUS_Y, //
-                    WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO, //
-                    WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR -> { //
-                        if (oldP1FocusX != currentP1FocusX || oldP1FocusY != currentP1FocusY ||
+            // --- 2. 重新从 SharedPreferences 加载所有当前配置到成员变量 ---
+            loadPreferencesFromStorage()
+
+            // --- 3. 检测具体哪些参数发生了变化 ---
+
+            // 优先判断图片 URI 或 P1 样式类型这种可能导致根本性变化的参数
+            if (oldImageUriString != imageUriString) {
+                Log.i(DEBUG_TAG, "Image URI changed. Triggering full reload.")
+                needsFullReload = true
+            } else if (oldP1StyleType != currentP1StyleType) {
+                Log.i(DEBUG_TAG, "P1 Style Type changed. Triggering full reload (safer to ensure all bitmaps are correct for the style).")
+                // 切换样式通常意味着P1层的渲染方式完全不同，可能需要不同的位图或处理，完整重载更安全
+                needsFullReload = true
+            } else {
+                // 如果 URI 和样式类型未变，再检查其他参数
+
+                // 检查图片内容版本号（通常由ViewModel在参数保存后更新）
+                // 如果版本号变了，说明有实质性配置更改
+                if (oldImageContentVersion != currentImageContentVersion) {
+                    Log.i(DEBUG_TAG, "Image Content Version changed ($oldImageContentVersion -> $currentImageContentVersion). Determining specific updates.")
+
+                    // 检查样式 A 的 P1 编辑参数变化
+                    if (currentP1StyleType == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) { // 仅当是样式 A 时这些参数才直接影响 P1 顶图
+                        if (oldP1FocusX != currentP1FocusX ||
+                            oldP1FocusY != currentP1FocusY ||
                             oldPage1ImageHeightRatio != page1ImageHeightRatio ||
                             oldP1ContentScaleFactor != currentP1ContentScaleFactor) {
+                            Log.i(DEBUG_TAG, "Style A P1 visual params (Focus/Height/Scale) changed. Triggering P1 top update.")
                             needsP1TopUpdate = true
                         }
                     }
-                    // 模糊相关参数变化
-                    WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS, //
-                    WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR, //
-                    WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> { //
-                        if (oldBackgroundBlurRadius != currentBackgroundBlurRadius ||
-                            oldBlurDownscaleFactor != currentBlurDownscaleFactor ||
-                            oldBlurIterations != currentBlurIterations) {
-                            needsOnlyBlurUpdate = true
-                        }
-                    }
-                    // New style parameters change detection
-                    WallpaperConfigConstants.KEY_P1_STYLE_TYPE,
-                    WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA,
-                    WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A,
-                    WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO,
-                    WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO,
-                    WallpaperConfigConstants.KEY_STYLE_B_UPPER_MASK_MAX_ROTATION,
-                    WallpaperConfigConstants.KEY_STYLE_B_LOWER_MASK_MAX_ROTATION,
-                    WallpaperConfigConstants.KEY_STYLE_B_P1_FOCUS_X,
-                    WallpaperConfigConstants.KEY_STYLE_B_P1_FOCUS_Y,
-                    WallpaperConfigConstants.KEY_STYLE_B_P1_SCALE_FACTOR -> {
-                        if (oldP1StyleType != currentP1StyleType ||
-                            oldStyleBMaskAlpha != currentStyleBMaskAlpha ||
-                            oldStyleBRotationParamA != currentStyleBRotationParamA ||
-                            oldStyleBGapSizeRatio != currentStyleBGapSizeRatio ||
-                            oldStyleBGapPositionYRatio != currentStyleBGapPositionYRatio ||
-                            oldStyleBUpperMaskMaxRotation != currentStyleBUpperMaskMaxRotation ||
-                            oldStyleBLowerMaskMaxRotation != currentStyleBLowerMaskMaxRotation ||
-                            oldStyleBP1FocusX != currentStyleBP1FocusX ||
+
+                    // 检查样式 B 的 P1 独立背景图编辑参数变化
+                    if (currentP1StyleType == 1) { // 仅当是样式 B 时这些参数才直接影响 P1 独立背景图
+                        if (oldStyleBP1FocusX != currentStyleBP1FocusX ||
                             oldStyleBP1FocusY != currentStyleBP1FocusY ||
                             oldStyleBP1ScaleFactor != currentStyleBP1ScaleFactor) {
-                            // If no major visual change is already flagged, mark for redraw
-                            if (!needsFullReload && !needsP1TopUpdate && !needsOnlyBlurUpdate) {
-                                needsRedrawOnly = true
-                            }
+                            // 这种变化影响的是 sourceSampled 如何被绘制为 P1 背景，
+                            // SharedRenderer.drawStyleBLayer 会处理，通常只需要重绘。
+                            // 但如果 P1 编辑模式在 Service 中也对应位图裁剪（目前不是），则可能需要更新。
+                            // 当前设计下，这些参数变化通常仅需重绘。
+                            if (!needsP1TopUpdate && !needsFullReload) needsRedrawOnly = true
+                            Log.i(DEBUG_TAG, "Style B P1 BG params (Focus/Scale) changed. Marking for redraw.")
                         }
                     }
-                    // 其他任何参数变化都至少需要重绘
-                    else -> needsRedrawOnly = true
+
+                    // 检查全局背景模糊参数 (用于 P2) 是否变化
+                    if (oldBackgroundBlurRadius != currentBackgroundBlurRadius ||
+                        oldBlurDownscaleFactor != currentBlurDownscaleFactor ||
+                        oldBlurIterations != currentBlurIterations) {
+                        Log.i(DEBUG_TAG, "Global Blur params (for P2) changed. Triggering global blur update.")
+                        needsOnlyGlobalBlurUpdate = true
+                    }
+
+                    // 检查样式 B P1 遮罩专属模糊参数是否变化
+                    if (oldStyleBP1MaskBlurRadius != currentStyleBP1MaskBlurRadius ||
+                        oldStyleBP1MaskBlurDownscale != currentStyleBP1MaskBlurDownscale ||
+                        oldStyleBP1MaskBlurIterations != currentStyleBP1MaskBlurIterations) {
+                        Log.i(DEBUG_TAG, "Style B P1 Mask Blur params changed. Triggering Style B P1 Mask blur update.")
+                        needsStyleBP1MaskBlurUpdate = true
+                    }
+
+                    // 检查其他仅影响绘制的参数
+                    // (例如：滚动灵敏度、P1/P2淡出比例、P1阴影、样式B非模糊参数等)
+                    // 如果上述更具体的更新没有被触发，并且版本号变了，那么至少需要重绘
+                    if (!needsFullReload && !needsP1TopUpdate && !needsOnlyGlobalBlurUpdate && !needsStyleBP1MaskBlurUpdate) {
+                        needsRedrawOnly = true
+                        Log.i(DEBUG_TAG, "Other rendering params likely changed (due to version change). Triggering redraw.")
+                    }
+
+                } else if (key != null) { // 版本号未变，但某个具体的 key 变了 (作为备用逻辑)
+                    when (key) {
+                        WallpaperConfigConstants.KEY_IMAGE_URI -> { /* 已在前面处理 */ }
+                        WallpaperConfigConstants.KEY_P1_STYLE_TYPE -> { /* 已在前面处理 */ }
+
+                        // 样式 A 的 P1 编辑参数
+                        WallpaperConfigConstants.KEY_P1_FOCUS_X,
+                        WallpaperConfigConstants.KEY_P1_FOCUS_Y,
+                        WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO,
+                        WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR -> {
+                            if (currentP1StyleType == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) {
+                                needsP1TopUpdate = true
+                            }
+                        }
+
+                        // 全局背景模糊参数 (P2)
+                        WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS,
+                        WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR,
+                        WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> {
+                            needsOnlyGlobalBlurUpdate = true
+                        }
+
+                        // 样式 B P1 遮罩专属模糊参数
+                        WallpaperConfigConstants.KEY_STYLE_B_BLUR_RADIUS,
+                        WallpaperConfigConstants.KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR,
+                        WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS -> {
+                            needsStyleBP1MaskBlurUpdate = true
+                        }
+
+                        // 其他所有参数变化都至少需要重绘
+                        else -> needsRedrawOnly = true
+                    }
+                } else { // key 为 null (例如 prefs.edit().clear().apply())，且版本号和URI未变
+                    if (imageUriString != null) needsRedrawOnly = true // 如果还有图片，则重绘
                 }
-            } else { // key 为 null，表示 SharedPreferences 可能被 clear()，或者多个未知项变化
-                if (imageUriString != null) needsRedrawOnly = true // 如果还有图片，则重绘
             }
 
 
-            // --- 根据标记执行相应的更新操作 (优先级：Full Reload > P1/Blur Update > Redraw) ---
+            // --- 4. 根据标记执行相应的更新操作 (优先级：Full Reload > 部分位图更新 > Redraw) ---
             if (needsFullReload) {
-                Log.i(DEBUG_TAG, "Action: Executing full bitmap reload.")
-                currentBlurUpdateJob?.cancel() // 取消可能正在进行的模糊更新
-                loadFullBitmapsAsync() //
-            } else if (needsOnlyBlurUpdate) {
-                // 仅当有未模糊的背景图且有图片URI时，才尝试仅更新模糊
-                if (engineWallpaperBitmaps?.scrollingBackgroundBitmap != null && imageUriString != null) {
-                    Log.i(DEBUG_TAG, "Action: Executing blur-only update for background.")
-                    currentBitmapLoadJob?.cancel() // 取消可能正在进行的完整加载
-                    updateOnlyBlurredBackgroundAsync() //
-                } else if (imageUriString != null) { // 有URI但没有基础图，说明状态有问题
-                    Log.w(DEBUG_TAG, "Action: Blur-only update requested, but scrollingBackgroundBitmap is null. Forcing full reload.")
-                    loadFullBitmapsAsync() // 回退到完整加载
+                Log.i(DEBUG_TAG, "Final Action: Executing full bitmap reload.")
+                currentBitmapLoadJob?.cancel() // 取消正在进行的完整加载
+                currentBlurUpdateJob?.cancel() // 取消P2背景模糊更新
+                currentStyleBBlurUpdateJob?.cancel() // 取消样式B P1遮罩模糊更新
+                loadFullBitmapsAsync()
+            } else {
+                // 如果不需要完整重载，才考虑部分更新
+                var partialBitmapUpdateTriggered = false
+
+                if (needsOnlyGlobalBlurUpdate) {
+                    if (engineWallpaperBitmaps?.scrollingBackgroundBitmap != null && imageUriString != null) {
+                        Log.i(DEBUG_TAG, "Final Action: Executing global blur-only update for P2 background.")
+                        updateOnlyBlurredBackgroundAsync()
+                        partialBitmapUpdateTriggered = true
+                    } else if (imageUriString != null) {
+                        Log.w(DEBUG_TAG, "Skipping P2 blur update (base bitmap missing), will force full reload if no other update occurs or try redraw.")
+                        // 如果其他更新也没发生，可能需要强制重载或至少重绘
+                    }
                 }
-            } else if (needsP1TopUpdate) {
-                // 仅当有源图且有图片URI时，才尝试仅更新P1顶图
-                if (engineWallpaperBitmaps?.sourceSampledBitmap != null && imageUriString != null) {
-                    Log.i(DEBUG_TAG, "Action: Executing P1 top cropped bitmap update.")
-                    updateTopCroppedBitmapAsync() //
-                } else if (imageUriString != null) { // 有URI但没有源图
-                    Log.w(DEBUG_TAG, "Action: P1 top update requested, but sourceSampledBitmap is null. Forcing full reload.")
-                    loadFullBitmapsAsync() // 回退到完整加载
+
+                if (needsStyleBP1MaskBlurUpdate) {
+                    if (engineWallpaperBitmaps?.sourceSampledBitmap != null && imageUriString != null) {
+                        Log.i(DEBUG_TAG, "Final Action: Executing Style B P1 Mask blur update.")
+                        updateStyleBP1MaskBlurredBitmapAsync()
+                        partialBitmapUpdateTriggered = true
+                    } else if (imageUriString != null) {
+                        Log.w(DEBUG_TAG, "Skipping Style B P1 Mask blur update (source bitmap missing), will force full reload if no other update occurs or try redraw.")
+                    }
                 }
-            } else if (needsRedrawOnly) {
-                if (isVisible) { // 仅当壁纸可见时才重绘
-                    Log.i(DEBUG_TAG, "Action: Executing redraw only.")
-                    drawCurrentFrame() //
+
+                if (needsP1TopUpdate && currentP1StyleType == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) { // 仅对样式A有效
+                    if (engineWallpaperBitmaps?.sourceSampledBitmap != null && imageUriString != null) {
+                        Log.i(DEBUG_TAG, "Final Action: Executing P1 top cropped bitmap update (Style A).")
+                        updateTopCroppedBitmapAsync()
+                        partialBitmapUpdateTriggered = true
+                    } else if (imageUriString != null) {
+                        Log.w(DEBUG_TAG, "Skipping P1 top update (source bitmap missing), will force full reload if no other update occurs or try redraw.")
+                    }
+                }
+
+                // 如果没有任何位图更新被成功触发（例如因为基础位图丢失），但有URI，则可能需要完整重载
+                if (!partialBitmapUpdateTriggered && imageUriString != null &&
+                    (needsOnlyGlobalBlurUpdate || needsStyleBP1MaskBlurUpdate || needsP1TopUpdate)) {
+                    Log.w(DEBUG_TAG, "Final Action: A partial bitmap update was needed but base bitmaps were missing. Forcing full reload.")
+                    loadFullBitmapsAsync()
+                }
+                // 如果只有重绘标记，或者没有任何更新标记但壁纸可见（例如，外部调用了 prefs.edit().commit() 但没有实际值变化）
+                else if (needsRedrawOnly && isVisible) {
+                    Log.i(DEBUG_TAG, "Final Action: Executing redraw only.")
+                    drawCurrentFrame()
+                } else if (isVisible && !partialBitmapUpdateTriggered && key == null && oldImageContentVersion == currentImageContentVersion) {
+                    // 针对 key 为 null 且版本号未变的情况，如果可见也重绘一次
+                    Log.i(DEBUG_TAG, "Final Action: key was null, version unchanged, visible. Executing redraw.")
+                    drawCurrentFrame()
                 }
             }
         }
@@ -449,6 +517,9 @@ class H2WallpaperService : WallpaperService() {
             currentStyleBP1FocusY = preferencesRepository.getStyleBP1FocusY()
             currentStyleBP1ScaleFactor = preferencesRepository.getStyleBP1ScaleFactor()
             currentStyleBMasksHorizontallyFlipped = preferencesRepository.getStyleBMasksHorizontallyFlipped()
+            currentStyleBP1MaskBlurRadius = preferencesRepository.getStyleBBlurRadius()
+            currentStyleBP1MaskBlurDownscale = preferencesRepository.getStyleBBlurDownscaleFactor()
+            currentStyleBP1MaskBlurIterations = preferencesRepository.getStyleBBlurIterations()
 
             Log.i(DEBUG_TAG, "Prefs loaded (Service): URI=$imageUriString, P1H=$page1ImageHeightRatio, P1F=(${currentP1FocusX},${currentP1FocusY}), P1S=$currentP1ContentScaleFactor, Version=$currentImageContentVersion, P1Style=$currentP1StyleType")
         }
@@ -505,7 +576,10 @@ class H2WallpaperService : WallpaperService() {
                             contentScaleFactorForP1 = currentP1ContentScaleFactor,
                             blurRadiusForBackground = currentBackgroundBlurRadius,
                             blurDownscaleFactor = currentBlurDownscaleFactor,
-                            blurIterations = currentBlurIterations
+                            blurIterations = currentBlurIterations,
+                            styleBP1MaskBlurRadius = currentStyleBP1MaskBlurRadius,
+                            styleBP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale,
+                            styleBP1MaskBlurIterations = currentStyleBP1MaskBlurIterations
                         )
                     }
                     ensureActive() // 返回主线程后再次检查活动状态
@@ -788,6 +862,9 @@ class H2WallpaperService : WallpaperService() {
                             styleBP1FocusY = currentStyleBP1FocusY,
                             styleBP1ScaleFactor = currentStyleBP1ScaleFactor,
                             styleBMasksHorizontallyFlipped = if (currentP1StyleType == 1) currentStyleBMasksHorizontallyFlipped else false,
+                            styleBModeP1MaskBlurRadius = currentStyleBP1MaskBlurRadius,
+                            styleBModeP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale,
+                            styleBModeP1MaskBlurIterations = currentStyleBP1MaskBlurIterations
                             // 确保没有遗漏 WallpaperConfig 中定义的其他参数
                         )
                         // 调用共享渲染器绘制完整的一帧
@@ -817,14 +894,85 @@ class H2WallpaperService : WallpaperService() {
         }
 
         /**
+         * 异步仅更新样式 B 的 P1 遮罩模糊背景图 (engineWallpaperBitmaps.styleBBlurredBitmap)。
+         * 当样式 B 的专属模糊参数发生变化时调用此方法。
+         */
+        private fun updateStyleBP1MaskBlurredBitmapAsync() {
+            currentStyleBBlurUpdateJob?.cancel() // 取消上一个正在进行的样式B P1遮罩模糊更新任务
+            // currentBitmapLoadJob?.cancel() // 通常不需要取消完整加载，因为我们基于已有的 sourceSampled
+
+            val sourceBitmapToUse = engineWallpaperBitmaps?.sourceSampledBitmap
+            if (sourceBitmapToUse == null || screenWidth <= 0 || screenHeight <= 0 || imageUriString == null) {
+                Log.w(DEBUG_TAG, "updateStyleBP1MaskBlurredBitmapAsync: Conditions not met (no source bitmap, invalid screen size, or no URI).")
+                if (imageUriString != null && sourceBitmapToUse == null) {
+                    // 如果有URI但没有源图，说明状态可能不一致，可能需要完整重载
+                    loadFullBitmapsAsyncIfNeeded()
+                }
+                return
+            }
+
+            Log.i(DEBUG_TAG, "updateStyleBP1MaskBlurredBitmapAsync: Starting. Style B P1 Mask BlurR=$currentStyleBP1MaskBlurRadius, DF=$currentStyleBP1MaskBlurDownscale, It=$currentStyleBP1MaskBlurIterations")
+
+            currentStyleBBlurUpdateJob = engineScope.launch {
+                var newStyleBBlurred: Bitmap? = null
+                try {
+                    ensureActive()
+                    newStyleBBlurred = withContext(Dispatchers.IO) {
+                        ensureActive()
+                        SharedWallpaperRenderer.regenerateStyleBBlurredBitmap(
+                            context = applicationContext,
+                            sourceBitmap = sourceBitmapToUse,
+                            screenWidth = screenWidth,
+                            screenHeight = screenHeight,
+                            // 使用当前引擎持有的样式 B 专属模糊参数
+                            styleBP1MaskBlurRadius = currentStyleBP1MaskBlurRadius,
+                            styleBP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale,
+                            styleBP1MaskBlurIterations = currentStyleBP1MaskBlurIterations
+                        )
+                    }
+                    ensureActive()
+
+                    val oldStyleBBlurred = engineWallpaperBitmaps?.styleBBlurredBitmap
+                    // 再次检查在异步处理期间，图片URI和源位图是否未发生变化
+                    if (this@H2WallpaperEngine.imageUriString != null && engineWallpaperBitmaps?.sourceSampledBitmap == sourceBitmapToUse) {
+                        engineWallpaperBitmaps?.styleBBlurredBitmap = newStyleBBlurred
+                        if (oldStyleBBlurred != newStyleBBlurred) oldStyleBBlurred?.recycle() // 回收旧的
+                        Log.i(DEBUG_TAG, "updateStyleBP1MaskBlurredBitmapAsync: Successfully updated Style B P1 Mask blurred background.")
+                    } else {
+                        Log.w(DEBUG_TAG, "updateStyleBP1MaskBlurredBitmapAsync: Conditions changed during async operation. Discarding result.")
+                        newStyleBBlurred?.recycle()
+                    }
+                } catch (e: CancellationException) {
+                    Log.d(TAG, "updateStyleBP1MaskBlurredBitmapAsync cancelled.")
+                    newStyleBBlurred?.recycle()
+                } catch (e: Exception) {
+                    Log.e(TAG, "updateStyleBP1MaskBlurredBitmapAsync failed", e)
+                    newStyleBBlurred?.recycle()
+                    // 如果失败，确保旧的也被清理或标记为null
+                    if (this@H2WallpaperEngine.imageUriString != null && engineWallpaperBitmaps?.sourceSampledBitmap == sourceBitmapToUse) {
+                        engineWallpaperBitmaps?.styleBBlurredBitmap = null
+                    }
+                } finally {
+                    if (isActive && coroutineContext[Job] == currentStyleBBlurUpdateJob) currentStyleBBlurUpdateJob = null
+                    if (isVisible && this@H2WallpaperEngine.imageUriString != null) {
+                        drawCurrentFrame() // 完成后重绘
+                    }
+                }
+            }
+        }
+
+        /**
          * 当壁纸引擎被销毁时调用。
          * 在此清理所有资源：注销 SharedPreferences 监听器、取消所有协程、回收所有位图。
          */
         override fun onDestroy() {
             super.onDestroy()
-            prefs.unregisterOnSharedPreferenceChangeListener(this) // 注销监听器
-            engineScope.cancel("H2WallpaperEngine destroyed") // 取消引擎级别的所有协程
-            engineWallpaperBitmaps?.recycleInternals() // 回收所有持有的位图
+            prefs.unregisterOnSharedPreferenceChangeListener(this)
+            engineScope.cancel("H2WallpaperEngine destroyed")
+            currentBitmapLoadJob = null // 清理引用
+            currentBlurUpdateJob = null // 清理引用
+            currentStyleBBlurUpdateJob = null // <--- 新增：清理引用
+            engineWallpaperBitmaps?.recycleInternals()
             engineWallpaperBitmaps = null
             Log.i(TAG, "H2WallpaperEngine destroyed.")
         }

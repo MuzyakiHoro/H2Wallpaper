@@ -92,6 +92,9 @@ val p1StyleBSubCategories = listOf(
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO, "中间高度", type = "parameter_slider", icon = Icons.Filled.Tune),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A, "倾斜角度", type = "parameter_slider", icon = Icons.Filled.Tune),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_MASKS_HORIZONTALLY_FLIPPED, "翻转方向", type = "action", icon = Icons.Filled.Flip ),
+    SubCategory(WallpaperConfigConstants.KEY_STYLE_B_BLUR_RADIUS, "遮罩模糊半径", type = "parameter_slider", icon = Icons.Filled.BlurOn),
+    SubCategory(WallpaperConfigConstants.KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR, "遮罩模糊降采样", type = "parameter_slider", icon = Icons.Filled.Compress),
+    SubCategory(WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS, "遮罩模糊迭代", type = "parameter_slider", icon = Icons.Filled.RepeatOne),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA, "遮罩透明度", type = "parameter_slider", icon = Icons.Filled.Tune),
 )
 
@@ -430,31 +433,137 @@ fun SubCategoryCard(subCategory: SubCategory, onClick: () -> Unit, isHighlighted
 @Composable
 fun ParameterAdjustmentSection(viewModel: MainViewModel, subCategory: SubCategory, keyOfParam: String) {
     val p1StyleType by viewModel.p1StyleType.observeAsState(WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE)
+
+    // 从 ViewModel 获取 Float 类型的参数值
+    // derivedStateOf 用于确保当 keyOfParam 或 p1StyleType 变化时，能正确地重新推导和观察对应的 LiveData
     val currentActualValueState: State<Float?> = remember(keyOfParam, p1StyleType) {
         derivedStateOf {
             when (keyOfParam) {
-                WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> viewModel.scrollSensitivity.value; WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO -> viewModel.p1OverlayFadeRatio.value; WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> viewModel.p2BackgroundFadeInRatio.value; WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> viewModel.backgroundInitialOffset.value; WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> viewModel.backgroundBlurRadius.value; WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> viewModel.blurDownscaleFactor.value;
-                WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO -> if (p1StyleType == 0) viewModel.page1ImageHeightRatio.value else null; WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR -> if (p1StyleType == 0) viewModel.p1ContentScaleFactor.value else null; WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> if (p1StyleType == 0) viewModel.p1ShadowRadius.value else null; WallpaperConfigConstants.KEY_P1_SHADOW_DX -> if (p1StyleType == 0) viewModel.p1ShadowDx.value else null; WallpaperConfigConstants.KEY_P1_SHADOW_DY -> if (p1StyleType == 0) viewModel.p1ShadowDy.value else null; WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> if (p1StyleType == 0) viewModel.p1ImageBottomFadeHeight.value else null;
-                WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA -> if (p1StyleType == 1) viewModel.styleBMaskAlpha.value else null; WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A -> if (p1StyleType == 1) viewModel.styleBRotationParamA.value else null; WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO -> if (p1StyleType == 1) viewModel.styleBGapSizeRatio.value else null; WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO -> if (p1StyleType == 1) viewModel.styleBGapPositionYRatio.value else null; WallpaperConfigConstants.KEY_STYLE_B_UPPER_MASK_MAX_ROTATION -> if (p1StyleType == 1) viewModel.styleBUpperMaskMaxRotation.value else null; WallpaperConfigConstants.KEY_STYLE_B_LOWER_MASK_MAX_ROTATION -> if (p1StyleType == 1) viewModel.styleBLowerMaskMaxRotation.value else null;
-                else -> null
+                // 通用参数
+                WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> viewModel.scrollSensitivity.value
+                WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO -> viewModel.p1OverlayFadeRatio.value
+                WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> viewModel.p2BackgroundFadeInRatio.value
+                WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> viewModel.backgroundInitialOffset.value
+                WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> viewModel.backgroundBlurRadius.value // 全局P2背景模糊半径
+                WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> viewModel.blurDownscaleFactor.value     // 全局P2背景降采样
+
+                // 样式 A 专属参数
+                WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO -> if (p1StyleType == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) viewModel.page1ImageHeightRatio.value else null
+                WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR -> if (p1StyleType == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) viewModel.p1ContentScaleFactor.value else null
+                WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> if (p1StyleType == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) viewModel.p1ShadowRadius.value else null
+                WallpaperConfigConstants.KEY_P1_SHADOW_DX -> if (p1StyleType == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) viewModel.p1ShadowDx.value else null
+                WallpaperConfigConstants.KEY_P1_SHADOW_DY -> if (p1StyleType == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) viewModel.p1ShadowDy.value else null
+                WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> if (p1StyleType == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) viewModel.p1ImageBottomFadeHeight.value else null
+
+                // 样式 B 专属参数 (Float 类型)
+                WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA -> if (p1StyleType == 1) viewModel.styleBMaskAlpha.value else null
+                WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A -> if (p1StyleType == 1) viewModel.styleBRotationParamA.value else null
+                WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO -> if (p1StyleType == 1) viewModel.styleBGapSizeRatio.value else null
+                WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO -> if (p1StyleType == 1) viewModel.styleBGapPositionYRatio.value else null
+                WallpaperConfigConstants.KEY_STYLE_B_UPPER_MASK_MAX_ROTATION -> if (p1StyleType == 1) viewModel.styleBUpperMaskMaxRotation.value else null
+                WallpaperConfigConstants.KEY_STYLE_B_LOWER_MASK_MAX_ROTATION -> if (p1StyleType == 1) viewModel.styleBLowerMaskMaxRotation.value else null
+                // 新增：样式 B P1 遮罩专属模糊参数 (Float 类型)
+                WallpaperConfigConstants.KEY_STYLE_B_BLUR_RADIUS -> if (p1StyleType == 1) viewModel.styleBBlurRadius.value else null
+                WallpaperConfigConstants.KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR -> if (p1StyleType == 1) viewModel.styleBBlurDownscaleFactor.value else null
+
+                else -> null // 对于非 Float 或不匹配当前样式的参数，返回 null
             }
         }
     }
-    val currentBlurIterationsFromVM: State<Int?> = if (keyOfParam == WallpaperConfigConstants.KEY_BLUR_ITERATIONS) viewModel.blurIterations.observeAsState() else remember { mutableStateOf(null) }
-    val actualValueForSlider = if (keyOfParam == WallpaperConfigConstants.KEY_BLUR_ITERATIONS) currentBlurIterationsFromVM.value?.toFloat() else currentActualValueState.value
-    if (actualValueForSlider == null && keyOfParam != WallpaperConfigConstants.KEY_BLUR_ITERATIONS) { PlaceholderForAdjustmentArea("此参数不适用于当前P1样式"); return }
-    var currentSliderPosition by remember(keyOfParam, actualValueForSlider) { mutableStateOf(actualValueForSlider?.let { mapActualValueToSliderPosition(keyOfParam, it) } ?: 0.5f) }
+
+    // 为 Int 类型的参数（如迭代次数）单独获取状态
+    val currentGlobalBlurIterationsFromVM: State<Int?> = if (keyOfParam == WallpaperConfigConstants.KEY_BLUR_ITERATIONS) {
+        viewModel.blurIterations.observeAsState()
+    } else {
+        remember { mutableStateOf(null) } // 仅当 key 匹配时才观察，否则保持 null
+    }
+
+    val currentStyleBBlurIterationsFromVM: State<Int?> = if (keyOfParam == WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS && p1StyleType == 1) {
+        viewModel.styleBBlurIterations.observeAsState()
+    } else {
+        remember { mutableStateOf(null) }
+    }
+
+    // 确定滑块实际使用的值 (将 Int? 转为 Float?)
+    val actualValueForSlider: Float? = when (keyOfParam) {
+        WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> currentGlobalBlurIterationsFromVM.value?.toFloat()
+        WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS -> currentStyleBBlurIterationsFromVM.value?.toFloat()
+        else -> currentActualValueState.value
+    }
+
+    // 如果参数不适用于当前样式，或ViewModel中没有对应值（例如新添加的参数尚未初始化），则显示占位符
+    // 注意：对于Int类型的参数，即使ViewModel中有默认值0或1，toFloat()后也不是null。
+    // 所以这里的检查主要是针对 currentActualValueState 返回 null 的情况（即参数与当前P1样式不符）
+    if (actualValueForSlider == null &&
+        !(keyOfParam == WallpaperConfigConstants.KEY_BLUR_ITERATIONS && currentGlobalBlurIterationsFromVM.value != null) &&
+        !(keyOfParam == WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS && currentStyleBBlurIterationsFromVM.value != null)
+    ) {
+        PlaceholderForAdjustmentArea("此参数不适用于当前P1样式"); return
+    }
+
+    // 使用 actualValueForSlider 来初始化 currentSliderPosition，如果为null则用0.5f作为默认滑块位置
+    var currentSliderPosition by remember(keyOfParam, actualValueForSlider) {
+        mutableStateOf(actualValueForSlider?.let { mapActualValueToSliderPosition(keyOfParam, it) } ?: 0.5f)
+    }
+
     val displayValueString = remember(keyOfParam, currentSliderPosition) {
         val actualVal = mapSliderPositionToActualValue(keyOfParam, currentSliderPosition)
-        if (listOf(WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY, WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO, WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO, WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET, WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR, WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA, WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A, WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO, WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO).contains(keyOfParam)) String.format("%.2f", actualVal) else actualVal.roundToInt().toString()
+        if (listOf(
+                WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY,
+                WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO,
+                WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO,
+                WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET,
+                WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR, // 全局P2降采样
+                WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA,
+                WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A,
+                WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO,
+                WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO,
+                WallpaperConfigConstants.KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR // 新增：样式B P1遮罩降采样
+            ).contains(keyOfParam)) {
+            String.format("%.2f", actualVal)
+        } else { // 默认处理为整数显示 (包括模糊半径和迭代次数)
+            actualVal.roundToInt().toString()
+        }
     }
+
     Column(modifier = Modifier.padding(horizontal = 0.dp, vertical = 4.dp).defaultMinSize(minHeight = 64.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(subCategory.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, color = Color.White)
             Text(displayValueString, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.85f))
         }
-        val steps = if (listOf(WallpaperConfigConstants.KEY_BLUR_ITERATIONS, WallpaperConfigConstants.KEY_STYLE_B_UPPER_MASK_MAX_ROTATION, WallpaperConfigConstants.KEY_STYLE_B_LOWER_MASK_MAX_ROTATION).contains(keyOfParam)) { val minVal = getMinRawValueForParam(keyOfParam).roundToInt(); val maxVal = getMaxRawValueForParam(keyOfParam).roundToInt(); (maxVal - minVal -1).coerceAtLeast(0) } else 0
-        Slider(value = currentSliderPosition, onValueChange = { newPosition -> currentSliderPosition = newPosition; viewModel.updateAdvancedSettingRealtime(keyOfParam, mapSliderPositionToActualValue(keyOfParam, newPosition)) }, onValueChangeFinished = { viewModel.updateAdvancedSettingRealtime(keyOfParam, mapSliderPositionToActualValue(keyOfParam, currentSliderPosition)) }, valueRange = 0f..1f, steps = if (steps > 0) steps else 0, colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White.copy(alpha = 0.7f), inactiveTrackColor = Color.White.copy(alpha = 0.3f)), modifier = Modifier.fillMaxWidth().padding(top = 0.dp))
+
+        val steps = if (listOf(
+                WallpaperConfigConstants.KEY_BLUR_ITERATIONS, // 全局迭代
+                WallpaperConfigConstants.KEY_STYLE_B_UPPER_MASK_MAX_ROTATION,
+                WallpaperConfigConstants.KEY_STYLE_B_LOWER_MASK_MAX_ROTATION,
+                WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS // 新增：样式B P1遮罩迭代
+            ).contains(keyOfParam)) {
+            val minVal = getMinRawValueForParam(keyOfParam).roundToInt()
+            val maxVal = getMaxRawValueForParam(keyOfParam).roundToInt()
+            (maxVal - minVal -1).coerceAtLeast(0) // steps 是分割数，所以是 区间数 - 1
+        } else 0
+
+        Slider(
+            value = currentSliderPosition,
+            onValueChange = { newPosition ->
+                currentSliderPosition = newPosition
+                viewModel.updateAdvancedSettingRealtime(keyOfParam, mapSliderPositionToActualValue(keyOfParam, newPosition))
+            },
+            onValueChangeFinished = {
+                // 确保在拖动结束后，基于最终的 currentSliderPosition 再调用一次，以防 onValueChange 未触发最后的值
+                viewModel.updateAdvancedSettingRealtime(keyOfParam, mapSliderPositionToActualValue(keyOfParam, currentSliderPosition))
+                // 同时，对于Int类型的参数，可能需要确保 ViewModel 中的 LiveData 也更新为精确的 Int 值（如果 updateAdvancedSettingRealtime 内部转换有精度问题）
+                // 但通常 updateAdvancedSettingRealtime 内部的 roundToInt() 已经处理了
+            },
+            valueRange = 0f..1f,
+            steps = if (steps > 0) steps else 0, // 只有当 steps 大于0时才启用离散步长
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = Color.White.copy(alpha = 0.7f),
+                inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+            ),
+            modifier = Modifier.fillMaxWidth().padding(top = 0.dp)
+        )
     }
 }
 
@@ -476,6 +585,9 @@ fun getMinRawValueForParam(paramKey: String): Float {
         WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> 0.1f; WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO -> 0.01f; WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> 0.01f; WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> 0.0f; WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> 0f; WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> 0.01f; WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> 1f;
         WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO -> WallpaperConfigConstants.MIN_HEIGHT_RATIO; WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR -> WallpaperConfigConstants.DEFAULT_P1_CONTENT_SCALE_FACTOR; WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> 0f; WallpaperConfigConstants.KEY_P1_SHADOW_DX -> -20f; WallpaperConfigConstants.KEY_P1_SHADOW_DY -> 0f; WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> 0f;
         WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA -> 0.0f; WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A -> 0.0f; WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO -> 0.0f; WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO -> 0.0f; WallpaperConfigConstants.KEY_STYLE_B_UPPER_MASK_MAX_ROTATION -> 0f; WallpaperConfigConstants.KEY_STYLE_B_LOWER_MASK_MAX_ROTATION -> 0f;
+        WallpaperConfigConstants.KEY_STYLE_B_BLUR_RADIUS -> 0f    // 模糊半径最小可以为0 (无模糊)
+        WallpaperConfigConstants.KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR -> 0.01f // 降采样最小1%
+        WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS -> 1f
         else -> 0f
     }
 }
@@ -485,6 +597,10 @@ fun getMaxRawValueForParam(paramKey: String): Float {
         WallpaperConfigConstants.KEY_SCROLL_SENSITIVITY -> 2.0f; WallpaperConfigConstants.KEY_P1_OVERLAY_FADE_RATIO -> 1.0f; WallpaperConfigConstants.KEY_P2_BACKGROUND_FADE_IN_RATIO -> 1.0f; WallpaperConfigConstants.KEY_BACKGROUND_INITIAL_OFFSET -> 1.0f; WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS -> 25f; WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR -> 0.5f; WallpaperConfigConstants.KEY_BLUR_ITERATIONS -> 3f;
         WallpaperConfigConstants.KEY_IMAGE_HEIGHT_RATIO -> WallpaperConfigConstants.MAX_HEIGHT_RATIO; WallpaperConfigConstants.KEY_P1_CONTENT_SCALE_FACTOR -> 4.0f; WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS -> 20f; WallpaperConfigConstants.KEY_P1_SHADOW_DX -> 20f; WallpaperConfigConstants.KEY_P1_SHADOW_DY -> 20f; WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT -> 2560f;
         WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA -> 1.0f; WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A -> 1.0f; WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO -> 0.8f; WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO -> 1.0f; WallpaperConfigConstants.KEY_STYLE_B_UPPER_MASK_MAX_ROTATION -> 60f; WallpaperConfigConstants.KEY_STYLE_B_LOWER_MASK_MAX_ROTATION -> 60f;
+        WallpaperConfigConstants.KEY_STYLE_B_BLUR_RADIUS -> 25f   // 例如，最大模糊半径同全局背景模糊
+        WallpaperConfigConstants.KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR -> 0.5f // 例如，最大降采样50% (再大意义不大)
+        WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS -> 3f    // 例如，迭代次数最多3次
+
         else -> 1f
     }
 }

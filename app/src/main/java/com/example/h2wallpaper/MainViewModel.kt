@@ -149,6 +149,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _styleBMasksHorizontallyFlipped = MutableLiveData<Boolean>()
     val styleBMasksHorizontallyFlipped: LiveData<Boolean> get() = _styleBMasksHorizontallyFlipped
+    // 新增 LiveData 用于样式 B 遮罩的模糊参数
+    private val _styleBBlurRadius = MutableLiveData<Float>()
+    val styleBBlurRadius: LiveData<Float> get() = _styleBBlurRadius
+
+    private val _styleBBlurDownscaleFactor = MutableLiveData<Float>()
+    val styleBBlurDownscaleFactor: LiveData<Float> get() = _styleBBlurDownscaleFactor
+
+    private val _styleBBlurIterations = MutableLiveData<Int>()
+    val styleBBlurIterations: LiveData<Int> get() = _styleBBlurIterations
+
+
 
     private val paramUpdateTimes = mutableMapOf<String, Long>()
     private val throttleInterval = 20f
@@ -187,6 +198,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _styleBUpperMaskMaxRotation.value = preferencesRepository.getStyleBUpperMaskMaxRotation()
         _styleBLowerMaskMaxRotation.value = preferencesRepository.getStyleBLowerMaskMaxRotation()
         _styleBMasksHorizontallyFlipped.value = preferencesRepository.getStyleBMasksHorizontallyFlipped()
+        // 新增：加载样式 B 的模糊参数
+        _styleBBlurRadius.value = preferencesRepository.getStyleBBlurRadius()
+        _styleBBlurDownscaleFactor.value = preferencesRepository.getStyleBBlurDownscaleFactor()
+        _styleBBlurIterations.value = preferencesRepository.getStyleBBlurIterations()
 
         viewModelScope.launch {
             val currentUri = _selectedImageUri.value
@@ -495,6 +510,30 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO -> { if (_styleBGapPositionYRatio.value != actualValue) { _styleBGapPositionYRatio.value = actualValue; preferencesRepository.saveScaledFloatSettingAsInt(paramKey, actualValue, 100); valueChanged = true } }
             WallpaperConfigConstants.KEY_STYLE_B_UPPER_MASK_MAX_ROTATION -> { if (_styleBUpperMaskMaxRotation.value != actualValue) { _styleBUpperMaskMaxRotation.value = actualValue; preferencesRepository.saveIntSetting(paramKey, actualValue.roundToInt()); valueChanged = true } }
             WallpaperConfigConstants.KEY_STYLE_B_LOWER_MASK_MAX_ROTATION -> { if (_styleBLowerMaskMaxRotation.value != actualValue) { _styleBLowerMaskMaxRotation.value = actualValue; preferencesRepository.saveIntSetting(paramKey, actualValue.roundToInt()); valueChanged = true } }
+            WallpaperConfigConstants.KEY_STYLE_B_BLUR_RADIUS -> {
+                if (_styleBBlurRadius.value != actualValue) {
+                    _styleBBlurRadius.value = actualValue
+                    // 假设模糊半径在 SharedPreferences 中作为 Int 存储
+                    preferencesRepository.saveIntSetting(paramKey, actualValue.roundToInt())
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR -> {
+                if (_styleBBlurDownscaleFactor.value != actualValue) {
+                    _styleBBlurDownscaleFactor.value = actualValue
+                    // 假设降采样因子在 SharedPreferences 中是 Float (0-1范围)，乘以100后作为 Int 存储
+                    preferencesRepository.saveScaledFloatSettingAsInt(paramKey, actualValue, 100)
+                    valueChanged = true
+                }
+            }
+            WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS -> {
+                val intValue = actualValue.roundToInt() // 从滑块获取的值是Float，转为Int
+                if (_styleBBlurIterations.value != intValue) {
+                    _styleBBlurIterations.value = intValue
+                    preferencesRepository.saveIntSetting(paramKey, intValue)
+                    valueChanged = true
+                }
+            }
             else -> { Log.w("MainViewModel", "updateAdvancedSettingRealtime: Unknown paramKey: $paramKey"); return }
         }
         if (valueChanged) {

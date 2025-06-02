@@ -187,6 +187,10 @@ class MainActivity : AppCompatActivity(), MainActivityActions {
         val styleBP1FocusY = mainViewModel.styleBP1FocusY.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_Y
         val styleBP1ScaleFactor = mainViewModel.styleBP1ScaleFactor.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_P1_SCALE_FACTOR
         val styleBMasksFlippedState = mainViewModel.styleBMasksHorizontallyFlipped.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_MASKS_HORIZONTALLY_FLIPPED
+
+        val styleBP1MaskBlurRadius = mainViewModel.styleBBlurRadius.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_RADIUS
+        val styleBP1MaskBlurDownscale = mainViewModel.styleBBlurDownscaleFactor.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_DOWNSCALE_FACTOR
+        val styleBP1MaskBlurIterations = mainViewModel.styleBBlurIterations.value ?: WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_ITERATIONS
         // ...
         // 调用 WallpaperPreviewView 的 setConfigValues 方法更新其渲染参数
         // ** 你需要在 WallpaperPreviewView.kt 中扩展 setConfigValues 方法以接收这些新参数 **
@@ -224,6 +228,11 @@ class MainActivity : AppCompatActivity(), MainActivityActions {
             styleBP1FocusY = styleBP1FocusY,
             styleBP1ScaleFactor = styleBP1ScaleFactor,
             styleBMasksHorizontallyFlipped = if (p1StyleType == 1) styleBMasksFlippedState else false,
+            // 新增：传递样式 B P1 遮罩专属的模糊参数给 WallpaperPreviewView
+            styleBP1MaskBlurRadiusVal = styleBP1MaskBlurRadius,
+            styleBP1MaskBlurDownscaleVal = styleBP1MaskBlurDownscale,
+            styleBP1MaskBlurIterationsVal = styleBP1MaskBlurIterations
+
         )
     }
 
@@ -329,6 +338,21 @@ class MainActivity : AppCompatActivity(), MainActivityActions {
         mainViewModel.styleBUpperMaskMaxRotation.observe(this) { syncPreviewViewWithViewModelConfig() }
         mainViewModel.styleBLowerMaskMaxRotation.observe(this) { syncPreviewViewWithViewModelConfig() }
 
+
+
+        // 新增：观察样式 B P1 遮罩专属模糊参数的变化
+        mainViewModel.styleBBlurRadius.observe(this) {
+            Log.d(TAG, "Observed styleBBlurRadius change: $it, syncing preview.")
+            syncPreviewViewWithViewModelConfig()
+        }
+        mainViewModel.styleBBlurDownscaleFactor.observe(this) {
+            Log.d(TAG, "Observed styleBBlurDownscaleFactor change: $it, syncing preview.")
+            syncPreviewViewWithViewModelConfig()
+        }
+        mainViewModel.styleBBlurIterations.observe(this) {
+            Log.d(TAG, "Observed styleBBlurIterations change: $it, syncing preview.")
+            syncPreviewViewWithViewModelConfig()
+        }
 
         mainViewModel.toastMessage.observe(this) { event ->
             event.getContentIfNotHandled()?.let { msgContent ->

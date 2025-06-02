@@ -243,6 +243,37 @@ class WallpaperPreferencesRepository(context: Context) {
             WallpaperConfigConstants.DEFAULT_STYLE_B_MASKS_HORIZONTALLY_FLIPPED
         )
 
+
+    /**
+     * 获取存储的样式 B P1层遮罩背景模糊半径。
+     * @return 返回存储的模糊半径 (Float)，如果未存储则返回默认值。
+     */
+    fun getStyleBBlurRadius(): Float =
+        prefs.getInt(
+            WallpaperConfigConstants.KEY_STYLE_B_BLUR_RADIUS,
+            WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_RADIUS_INT
+        ).toFloat()
+
+    /**
+     * 获取存储的样式 B P1层遮罩背景模糊降采样因子。
+     * 存储时是整数 (实际值 * 100)，读取时转换为 Float (0.0f - 1.0f)。
+     * @return 返回存储的降采样因子，如果未存储则返回默认值。
+     */
+    fun getStyleBBlurDownscaleFactor(): Float =
+        prefs.getInt(
+            WallpaperConfigConstants.KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR,
+            WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_DOWNSCALE_FACTOR_INT
+        ) / 100.0f
+
+    /**
+     * 获取存储的样式 B P1层遮罩背景模糊迭代次数。
+     * @return 返回存储的迭代次数 (Int)，如果未存储则返回默认值。
+     */
+    fun getStyleBBlurIterations(): Int =
+        prefs.getInt(
+            WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS,
+            WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_ITERATIONS_INT
+        )
     // --- Setters (原有部分，保持不变，因为 MainViewModel 使用通用保存方法) ---
     /**
      * 设置并存储选定的图片 URI。
@@ -366,6 +397,9 @@ class WallpaperPreferencesRepository(context: Context) {
             .putFloat(WallpaperConfigConstants.KEY_STYLE_B_P1_FOCUS_X, WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_X)
             .putFloat(WallpaperConfigConstants.KEY_STYLE_B_P1_FOCUS_Y, WallpaperConfigConstants.DEFAULT_STYLE_B_P1_FOCUS_Y)
             .putFloat(WallpaperConfigConstants.KEY_STYLE_B_P1_SCALE_FACTOR, WallpaperConfigConstants.DEFAULT_STYLE_B_P1_SCALE_FACTOR)
+            .putInt(WallpaperConfigConstants.KEY_STYLE_B_BLUR_RADIUS, WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_RADIUS_INT)
+            .putInt(WallpaperConfigConstants.KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR, WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_DOWNSCALE_FACTOR_INT)
+            .putInt(WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS, WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_ITERATIONS_INT)
             // 样式 B 的形状参数 (旋转、间隔等) 通常不需要随新图片重置，除非有此设计需求
             // .putInt(WallpaperConfigConstants.KEY_P1_STYLE_TYPE, WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) // P1样式类型是否重置？
             .putLong(WallpaperConfigConstants.KEY_IMAGE_CONTENT_VERSION, System.currentTimeMillis())

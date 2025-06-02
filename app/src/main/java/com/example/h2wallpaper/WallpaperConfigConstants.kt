@@ -80,7 +80,13 @@ object WallpaperConfigConstants {
     const val KEY_STYLE_B_LOWER_MASK_MAX_ROTATION = "styleBLowerMaskMaxRotation"
     /** (样式 B) 存储遮罩是否水平翻转的键名 */
     const val KEY_STYLE_B_MASKS_HORIZONTALLY_FLIPPED = "styleBMasksHorizontallyFlipped"
-
+    // ... 其他 KEY_STYLE_B_...
+    /** (样式 B) 存储P1层遮罩背景模糊半径的键名 */
+    const val KEY_STYLE_B_BLUR_RADIUS = "styleB_P1MaskBlurRadius" // 使用更明确的Key名
+    /** (样式 B) 存储P1层遮罩背景模糊降采样因子的键名 */
+    const val KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR = "styleB_P1MaskBlurDownscale"
+    /** (样式 B) 存储P1层遮罩背景模糊迭代次数的键名 */
+    const val KEY_STYLE_B_BLUR_ITERATIONS = "styleB_P1MaskBlurIterations"
 
 
     // --- Default Values (原有部分) ---
@@ -128,7 +134,7 @@ object WallpaperConfigConstants {
     const val DEFAULT_P1_STYLE_TYPE: Int = 0 // 0 for Style A, 1 for Style B
 
     /** (样式 B) 默认遮罩层透明度 (例如，0.7f 表示 70% 不透明) */
-    const val DEFAULT_STYLE_B_MASK_ALPHA: Float = 0.7f
+    const val DEFAULT_STYLE_B_MASK_ALPHA: Float = 1f
     /** (样式 B) 默认驱动遮罩旋转的参数 A (0.0 表示无旋转) */
     const val DEFAULT_STYLE_B_ROTATION_PARAM_A: Float = 0.0f
     /** (样式 B) 默认中间间隔大小比例 (例如，屏幕高度的 20%) */
@@ -148,7 +154,13 @@ object WallpaperConfigConstants {
     const val DEFAULT_STYLE_B_LOWER_MASK_MAX_ROTATION: Float = 60.0f
     /** (样式 B) 默认遮罩是否水平翻转 */
     const val DEFAULT_STYLE_B_MASKS_HORIZONTALLY_FLIPPED: Boolean = false
-
+// ... 其他 DEFAULT_STYLE_B_...
+    /** (样式 B) 默认P1层遮罩背景模糊半径 */
+    const val DEFAULT_STYLE_B_BLUR_RADIUS: Float = 15.0f // 您可以根据喜好调整默认值
+    /** (样式 B) 默认P1层遮罩背景模糊降采样因子 (0.01f - 1.0f, 建议不超过0.5以保证性能) */
+    const val DEFAULT_STYLE_B_BLUR_DOWNSCALE_FACTOR: Float = 0.25f // 默认25%降采样
+    /** (样式 B) 默认P1层遮罩背景模糊迭代次数 */
+    const val DEFAULT_STYLE_B_BLUR_ITERATIONS: Int = 1 // 默认1次迭代
 
     // --- UI Related Defaults (原有部分) ---
     /** 预览视图中页面吸附动画的默认时长 (毫秒) */
@@ -184,7 +196,13 @@ object WallpaperConfigConstants {
     val DEFAULT_STYLE_B_UPPER_MASK_MAX_ROTATION_INT: Int = DEFAULT_STYLE_B_UPPER_MASK_MAX_ROTATION.roundToInt()
     /** (样式 B) 下遮罩最大旋转角度在 SeekBar 中对应的整数默认值 */
     val DEFAULT_STYLE_B_LOWER_MASK_MAX_ROTATION_INT: Int = DEFAULT_STYLE_B_LOWER_MASK_MAX_ROTATION.roundToInt()
-
+    // ... 其他 DEFAULT_STYLE_B_..._INT
+    /** (样式 B) 遮罩模糊半径在 SeekBar 中对应的整数默认值 */
+    val DEFAULT_STYLE_B_BLUR_RADIUS_INT: Int = DEFAULT_STYLE_B_BLUR_RADIUS.roundToInt()
+    /** (样式 B) 遮罩模糊降采样因子在 SeekBar 中对应的整数默认值 (实际值 * 100) */
+    val DEFAULT_STYLE_B_BLUR_DOWNSCALE_FACTOR_INT: Int = (DEFAULT_STYLE_B_BLUR_DOWNSCALE_FACTOR * 100).toInt()
+    /** (样式 B) 遮罩模糊迭代次数在 SeekBar 中对应的整数默认值 */
+    val DEFAULT_STYLE_B_BLUR_ITERATIONS_INT: Int = DEFAULT_STYLE_B_BLUR_ITERATIONS
 
 
     /**

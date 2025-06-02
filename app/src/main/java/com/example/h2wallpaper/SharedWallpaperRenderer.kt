@@ -184,6 +184,11 @@ object SharedWallpaperRenderer {
         val styleBP1ScaleFactor: Float,
         val p1StyleType: Int,
         val styleBMasksHorizontallyFlipped: Boolean,
+        // 新增：样式 B 遮罩专用的模糊参数
+        val styleBModeP1MaskBlurRadius: Float,
+        val styleBModeP1MaskBlurDownscale: Float,
+        val styleBModeP1MaskBlurIterations: Int
+
     )
 
     // --- Paint 对象定义 ---
@@ -708,7 +713,9 @@ object SharedWallpaperRenderer {
         context: Context, imageUri: Uri?, targetScreenWidth: Int, targetScreenHeight: Int,
         page1ImageHeightRatio: Float, normalizedFocusX: Float, normalizedFocusY: Float,
         contentScaleFactorForP1: Float,
-        blurRadiusForBackground: Float, blurDownscaleFactor: Float, blurIterations: Int
+        blurRadiusForBackground: Float, blurDownscaleFactor: Float, blurIterations: Int,styleBP1MaskBlurRadius: Float,
+        styleBP1MaskBlurDownscale: Float,
+        styleBP1MaskBlurIterations: Int
     ): WallpaperBitmaps {
         if (imageUri == null || targetScreenWidth <= 0 || targetScreenHeight <= 0) {
             return WallpaperBitmaps(null, null, null, null, null, null)
@@ -809,101 +816,94 @@ object SharedWallpaperRenderer {
 
             // --- 第五步：准备样式B专用的模糊背景图 ---
             try {
-                Log.d(TAG, "Generating Style B specific blurred background")
-                
-                // 创建样式B的背景图 - 使用sourceSampled作为源
+                Log.d(TAG, "Generating Style B specific blurred background using configurable params and blurBitmapUsingRenderScript")
+
                 if (sourceSampled != null && !sourceSampled.isRecycled) {
-                    // 创建与屏幕大小相同的位图
-                    val styleBBgBitmap = Bitmap.createBitmap(targetScreenWidth, targetScreenHeight, Bitmap.Config.ARGB_8888)
-                    val styleBCanvas = Canvas(styleBBgBitmap)
-                    
-                    // 绘制背景图像到全屏
-                    val bgMatrix = Matrix()
-                    val scale: Float
-                    val dx: Float
-                    val dy: Float
-                    
+                    // 1. 创建一个临时的、将 sourceSampled 以 "cover" 方式绘制到 targetScreenWidth x targetScreenHeight 的位图
+                    val tempFullSourceForStyleB = Bitmap.createBitmap(targetScreenWidth, targetScreenHeight, Bitmap.Config.ARGB_8888)
+                    val canvasForStyleB = Canvas(tempFullSourceForStyleB)
+                    val matrixForStyleB = Matrix()
+                    // 计算变换矩阵，使 sourceSampled "cover" tempFullSourceForStyleB
+                    val scaleRatio: Float
+                    val transX: Float
+                    val transY: Float
                     if (sourceSampled.width * targetScreenHeight > targetScreenWidth * sourceSampled.height) {
-                        scale = targetScreenHeight.toFloat() / sourceSampled.height.toFloat()
-                        dx = (targetScreenWidth.toFloat() - sourceSampled.width * scale) * 0.5f
-                        dy = 0f
+                        scaleRatio = targetScreenHeight.toFloat() / sourceSampled.height.toFloat()
+                        transX = (targetScreenWidth.toFloat() - sourceSampled.width * scaleRatio) * 0.5f
+                        transY = 0f
                     } else {
-                        scale = targetScreenWidth.toFloat() / sourceSampled.width.toFloat()
-                        dx = 0f
-                        dy = (targetScreenHeight.toFloat() - sourceSampled.height * scale) * 0.5f
+                        scaleRatio = targetScreenWidth.toFloat() / sourceSampled.width.toFloat()
+                        transX = 0f
+                        transY = (targetScreenHeight.toFloat() - sourceSampled.height * scaleRatio) * 0.5f
                     }
-                    
-                    bgMatrix.setScale(scale, scale)
-                    bgMatrix.postTranslate(dx, dy)
-                    
-                    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-                    styleBCanvas.drawBitmap(sourceSampled, bgMatrix, bgPaint)
-                    
-                    // 使用RenderScript进行高质量模糊
-                    // 模糊参数比普通背景更强，以确保效果明显
-                    val blurRadius = 20.0f  // 较大的模糊半径
-                    val iterations = 1      // 多次迭代增强模糊效果
-                    
-                    // 创建RenderScript上下文
-                    val rs = RenderScript.create(context)
-                    
-                    try {
-                        // 为提高性能，先降低分辨率
-                        val scaleFactor = 0.25f  // 降到25%分辨率
-                        val width = (styleBBgBitmap.width * scaleFactor).toInt().coerceAtLeast(16)
-                        val height = (styleBBgBitmap.height * scaleFactor).toInt().coerceAtLeast(16)
-                        
-                        val inputBitmap = Bitmap.createScaledBitmap(styleBBgBitmap, width, height, true)
-                        
-                        // 创建输出位图
-                        val outputBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                        
-                        // 分配内存
-                        val tmpIn = Allocation.createFromBitmap(rs, inputBitmap)
-                        val tmpOut = Allocation.createFromBitmap(rs, outputBitmap)
-                        
-                        // 创建模糊脚本
-                        val blurScript = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs))
-                        
-                        // 设置模糊半径
-                        blurScript.setRadius(blurRadius)
-                        
-                        // 进行多次迭代模糊
-                        for (i in 0 until iterations) {
-                            blurScript.setInput(tmpIn)
-                            blurScript.forEach(tmpOut)
-                            
-                            // 如果不是最后一次迭代，将输出复制回输入用于下一次迭代
-                            if (i < iterations - 1) {
-                                tmpOut.copyTo(outputBitmap)
-                                tmpIn.copyFrom(outputBitmap)
-                            }
+                    matrixForStyleB.setScale(scaleRatio, scaleRatio)
+                    matrixForStyleB.postTranslate(transX, transY)
+                    val paintForStyleB = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                    canvasForStyleB.drawBitmap(sourceSampled, matrixForStyleB, paintForStyleB)
+
+                    // 2. 对这个临时的全屏源图应用用户配置的模糊参数
+
+                    // 从函数参数获取用户配置的模糊设置
+                    val radiusToUse = styleBP1MaskBlurRadius // <--- 使用新参数
+                    val iterationsToUse = styleBP1MaskBlurIterations // <--- 使用新参数
+                    val downscaleFactorToUse = styleBP1MaskBlurDownscale.coerceIn(0.01f, 0.5f) // <--- 使用新参数
+
+                    var blurredOutput: Bitmap? = null
+                    var tempDownscaled: Bitmap? = null // 用于存储降采样后的临时位图
+
+                    if (radiusToUse > 0.01f) { // 只有当需要模糊时才处理
+                        // a. 根据 downscaleFactorToUse 对 tempFullSourceForStyleB 进行降采样
+                        val downscaledWidth = (tempFullSourceForStyleB.width * downscaleFactorToUse).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
+                        val downscaledHeight = (tempFullSourceForStyleB.height * downscaleFactorToUse).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
+
+                        val sourceForBlurring: Bitmap
+                        if (downscaleFactorToUse < 0.99f && (downscaledWidth < tempFullSourceForStyleB.width || downscaledHeight < tempFullSourceForStyleB.height)) {
+                            tempDownscaled = Bitmap.createScaledBitmap(tempFullSourceForStyleB, downscaledWidth, downscaledHeight, true)
+                            sourceForBlurring = tempDownscaled
+                        } else {
+                            // 不需要降采样或降采样无效
+                            sourceForBlurring = tempFullSourceForStyleB
                         }
-                        
-                        // 将结果复制到输出位图
-                        tmpOut.copyTo(outputBitmap)
-                        
-                        // 放大回原始尺寸
-                        styleBBlurredBitmap = Bitmap.createScaledBitmap(outputBitmap, targetScreenWidth, targetScreenHeight, true)
-                        
-                        // 清理临时位图
-                        if (inputBitmap != styleBBgBitmap) inputBitmap.recycle()
-                        if (outputBitmap != styleBBlurredBitmap) outputBitmap.recycle()
-                        
-                        Log.d(TAG, "Style B blurred background generated successfully")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error applying RenderScript blur for Style B", e)
-                    } finally {
-                        // 清理RenderScript资源
-                        rs.destroy()
+
+                        // b. 对降采样后的图 (sourceForBlurring) 调用 blurBitmapUsingRenderScript
+                        blurredOutput = blurBitmapUsingRenderScript(context, sourceForBlurring, radiusToUse, iterationsToUse)
+
+                        // c. 将模糊后的结果放大回 targetScreenWidth x targetScreenHeight (如果需要且尺寸不匹配)
+                        if (blurredOutput != null) {
+                            if (blurredOutput.width != targetScreenWidth || blurredOutput.height != targetScreenHeight) {
+                                styleBBlurredBitmap = Bitmap.createScaledBitmap(blurredOutput, targetScreenWidth, targetScreenHeight, true)
+                                // 如果 createScaledBitmap 返回了新的 Bitmap 对象，并且 blurredOutput 不是 styleBBlurredBitmap，则回收 blurredOutput
+                                if (styleBBlurredBitmap != blurredOutput) {
+                                    blurredOutput.recycle()
+                                }
+                            } else {
+                                // blurredOutput 尺寸已与目标一致 (可能直接在原尺寸图上模糊，或者降采样后又放大回去了)
+                                styleBBlurredBitmap = blurredOutput
+                            }
+                            Log.d(TAG, "Style B blurred background generated. Output size: ${styleBBlurredBitmap?.width}x${styleBBlurredBitmap?.height}")
+                        } else {
+                            Log.w(TAG, "Style B: blurBitmapUsingRenderScript returned null.")
+                            styleBBlurredBitmap = null // 确保在失败时为 null
+                        }
+                    } else {
+                        // 不需要模糊 (blurRadiusForBackground <= 0.01f)
+                        Log.d(TAG, "Style B: No blur applied as radius is too small.")
+                        styleBBlurredBitmap = null // 遮罩将使用颜色回退
                     }
-                    
-                    // 回收临时位图
-                    if (styleBBgBitmap != styleBBlurredBitmap) styleBBgBitmap.recycle()
+
+                    // 回收临时的降采样位图（如果被创建且不是最终结果）
+                    if (tempDownscaled != null && tempDownscaled != styleBBlurredBitmap && tempDownscaled != blurredOutput) {
+                        tempDownscaled.recycle()
+                    }
+                    // 回收临时的全屏源图
+                    tempFullSourceForStyleB.recycle()
+
+                } else { // sourceSampled == null || sourceSampled.isRecycled
+                    styleBBlurredBitmap = null
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error generating Style B blurred background", e)
-                styleBBlurredBitmap?.recycle()
+                Log.e(TAG, "Error generating Style B specific blurred background with blurBitmapUsingRenderScript", e)
+                styleBBlurredBitmap?.recycle() // 确保回收在异常发生前可能已创建的位图
                 styleBBlurredBitmap = null
             }
             
@@ -1193,6 +1193,107 @@ object SharedWallpaperRenderer {
             // canvas.drawRect(0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(), p1OverlayBgPaint)
         }
         canvas.restore()
+    }
+
+    // 在 SharedWallpaperRenderer.kt 对象内部
+
+    /**
+     * 重新生成样式 B 专用的、覆盖全屏的 P1 遮罩模糊背景图。
+     *
+     * @param context Context 对象。
+     * @param sourceBitmap 原始的、采样处理过的位图 (通常是 engineWallpaperBitmaps.sourceSampledBitmap)。
+     * @param screenWidth 目标屏幕宽度。
+     * @param screenHeight 目标屏幕高度。
+     * @param styleBP1MaskBlurRadius 应用的样式 B P1 遮罩模糊半径。
+     * @param styleBP1MaskBlurDownscale 应用的样式 B P1 遮罩模糊降采样因子。
+     * @param styleBP1MaskBlurIterations 应用的样式 B P1 遮罩模糊迭代次数。
+     * @return 新的、为样式 B 生成的 P1 遮罩模糊背景 Bitmap，尺寸为 screenWidth x screenHeight；如果失败则返回 null。
+     */
+    fun regenerateStyleBBlurredBitmap(
+        context: Context,
+        sourceBitmap: Bitmap?,
+        screenWidth: Int,
+        screenHeight: Int,
+        styleBP1MaskBlurRadius: Float,
+        styleBP1MaskBlurDownscale: Float,
+        styleBP1MaskBlurIterations: Int
+    ): Bitmap? {
+        if (sourceBitmap == null || sourceBitmap.isRecycled || screenWidth <= 0 || screenHeight <= 0) {
+            Log.w(TAG, "regenerateStyleBBlurredBitmap: Invalid input.")
+            return null
+        }
+
+        var tempFullSourceForStyleB: Bitmap? = null // 用于绘制 sourceBitmap 的临时全屏图
+        var tempDownscaled: Bitmap? = null      // 降采样后的临时图
+        var blurredOutput: Bitmap? = null       // blurBitmapUsingRenderScript 的直接输出
+        var finalStyleBBlurredBitmap: Bitmap? = null // 最终放大回屏幕尺寸的图
+
+        try {
+            // 1. 创建临时的全屏源图
+            tempFullSourceForStyleB = Bitmap.createBitmap(screenWidth, screenHeight, Bitmap.Config.ARGB_8888)
+            val canvasForStyleB = Canvas(tempFullSourceForStyleB)
+            val matrixForStyleB = Matrix()
+            val scaleRatio: Float
+            val transX: Float
+            val transY: Float
+            if (sourceBitmap.width * screenHeight > screenWidth * sourceBitmap.height) {
+                scaleRatio = screenHeight.toFloat() / sourceBitmap.height.toFloat()
+                transX = (screenWidth.toFloat() - sourceBitmap.width * scaleRatio) * 0.5f
+                transY = 0f
+            } else {
+                scaleRatio = screenWidth.toFloat() / sourceBitmap.width.toFloat()
+                transX = 0f
+                transY = (screenHeight.toFloat() - sourceBitmap.height * scaleRatio) * 0.5f
+            }
+            matrixForStyleB.setScale(scaleRatio, scaleRatio)
+            matrixForStyleB.postTranslate(transX, transY)
+            val paintForStyleB = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            canvasForStyleB.drawBitmap(sourceBitmap, matrixForStyleB, paintForStyleB)
+
+            // 2. 应用模糊
+            val radiusToUse = styleBP1MaskBlurRadius
+            val iterationsToUse = styleBP1MaskBlurIterations
+            val downscaleFactorToUse = styleBP1MaskBlurDownscale.coerceIn(0.01f, 0.5f)
+
+            if (radiusToUse > 0.01f) {
+                val downscaledWidth = (tempFullSourceForStyleB.width * downscaleFactorToUse).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
+                val downscaledHeight = (tempFullSourceForStyleB.height * downscaleFactorToUse).roundToInt().coerceAtLeast(MIN_DOWNSCALED_DIMENSION)
+
+                val sourceForBlurring: Bitmap
+                if (downscaleFactorToUse < 0.99f && (downscaledWidth < tempFullSourceForStyleB.width || downscaledHeight < tempFullSourceForStyleB.height)) {
+                    tempDownscaled = Bitmap.createScaledBitmap(tempFullSourceForStyleB, downscaledWidth, downscaledHeight, true)
+                    sourceForBlurring = tempDownscaled
+                } else {
+                    sourceForBlurring = tempFullSourceForStyleB
+                }
+
+                blurredOutput = blurBitmapUsingRenderScript(context, sourceForBlurring, radiusToUse, iterationsToUse)
+
+                if (blurredOutput != null) {
+                    if (blurredOutput.width != screenWidth || blurredOutput.height != screenHeight) {
+                        finalStyleBBlurredBitmap = Bitmap.createScaledBitmap(blurredOutput, screenWidth, screenHeight, true)
+                        if (finalStyleBBlurredBitmap != blurredOutput) { // 新对象才回收旧的
+                            blurredOutput.recycle()
+                        }
+                    } else {
+                        finalStyleBBlurredBitmap = blurredOutput
+                    }
+                } else {
+                    Log.w(TAG, "regenerateStyleBBlurredBitmap: blurBitmapUsingRenderScript returned null.")
+                }
+            } else {
+                Log.d(TAG, "regenerateStyleBBlurredBitmap: No blur applied as radius is too small.")
+            }
+            return finalStyleBBlurredBitmap
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in regenerateStyleBBlurredBitmap", e)
+            finalStyleBBlurredBitmap?.recycle()
+            blurredOutput?.recycle() // 确保回收
+            tempDownscaled?.recycle()
+            return null
+        } finally {
+            tempFullSourceForStyleB?.recycle() // 这个总是在函数内创建的，最后需要回收
+        }
     }
 
     /**

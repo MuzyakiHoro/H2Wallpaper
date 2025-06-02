@@ -138,7 +138,10 @@ class WallpaperPreviewView @JvmOverloads constructor(
     private var currentStyleBP1ScaleFactor: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_P1_SCALE_FACTOR
     // --- 结束新增 P1 风格参数 ---
     private var currentStyleBMasksHorizontallyFlipped: Boolean = WallpaperConfigConstants.DEFAULT_STYLE_B_MASKS_HORIZONTALLY_FLIPPED
-
+    // --- 新增：样式 B P1 遮罩专属模糊参数的成员变量 ---
+    private var currentStyleBP1MaskBlurRadius: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_RADIUS
+    private var currentStyleBP1MaskBlurDownscale: Float = WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_DOWNSCALE_FACTOR
+    private var currentStyleBP1MaskBlurIterations: Int = WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_ITERATIONS
 
     /** 持有渲染所需的各种位图资源 */
     private var wallpaperBitmaps: SharedWallpaperRenderer.WallpaperBitmaps? = null
@@ -211,6 +214,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
     /** 处理模糊任务队列的协程 Job */
     private var blurTaskProcessor: Job? = null
+    /**用于样式B P1遮罩模糊更新的Job跟踪器**/
+    private var styleBBlurUpdateJob: Job? = null //
 
     /** 上一个模糊任务的开始时间戳，用于判断任务是否处理过慢 */
     private var lastBlurTaskStartTime = 0L
@@ -1390,6 +1395,9 @@ class WallpaperPreviewView @JvmOverloads constructor(
                     styleBP1FocusY = currentStyleBP1FocusY, // 使用 this.currentStyleBP1FocusY
                     styleBP1ScaleFactor = currentStyleBP1ScaleFactor, // 使用 this.currentStyleBP1ScaleFactor
                     styleBMasksHorizontallyFlipped = if (this.currentP1StyleType == 1) this.currentStyleBMasksHorizontallyFlipped else false,
+                    styleBModeP1MaskBlurRadius = currentStyleBP1MaskBlurRadius,
+                    styleBModeP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale,
+                    styleBModeP1MaskBlurIterations = currentStyleBP1MaskBlurIterations
                 )
                 // 调用共享渲染器绘制完整的一帧预览
                 SharedWallpaperRenderer.drawFrame(canvas, config, currentWallBitmaps)
@@ -1414,32 +1422,51 @@ class WallpaperPreviewView @JvmOverloads constructor(
      *
      * @param scrollSensitivity 滚动灵敏度。
      * @param p1OverlayFadeRatio P1 前景淡出比例。
-     * @param backgroundBlurRadius 背景模糊半径。
-     * @param snapAnimationDurationMs 页面吸附动画时长 (当前未使用，固定值)。
-     * @param normalizedInitialBgScrollOffset 背景初始偏移。
-     * @param p2BackgroundFadeInRatio P2 背景淡入比例。
-     * @param blurDownscaleFactor 模糊降采样因子。
-     * @param blurIterations 模糊迭代次数。
-     * @param p1ShadowRadius P1 图片投影半径。
-     * @param p1ShadowDx P1 图片投影X偏移。
-     * @param p1ShadowDy P1 图片投影Y偏移。
-     * @param p1ShadowColor P1 图片投影颜色。
-     * @param p1ImageBottomFadeHeight P1 图片底部融入高度。
+     * @param backgroundBlurRadius P2 全局背景模糊半径。
+     * @param snapAnimationDurationMs 页面吸附动画时长。
+     * @param normalizedInitialBgScrollOffset P2 背景初始偏移。
+     * @param p2BackgroundFadeInRatio P2 背景淡入过渡比例。
+     * @param blurDownscaleFactor P2 全局背景模糊降采样因子。
+     * @param blurIterations P2 全局背景模糊迭代次数。
+     * @param p1ShadowRadius 样式 A 的 P1 图片投影半径。
+     * @param p1ShadowDx 样式 A 的 P1 图片投影X偏移。
+     * @param p1ShadowDy 样式 A 的 P1 图片投影Y偏移。
+     * @param p1ShadowColor 样式 A 的 P1 图片投影颜色。
+     * @param p1ImageBottomFadeHeight 样式 A 的 P1 图片底部融入高度。
+     * @param styleBP1FocusX 样式 B 的 P1 独立背景图焦点 X。
+     * @param p1StyleType 当前 P1 层样式类型 (0=样式A, 1=样式B)。
+     * @param styleBMaskAlpha 样式 B 遮罩透明度。
+     * @param styleBRotationParamA 样式 B 旋转参数 A。
+     * @param styleBGapSizeRatio 样式 B 间隔大小比例。
+     * @param styleBGapPositionYRatio 样式 B 间隔位置Y轴比例。
+     * @param styleBUpperMaskMaxRotation 样式 B 上遮罩最大旋转角度。
+     * @param styleBLowerMaskMaxRotation 样式 B 下遮罩最大旋转角度。
+     * @param styleBP1FocusY 样式 B 的 P1 独立背景图焦点 Y。
+     * @param styleBP1ScaleFactor 样式 B 的 P1 独立背景图内容缩放因子。
+     * @param p1FocusY 样式 A 的 P1 图片焦点 Y。
+     * @param p1FocusX 样式 A 的 P1 图片焦点 X。
+     * @param p1ContentScaleFactor 样式 A 的 P1 图片内容缩放因子。
+     * @param page1ImageHeightRatio 样式 A 的 P1 图片高度比例。
+     * @param styleBMasksHorizontallyFlipped 样式 B 遮罩是否水平翻转。
+     * @param styleBP1MaskBlurRadiusVal 样式 B P1 遮罩专属模糊半径。
+     * @param styleBP1MaskBlurDownscaleVal 样式 B P1 遮罩专属模糊降采样因子。
+     * @param styleBP1MaskBlurIterationsVal 样式 B P1 遮罩专属模糊迭代次数。
      */
     fun setConfigValues(
         scrollSensitivity: Float,
         p1OverlayFadeRatio: Float,
-        backgroundBlurRadius: Float,
+        backgroundBlurRadius: Float, // P2 全局背景模糊
         snapAnimationDurationMs: Long,
         normalizedInitialBgScrollOffset: Float,
         p2BackgroundFadeInRatio: Float,
-        blurDownscaleFactor: Float,
-        blurIterations: Int,
+        blurDownscaleFactor: Float, // P2 全局背景降采样
+        blurIterations: Int,        // P2 全局背景迭代
         p1ShadowRadius: Float,
         p1ShadowDx: Float,
         p1ShadowDy: Float,
         p1ShadowColor: Int,
         p1ImageBottomFadeHeight: Float,
+        // 样式 B 非模糊参数
         styleBP1FocusX: Float,
         p1StyleType: Int,
         styleBMaskAlpha: Float,
@@ -1450,101 +1477,155 @@ class WallpaperPreviewView @JvmOverloads constructor(
         styleBLowerMaskMaxRotation: Float,
         styleBP1FocusY: Float,
         styleBP1ScaleFactor: Float,
-        p1FocusY: Float,
-        p1FocusX: Float,
-        p1ContentScaleFactor: Float,
-        page1ImageHeightRatio: Float,
-        styleBMasksHorizontallyFlipped: Boolean, // 新增
+        // 样式 A 参数
+        p1FocusY: Float, // 对应 currentNormalizedFocusY
+        p1FocusX: Float, // 对应 currentNormalizedFocusX
+        p1ContentScaleFactor: Float, // 对应 currentP1ContentScaleFactor (用于样式A的P1内容缩放)
+        page1ImageHeightRatio: Float, // 对应 nonEditModePage1ImageHeightRatio
+        // 样式 B 翻转
+        styleBMasksHorizontallyFlipped: Boolean,
+        // 新增：样式 B P1 遮罩专属模糊参数
+        styleBP1MaskBlurRadiusVal: Float,
+        styleBP1MaskBlurDownscaleVal: Float,
+        styleBP1MaskBlurIterationsVal: Int
     ) {
-        // 保存旧的参数值，用于比较是否发生变化
-        val oldBgBlurR = this.currentBackgroundBlurRadius
-        val oldBgBlurDF = this.currentBlurDownscaleFactor
-        val oldBgBlurIt = this.currentBlurIterations
+        // --- 1. 保存旧的参数值，用于比较是否发生变化 ---
         val oldP1ImageBottomFadeHeight = this.currentP1ImageBottomFadeHeight
         val oldP1ShadowRadius = this.currentP1ShadowRadius
         val oldP1ShadowDx = this.currentP1ShadowDx
         val oldP1ShadowDy = this.currentP1ShadowDy
+        // (如果还有其他仅影响重绘的参数，也在此保存其旧值)
 
-        // 更新当前View持有的参数值
+        // 保存旧的 P2 全局背景模糊参数
+        val oldGlobalBgBlurR = this.currentBackgroundBlurRadius
+        val oldGlobalBgBlurDF = this.currentBlurDownscaleFactor
+        val oldGlobalBgBlurIt = this.currentBlurIterations
+
+        // 新增：保存旧的样式 B P1 遮罩专属模糊参数值
+        val oldStyleBP1MaskBlurR = this.currentStyleBP1MaskBlurRadius
+        val oldStyleBP1MaskBlurDF = this.currentStyleBP1MaskBlurDownscale
+        val oldStyleBP1MaskBlurIt = this.currentStyleBP1MaskBlurIterations
+
+        // --- 2. 更新当前View持有的所有参数到成员变量 ---
         this.currentScrollSensitivity = scrollSensitivity
         this.currentP1OverlayFadeRatio = p1OverlayFadeRatio
-        this.currentBackgroundBlurRadius = backgroundBlurRadius
+        this.currentBackgroundBlurRadius = backgroundBlurRadius // P2 全局背景模糊
         this.currentSnapAnimationDurationMs = snapAnimationDurationMs
         this.currentNormalizedInitialBgScrollOffset = normalizedInitialBgScrollOffset
         this.currentP2BackgroundFadeInRatio = p2BackgroundFadeInRatio
-        this.currentBlurDownscaleFactor = blurDownscaleFactor
-        this.currentBlurIterations = blurIterations
+        this.currentBlurDownscaleFactor = blurDownscaleFactor     // P2 全局背景降采样
+        this.currentBlurIterations = blurIterations               // P2 全局背景迭代
         this.currentP1ShadowRadius = p1ShadowRadius
         this.currentP1ShadowDx = p1ShadowDx
         this.currentP1ShadowDy = p1ShadowDy
         this.currentP1ShadowColor = p1ShadowColor
         this.currentP1ImageBottomFadeHeight = p1ImageBottomFadeHeight
 
-        // --- 更新新增的 P1 风格参数 ---
-        this.currentP1StyleType = p1StyleType
+        // 更新样式 B 非模糊参数
+        this.currentP1StyleType = p1StyleType // 这个决定了渲染路径
         this.currentStyleBMaskAlpha = styleBMaskAlpha
         this.currentStyleBRotationParamA = styleBRotationParamA
         this.currentStyleBGapSizeRatio = styleBGapSizeRatio
         this.currentStyleBGapPositionYRatio = styleBGapPositionYRatio
         this.currentStyleBUpperMaskMaxRotation = styleBUpperMaskMaxRotation
         this.currentStyleBLowerMaskMaxRotation = styleBLowerMaskMaxRotation
-        this.currentStyleBP1FocusX = styleBP1FocusX
+        this.currentStyleBP1FocusX = styleBP1FocusX // 样式 B 的 P1 背景图焦点
         this.currentStyleBP1FocusY = styleBP1FocusY
         this.currentStyleBP1ScaleFactor = styleBP1ScaleFactor
-        // --- 结束更新 P1 风格参数 ---
-
-        // 更新 P1 通用配置参数 (确保这些也在 setConfigValues 中被正确处理)
-        this.currentNormalizedFocusX = p1FocusX
-        this.currentNormalizedFocusY = p1FocusY
-        this.currentP1ContentScaleFactor = p1ContentScaleFactor
-        this.nonEditModePage1ImageHeightRatio = page1ImageHeightRatio
         this.currentStyleBMasksHorizontallyFlipped = styleBMasksHorizontallyFlipped
 
+        // 更新样式 A 的参数 (这些主要影响非编辑模式下的P1顶图生成，或编辑模式的初始值)
+        this.currentNormalizedFocusX = p1FocusX // 注意：这是 WallpaperPreviewView 内的通用焦点变量，主要用于样式 A 或编辑模式焦点
+        this.currentNormalizedFocusY = p1FocusY
+        this.currentP1ContentScaleFactor = p1ContentScaleFactor // 这是样式 A 的内容缩放因子
+        this.nonEditModePage1ImageHeightRatio = page1ImageHeightRatio // 样式 A 的 P1 图片高度比例
 
-        // 检测某些参数（如P1底部融入、P1阴影）的变化是否只需要立即重绘
-        val needsImmediateRedrawOnly = oldP1ImageBottomFadeHeight != p1ImageBottomFadeHeight ||
-                oldP1ShadowRadius != p1ShadowRadius ||
-                oldP1ShadowDx != p1ShadowDx ||
-                oldP1ShadowDy != p1ShadowDy
-        // 注意：阴影颜色变化也应触发重绘，但当前未在此处检查，而是依赖于 `invalidate()`
+        // 新增：更新样式 B P1 遮罩专属模糊参数的成员变量
+        this.currentStyleBP1MaskBlurRadius = styleBP1MaskBlurRadiusVal
+        this.currentStyleBP1MaskBlurDownscale = styleBP1MaskBlurDownscaleVal
+        this.currentStyleBP1MaskBlurIterations = styleBP1MaskBlurIterationsVal
 
-        if (needsImmediateRedrawOnly) {
-            invalidate() // 如果只是这些参数变了，直接重绘
-            return
-        }
+        // --- 3. 检测参数变化并执行相应操作 ---
 
-        // 检查模糊相关参数是否发生变化
-        val blurParamsChanged = oldBgBlurR != this.currentBackgroundBlurRadius ||
-                oldBgBlurDF != this.currentBlurDownscaleFactor ||
-                oldBgBlurIt != this.currentBlurIterations
+        // 标记那些只需要立即重绘的参数是否发生了变化
+        val simpleRedrawParamsChanged = oldP1ImageBottomFadeHeight != this.currentP1ImageBottomFadeHeight ||
+                oldP1ShadowRadius != this.currentP1ShadowRadius ||
+                oldP1ShadowDx != this.currentP1ShadowDx ||
+                oldP1ShadowDy != this.currentP1ShadowDy // 添加其他仅影响绘制的参数比较
 
-        if (this.imageUri != null) { // 如果当前有选定的图片
-            if (blurParamsChanged && wallpaperBitmaps?.scrollingBackgroundBitmap != null) {
-                // 如果只有模糊参数变了，并且我们有未模糊的滚动背景图，则尝试只更新模糊效果
-                Log.d(
-                    TAG,
-                    "setConfigValues: Only blur params changed, attempting to update blur for preview."
-                )
-                updateOnlyBlurredBackgroundForPreviewAsync()
-            }
-            // 如果没有源图，或者模糊参数也变了（且无法单独更新模糊），或者其他重要参数导致需要重载
-            else if (wallpaperBitmaps?.sourceSampledBitmap == null || blurParamsChanged) {
-                Log.d(TAG, "setConfigValues: Conditions require full bitmap reload for preview.")
-                loadFullBitmapsFromUri(this.imageUri, true) // 强制内部重新加载所有位图
+        // 检测 P2 全局背景模糊参数是否发生变化
+        val globalP2BlurParamsChanged = oldGlobalBgBlurR != this.currentBackgroundBlurRadius ||
+                oldGlobalBgBlurDF != this.currentBlurDownscaleFactor ||
+                oldGlobalBgBlurIt != this.currentBlurIterations
+
+        // 新增：检测样式 B P1 遮罩专属模糊参数是否发生变化
+        val styleBP1MaskBlurParamsChanged = oldStyleBP1MaskBlurR != this.currentStyleBP1MaskBlurRadius ||
+                oldStyleBP1MaskBlurDF != this.currentStyleBP1MaskBlurDownscale ||
+                oldStyleBP1MaskBlurIt != this.currentStyleBP1MaskBlurIterations
+
+        var triggerFullReload = false // 标记是否最终需要完整重载
+
+        if (this.imageUri != null) { // 只有在有图片URI时才进行位图相关的更新
+            // 优先处理可能导致完整重载的情况 (例如，如果样式类型变化，或者某些关键位图缺失)
+            // (此处的逻辑可以根据具体需求调整，例如，样式类型变化是否一定需要完整重载，还是可以只更新部分位图)
+            if (wallpaperBitmaps?.sourceSampledBitmap == null) { // 如果最基础的源图都没有，必须完整重载
+                triggerFullReload = true
+                Log.d(TAG, "setConfigValues: Source bitmap is null, forcing full reload.")
             } else {
-                // 其他参数变化，但可能只需要重绘或更新P1顶图 (例如滚动灵敏度变化)
-                if (!isInP1EditMode && !isTransitioningFromEditMode && wallpaperBitmaps?.sourceSampledBitmap != null) {
-                    // 如果不在编辑模式，且有源图，可能需要更新P1顶图（例如，如果配置影响P1的生成）
-                    // 但当前setConfigValues的参数主要影响背景和整体渲染，P1顶图的直接依赖（高度、焦点、缩放）有单独的setter
-                    // 因此，这里可能只需要 invalidate()
-                    // 如果确实有参数会影响非编辑模式下P1顶图的生成，则调用 updateOnlyPage1TopCroppedBitmap
-                    invalidate() // 优先简单重绘
-                } else {
-                    invalidate() // 在编辑模式或过渡模式下，也重绘
+                // 源图存在，再检查局部更新
+                if (globalP2BlurParamsChanged) {
+                    if (wallpaperBitmaps?.scrollingBackgroundBitmap != null) {
+                        Log.d(TAG, "setConfigValues: Global P2 Blur params changed, updating P2 blur for preview.")
+                        updateOnlyBlurredBackgroundForPreviewAsync() // (使用 blurTaskProcessor)
+                    } else {
+                        // P2 滚动背景图缺失，可能也需要完整重载才能生成它
+                        Log.w(TAG, "setConfigValues: Global P2 Blur params changed, but scrollingBackgroundBitmap is null. Flagging for full reload.")
+                        triggerFullReload = true
+                    }
+                }
+
+                if (styleBP1MaskBlurParamsChanged) {
+                    // sourceSampledBitmap 是生成 styleBBlurredBitmap 的基础，所以检查它
+                    if (wallpaperBitmaps?.sourceSampledBitmap != null) {
+                        Log.d(TAG, "setConfigValues: Style B P1 Mask Blur params changed, updating Style B P1 Mask blur for preview.")
+                        updateStyleBP1MaskBlurredBitmapForPreviewAsync()
+                    } else {
+                        // 源图缺失，无法生成样式B的模糊图，也应完整重载
+                        Log.w(TAG, "setConfigValues: Style B P1 Mask Blur params changed, but sourceSampledBitmap is null. Flagging for full reload.")
+                        triggerFullReload = true
+                    }
+                }
+
+                // 如果没有任何模糊参数变化，并且也不是因为简单重绘参数变化
+                if (!triggerFullReload && !globalP2BlurParamsChanged && !styleBP1MaskBlurParamsChanged) {
+                    if (simpleRedrawParamsChanged) {
+                        Log.d(TAG, "setConfigValues: Simple redraw parameters changed. Invalidating.")
+                        invalidate()
+                    } else {
+                        // 如果还有其他非模糊、非简单重绘的参数也可能影响位图（例如P1高度比例影响P1顶图）
+                        // 但当前setConfigValues主要处理高级参数，P1高度/焦点/缩放通常由单独的setter处理
+                        // 此处可以假设，如果不是上述具体更新，则重绘。
+                        // 或者，如果担心有遗漏，可以更保守地触发完整重载，但这可能影响性能。
+                        // 当前的 WallpaperPreviewView 中，page1ImageHeightRatio, normalizedFocus, p1ContentScaleFactor 都有自己的 setter
+                        // 它们会调用 updateOnlyPage1TopCroppedBitmap。
+                        // 所以这里，如果上述条件都不满足，很可能只需要 invalidate()。
+                        Log.d(TAG, "setConfigValues: No specific bitmap updates triggered by blur or simple params. Invalidating for other changes.")
+                        invalidate()
+                    }
                 }
             }
-        } else {
-            invalidate() // 没有图片，只重绘占位符
+
+            if (triggerFullReload) {
+                Log.d(TAG, "setConfigValues: Final decision: Conditions require full bitmap reload for preview.")
+                loadFullBitmapsFromUri(this.imageUri, true) // forceInternalReload = true
+            } else if (!globalP2BlurParamsChanged && !styleBP1MaskBlurParamsChanged && !simpleRedrawParamsChanged) {
+                // 如果以上都不是，但我们走到了这里（意味着imageUri存在，sourceBitmap也应该存在）
+                // 这通常意味着是一些不直接影响位图生成的参数变化了（如滚动灵敏度等），只需要重绘
+                invalidate()
+            }
+
+        } else { // 没有图片URI
+            invalidate() // 重绘占位符
         }
     }
 
@@ -1601,6 +1682,72 @@ class WallpaperPreviewView @JvmOverloads constructor(
             }
         }
     }
+    /**
+     * 异步仅更新样式 B 的 P1 遮罩模糊背景图 (wallpaperBitmaps.styleBBlurredBitmap) 以供预览。
+     * 当样式 B 的专属模糊参数发生变化时调用此方法。
+     */
+    private fun updateStyleBP1MaskBlurredBitmapForPreviewAsync() {
+        styleBBlurUpdateJob?.cancel() // 取消上一个正在进行的样式B P1遮罩模糊更新任务
+
+        val sourceBitmapToUse = wallpaperBitmaps?.sourceSampledBitmap
+        if (sourceBitmapToUse == null || viewWidth <= 0 || viewHeight <= 0 || imageUri == null) {
+            Log.w(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync: Conditions not met (no source bitmap, invalid view size, or no URI).")
+            if (imageUri != null && sourceBitmapToUse == null) {
+                // 如果有URI但没有源图，说明状态可能不一致，可能需要完整重载
+                loadFullBitmapsFromUri(imageUri, true) // forceInternalReload = true
+            }
+            return
+        }
+
+        Log.d(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync: Starting. Style B P1 Mask BlurR=$currentStyleBP1MaskBlurRadius, DF=$currentStyleBP1MaskBlurDownscale, It=$currentStyleBP1MaskBlurIterations")
+
+        styleBBlurUpdateJob = viewScope.launch { // 使用 viewScope
+            var newStyleBBlurred: Bitmap? = null
+            try {
+                ensureActive()
+                newStyleBBlurred = withContext(Dispatchers.IO) {
+                    ensureActive()
+                    SharedWallpaperRenderer.regenerateStyleBBlurredBitmap(
+                        context = context, // View的context
+                        sourceBitmap = sourceBitmapToUse,
+                        screenWidth = viewWidth,
+                        screenHeight = viewHeight,
+                        // 使用当前View持有的样式 B 专属模糊参数
+                        styleBP1MaskBlurRadius = currentStyleBP1MaskBlurRadius,
+                        styleBP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale,
+                        styleBP1MaskBlurIterations = currentStyleBP1MaskBlurIterations
+                    )
+                }
+                ensureActive()
+
+                val oldStyleBBlurred = wallpaperBitmaps?.styleBBlurredBitmap
+                // 再次检查在异步处理期间，图片URI和源位图是否未发生变化
+                if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.sourceSampledBitmap == sourceBitmapToUse) {
+                    wallpaperBitmaps?.styleBBlurredBitmap = newStyleBBlurred
+                    if (oldStyleBBlurred != newStyleBBlurred) oldStyleBBlurred?.recycle() // 回收旧的
+                    Log.d(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync: Successfully updated Style B P1 Mask blurred background for preview.")
+                } else {
+                    Log.w(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync: Conditions changed during async operation. Discarding result.")
+                    newStyleBBlurred?.recycle()
+                }
+            } catch (e: CancellationException) {
+                Log.d(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync cancelled.")
+                newStyleBBlurred?.recycle()
+            } catch (e: Exception) {
+                Log.e(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync failed", e)
+                newStyleBBlurred?.recycle()
+                if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.sourceSampledBitmap == sourceBitmapToUse) {
+                    wallpaperBitmaps?.styleBBlurredBitmap = null
+                }
+            } finally {
+                if (isActive && coroutineContext[Job] == styleBBlurUpdateJob) styleBBlurUpdateJob = null
+                if (isActive && this@WallpaperPreviewView.imageUri != null) {
+                    invalidate() // 完成后重绘
+                }
+            }
+        }
+    }
+
 
     /**
      * 启动模糊任务处理器协程 (`blurTaskProcessor`)。
@@ -1870,7 +2017,10 @@ class WallpaperPreviewView @JvmOverloads constructor(
                         scaleToUse,
                         currentBackgroundBlurRadius,
                         currentBlurDownscaleFactor,
-                        currentBlurIterations
+                        currentBlurIterations,
+                        styleBP1MaskBlurRadius = currentStyleBP1MaskBlurRadius,
+                        styleBP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale,
+                        styleBP1MaskBlurIterations = currentStyleBP1MaskBlurIterations
                     )
                 }
                 ensureActive() // 返回主线程后再次检查活动状态
@@ -2366,6 +2516,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
         fullBitmapLoadingJob = null
         topBitmapUpdateJob = null
         blurUpdateJob = null // 虽然已废弃，但以防万一
+        styleBBlurUpdateJob = null
 
         // 关闭并取消模糊任务处理器和队列
         blurTaskProcessor?.cancel("View detached, stopping blur processor")
