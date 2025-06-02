@@ -1113,7 +1113,6 @@ object SharedWallpaperRenderer {
             // 1. 绘制 P1 独立背景图 (逻辑不变)
             val p1BgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
             val bgMatrix = Matrix()
-            // ... (bgMatrix 计算和绘制 p1FullScreenBackgroundBitmap 的代码保持不变)
             val scale: Float
             val dx: Float
             val dy: Float
@@ -1192,7 +1191,7 @@ object SharedWallpaperRenderer {
                     // c. Y轴定位
                     //    innerShadowEffectiveHeight 是经过Y轴缩放后的高度 (此处为贴图原始高度因为scaleY=1)
                     val innerShadowEffectiveHeight = horizontalInnerShadowBitmap.height.toFloat() * scaleY
-                    val translateYUpper = gapTopY - innerShadowEffectiveHeight
+                    val translateYUpper = gapTopY - innerShadowEffectiveHeight+4f
                     // X轴平移：您之前测试好的-50f。
                     // 由于贴图宽度已被精确拉伸到upperMaskPathWidth，X轴平移通常为0，除非您想调整拉伸后内容的相位。
                     // 如果-50f是在非拉伸情况下调好的，现在可能需要重新评估或设为0。
@@ -1221,7 +1220,7 @@ object SharedWallpaperRenderer {
                     val scaleXLower = (lowerMaskDesignWidth /  horizontalInnerShadowBitmap.width.toFloat())*1.2f
                     shaderMatrix.postScale(scaleXLower, 1f) // Y轴不缩放
                     // c. 定位贴图：
-                    val translateY = gapBottomY
+                    val translateY = gapBottomY-4f
                     val translateX = screenWidthF - ( horizontalInnerShadowBitmap.width.toFloat() * scaleXLower)+50f
                     shaderMatrix.postTranslate(translateX, translateY)
                     shader.setLocalMatrix(shaderMatrix)
@@ -1233,15 +1232,24 @@ object SharedWallpaperRenderer {
             }
 
 
+
+            val styleBMaskPaint = Paint().apply {
+                style = Paint.Style.FILL
+                isAntiAlias = true
+                color = maskColorForFallback
+                alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
+            }
+
             // 7. 绘制上部旋转遮罩
             canvas.save()
             canvas.rotate(actualRotationUpper, 0f, gapTopY)
             val upperMaskPath = Path()
             // 上遮罩路径的宽度现在使用 upperMaskPathWidth (即屏幕对角线长度)
             upperMaskPath.addRect(0f, 0f, upperMaskPathWidth, gapTopY, Path.Direction.CW)
+            canvas.drawPath(upperMaskPath, styleBMaskPaint)
             canvas.drawPath(upperMaskPath, upperMaskPaint)
-            canvas.restore()
 
+            canvas.restore()
             // 8. 绘制下部旋转遮罩
             canvas.save()
             canvas.rotate(actualRotationLower, screenWidthF, gapBottomY)
@@ -1251,6 +1259,7 @@ object SharedWallpaperRenderer {
             val lowerMaskRectLeft = 0f - (screenWidthF * 2f) // 使用您之前的 overdrawExtension
             val lowerMaskRectRight = screenWidthF
             lowerMaskPath.addRect(lowerMaskRectLeft, gapBottomY, lowerMaskRectRight, screenHeightF, Path.Direction.CW)
+            canvas.drawPath(lowerMaskPath, styleBMaskPaint)
             canvas.drawPath(lowerMaskPath, lowerMaskPaint)
             canvas.restore()
 
