@@ -98,13 +98,15 @@ object SharedWallpaperRenderer {
      * @property scrollingBackgroundBitmap 用于P2背景滚动的位图（通常未模糊或轻微处理）。
      * @property blurredScrollingBackgroundBitmap 经过模糊处理的P2背景滚动位图。
      * @property shadowTextureBitmap 氢斜阴影位图。
+     * @property styleBBlurredBitmap 样式B专用的模糊背景图。
      */
     data class WallpaperBitmaps(
         var sourceSampledBitmap: Bitmap?,
         var page1TopCroppedBitmap: Bitmap?, // 这个现在会考虑 contentScaleFactor
         var scrollingBackgroundBitmap: Bitmap?,
         var blurredScrollingBackgroundBitmap: Bitmap?,
-        var shadowTextureBitmap: Bitmap?
+        var shadowTextureBitmap: Bitmap?,
+        var styleBBlurredBitmap: Bitmap? = null // 样式B专用的模糊背景图
     ) {
         /**
          * 回收内部持有的所有位图资源，防止内存泄漏。
@@ -121,6 +123,8 @@ object SharedWallpaperRenderer {
             blurredScrollingBackgroundBitmap = null
             shadowTextureBitmap?.recycle()
             shadowTextureBitmap = null
+            styleBBlurredBitmap?.recycle()
+            styleBBlurredBitmap = null
         }
 
         /**
@@ -344,7 +348,7 @@ object SharedWallpaperRenderer {
         // 如果模糊半径过小，几乎等于不模糊，可以直接返回（或返回副本）
         if (blurRadius <= 0.01f) {
             // return baseBitmap.copy(baseBitmap.config, true) // 如果希望在不模糊时返回一个副本
-            return null // 或者根据业务需求，返回null表示“无模糊版本”
+            return null // 或者根据业务需求，返回null表示"无模糊版本"
         }
 
         var downscaledForBlur: Bitmap? = null // 降采样后用于模糊的位图
@@ -707,12 +711,13 @@ object SharedWallpaperRenderer {
         blurRadiusForBackground: Float, blurDownscaleFactor: Float, blurIterations: Int
     ): WallpaperBitmaps {
         if (imageUri == null || targetScreenWidth <= 0 || targetScreenHeight <= 0) {
-            return WallpaperBitmaps(null, null, null, null,null)
+            return WallpaperBitmaps(null, null, null, null, null, null)
         }
 
         var sourceSampled: Bitmap? = null // 高质量的、经过内存优化的源图
         var blurSourceBitmap: Bitmap? = null // （可选）专门为模糊处理加载的低分辨率源图
         var shadowBitmap: Bitmap? = null  //氢斜阴影贴图
+        var styleBBlurredBitmap: Bitmap? = null // 样式B专用的模糊背景图
         try {
             shadowBitmap = BitmapFactory.decodeResource(context.resources, R.drawable.mask_shadow_texture_a) //获取氢斜阴影贴图
             // --- 第一步：获取图片原始尺寸信息 ---
@@ -720,7 +725,7 @@ object SharedWallpaperRenderer {
             context.contentResolver.openInputStream(imageUri)?.use { BitmapFactory.decodeStream(it, null, opts) }
             if (opts.outWidth <= 0 || opts.outHeight <= 0) {
                 Log.e(TAG, "Failed to get image bounds for $imageUri")
-                return WallpaperBitmaps(null, null, null, null,null)
+                return WallpaperBitmaps(null, null, null, null, null, null)
             }
 
             // --- 第二步：加载高质量的源图 (sourceSampled) ---
@@ -736,7 +741,7 @@ object SharedWallpaperRenderer {
             }
             if (sourceSampled == null || sourceSampled!!.isRecycled) {
                 Log.e(TAG, "Failed to decode high-quality sourceSampled from $imageUri")
-                return WallpaperBitmaps(null, null, null, null,null)
+                return WallpaperBitmaps(null, null, null, null, null, null)
             }
 
             // --- 第三步：准备 P1 前景裁剪图 ---
@@ -802,15 +807,115 @@ object SharedWallpaperRenderer {
                 // blurredBackground 保持为 null
             }
 
+            // --- 第五步：准备样式B专用的模糊背景图 ---
+            try {
+                Log.d(TAG, "Generating Style B specific blurred background")
+                
+                // 创建样式B的背景图 - 使用sourceSampled作为源
+                if (sourceSampled != null && !sourceSampled.isRecycled) {
+                    // 创建与屏幕大小相同的位图
+                    val styleBBgBitmap = Bitmap.createBitmap(targetScreenWidth, targetScreenHeight, Bitmap.Config.ARGB_8888)
+                    val styleBCanvas = Canvas(styleBBgBitmap)
+                    
+                    // 绘制背景图像到全屏
+                    val bgMatrix = Matrix()
+                    val scale: Float
+                    val dx: Float
+                    val dy: Float
+                    
+                    if (sourceSampled.width * targetScreenHeight > targetScreenWidth * sourceSampled.height) {
+                        scale = targetScreenHeight.toFloat() / sourceSampled.height.toFloat()
+                        dx = (targetScreenWidth.toFloat() - sourceSampled.width * scale) * 0.5f
+                        dy = 0f
+                    } else {
+                        scale = targetScreenWidth.toFloat() / sourceSampled.width.toFloat()
+                        dx = 0f
+                        dy = (targetScreenHeight.toFloat() - sourceSampled.height * scale) * 0.5f
+                    }
+                    
+                    bgMatrix.setScale(scale, scale)
+                    bgMatrix.postTranslate(dx, dy)
+                    
+                    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                    styleBCanvas.drawBitmap(sourceSampled, bgMatrix, bgPaint)
+                    
+                    // 使用RenderScript进行高质量模糊
+                    // 模糊参数比普通背景更强，以确保效果明显
+                    val blurRadius = 20.0f  // 较大的模糊半径
+                    val iterations = 1      // 多次迭代增强模糊效果
+                    
+                    // 创建RenderScript上下文
+                    val rs = RenderScript.create(context)
+                    
+                    try {
+                        // 为提高性能，先降低分辨率
+                        val scaleFactor = 0.25f  // 降到25%分辨率
+                        val width = (styleBBgBitmap.width * scaleFactor).toInt().coerceAtLeast(16)
+                        val height = (styleBBgBitmap.height * scaleFactor).toInt().coerceAtLeast(16)
+                        
+                        val inputBitmap = Bitmap.createScaledBitmap(styleBBgBitmap, width, height, true)
+                        
+                        // 创建输出位图
+                        val outputBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                        
+                        // 分配内存
+                        val tmpIn = Allocation.createFromBitmap(rs, inputBitmap)
+                        val tmpOut = Allocation.createFromBitmap(rs, outputBitmap)
+                        
+                        // 创建模糊脚本
+                        val blurScript = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs))
+                        
+                        // 设置模糊半径
+                        blurScript.setRadius(blurRadius)
+                        
+                        // 进行多次迭代模糊
+                        for (i in 0 until iterations) {
+                            blurScript.setInput(tmpIn)
+                            blurScript.forEach(tmpOut)
+                            
+                            // 如果不是最后一次迭代，将输出复制回输入用于下一次迭代
+                            if (i < iterations - 1) {
+                                tmpOut.copyTo(outputBitmap)
+                                tmpIn.copyFrom(outputBitmap)
+                            }
+                        }
+                        
+                        // 将结果复制到输出位图
+                        tmpOut.copyTo(outputBitmap)
+                        
+                        // 放大回原始尺寸
+                        styleBBlurredBitmap = Bitmap.createScaledBitmap(outputBitmap, targetScreenWidth, targetScreenHeight, true)
+                        
+                        // 清理临时位图
+                        if (inputBitmap != styleBBgBitmap) inputBitmap.recycle()
+                        if (outputBitmap != styleBBlurredBitmap) outputBitmap.recycle()
+                        
+                        Log.d(TAG, "Style B blurred background generated successfully")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error applying RenderScript blur for Style B", e)
+                    } finally {
+                        // 清理RenderScript资源
+                        rs.destroy()
+                    }
+                    
+                    // 回收临时位图
+                    if (styleBBgBitmap != styleBBlurredBitmap) styleBBgBitmap.recycle()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error generating Style B blurred background", e)
+                styleBBlurredBitmap?.recycle()
+                styleBBlurredBitmap = null
+            }
+            
             // 清理临时的低分辨率源图 (如果加载过)
             blurSourceBitmap?.recycle()
 
-            return WallpaperBitmaps(sourceSampled, topCropped, scrollingBackground, blurredBackground,shadowBitmap)
+            return WallpaperBitmaps(sourceSampled, topCropped, scrollingBackground, blurredBackground, shadowBitmap, styleBBlurredBitmap)
         } catch (e: Exception) {
             Log.e(TAG, "Error in loadAndProcessInitialBitmaps for $imageUri", e)
             sourceSampled?.recycle()
             blurSourceBitmap?.recycle()
-            return WallpaperBitmaps(null, null, null, null,null)
+            return WallpaperBitmaps(null, null, null, null, null, null)
         }
     }
 
@@ -1127,8 +1232,21 @@ object SharedWallpaperRenderer {
             }
             bgMatrix.setScale(scale, scale)
             bgMatrix.postTranslate(dx, dy)
-            canvas.drawBitmap(p1FullScreenBackgroundBitmap, bgMatrix, p1BgPaint)
 
+
+
+            
+            // 使用预先生成的模糊背景图，无需实时生成
+
+            val blurredBitmap = bitmaps.styleBBlurredBitmap
+            
+            if (blurredBitmap == null || blurredBitmap.isRecycled) {
+                Log.d(TAG, "Pre-generated blurred bitmap not available, using fallback color")
+                // 在这种情况下，blurredBitmap将保持为null，后续代码会使用纯色回退
+            }
+            
+            // 绘制原始背景图
+            canvas.drawBitmap(p1FullScreenBackgroundBitmap, bgMatrix, p1BgPaint)
 
             val flipRestorePoint = canvas.saveCount
             if (config.styleBMasksHorizontallyFlipped) {
@@ -1160,14 +1278,67 @@ object SharedWallpaperRenderer {
             // --- 计算屏幕对角线长度 ---
             val diagonalScreenLength = kotlin.math.sqrt(screenWidthF * screenWidthF + screenHeightF * screenHeightF)
 
-
             // overdrawExtension 现在也应该基于这个对角线长度，如果上遮罩路径宽度也想用它
             // 或者，您可以为上遮罩路径定义一个宽度，然后让阴影贴图拉伸到该宽度。
             // 我们假设上遮罩路径的宽度就是 diagonalScreenLength。
             val upperMaskPathWidth = diagonalScreenLength
 
+            // 创建使用模糊背景的Paint
+            val blurredMaskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
+                
+                if (blurredBitmap != null && !blurredBitmap.isRecycled) {
+                    // 使用模糊后的背景图作为shader
+                    val shader = BitmapShader(blurredBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                    
+                    // 关键修改：不要让shader跟随画布旋转
+                    // 创建一个矩阵，用于在shader上应用逆向旋转
+                    val upperShaderMatrix = Matrix()
 
-            // 5. 准备上遮罩的 Paint
+                    // 如果遮罩被水平翻转，在shader矩阵中应用反向翻转以抵消效果
+                    if (config.styleBMasksHorizontallyFlipped) {
+                        upperShaderMatrix.postScale(-1f, 1f, config.screenWidth / 2f, config.screenHeight / 2f)
+                    }
+                    // 上部遮罩的逆向旋转
+                    upperShaderMatrix.postRotate(-actualRotationUpper, 0f, gapTopY)
+                    shader.setLocalMatrix(upperShaderMatrix)
+                    
+                    this.shader = shader
+                } else {
+                    // 回退到纯色
+                    color = maskColorForFallback
+                }
+            }
+
+            // 为下部遮罩创建单独的Paint，因为需要不同的shader矩阵
+            val lowerBlurredMaskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
+                
+                if (blurredBitmap != null && !blurredBitmap.isRecycled) {
+                    // 使用模糊后的背景图作为shader
+                    val shader = BitmapShader(blurredBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                    
+                    // 关键修改：不要让shader跟随画布旋转
+                    // 创建一个矩阵，用于在shader上应用逆向旋转
+                    val lowerShaderMatrix = Matrix()
+                    // 如果遮罩被水平翻转，在shader矩阵中应用反向翻转以抵消效果
+                    if (config.styleBMasksHorizontallyFlipped) {
+                        lowerShaderMatrix.postScale(-1f, 1f, config.screenWidth / 2f, config.screenHeight / 2f)
+                    }
+                    // 下部遮罩的逆向旋转
+                    lowerShaderMatrix.postRotate(-actualRotationLower, screenWidthF, gapBottomY)
+                    shader.setLocalMatrix(lowerShaderMatrix)
+                    
+                    this.shader = shader
+                } else {
+                    // 回退到纯色
+                    color = maskColorForFallback
+                }
+            }
+
+            // 5. 准备上遮罩的 Paint (用于阴影效果)
             val upperMaskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.FILL
                 alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
@@ -1231,22 +1402,13 @@ object SharedWallpaperRenderer {
                 }
             }
 
-
-
-            val styleBMaskPaint = Paint().apply {
-                style = Paint.Style.FILL
-                isAntiAlias = true
-                color = maskColorForFallback
-                alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
-            }
-
             // 7. 绘制上部旋转遮罩
             canvas.save()
             canvas.rotate(actualRotationUpper, 0f, gapTopY)
             val upperMaskPath = Path()
             // 上遮罩路径的宽度现在使用 upperMaskPathWidth (即屏幕对角线长度)
             upperMaskPath.addRect(0f, 0f, upperMaskPathWidth, gapTopY, Path.Direction.CW)
-            canvas.drawPath(upperMaskPath, styleBMaskPaint)
+            canvas.drawPath(upperMaskPath, blurredMaskPaint)
             canvas.drawPath(upperMaskPath, upperMaskPaint)
 
             canvas.restore()
@@ -1259,11 +1421,13 @@ object SharedWallpaperRenderer {
             val lowerMaskRectLeft = 0f - (screenWidthF * 2f) // 使用您之前的 overdrawExtension
             val lowerMaskRectRight = screenWidthF
             lowerMaskPath.addRect(lowerMaskRectLeft, gapBottomY, lowerMaskRectRight, screenHeightF, Path.Direction.CW)
-            canvas.drawPath(lowerMaskPath, styleBMaskPaint)
+            canvas.drawPath(lowerMaskPath, lowerBlurredMaskPaint)
             canvas.drawPath(lowerMaskPath, lowerMaskPaint)
             canvas.restore()
 
             canvas.restoreToCount(flipRestorePoint)
+            
+
 
         } else {
             // ... (占位符绘制逻辑)
