@@ -94,8 +94,7 @@ val p1StyleBSubCategories = listOf(
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_MASKS_HORIZONTALLY_FLIPPED, "翻转方向", type = "action", icon = Icons.Filled.Flip ),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_BLUR_RADIUS, "遮罩模糊半径", type = "parameter_slider", icon = Icons.Filled.BlurOn),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR, "遮罩模糊降采样", type = "parameter_slider", icon = Icons.Filled.Compress),
-    SubCategory(WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS, "遮罩模糊迭代", type = "parameter_slider", icon = Icons.Filled.RepeatOne),
-    SubCategory(WallpaperConfigConstants.KEY_STYLE_B_MASK_ALPHA, "遮罩透明度", type = "parameter_slider", icon = Icons.Filled.Tune),
+
 )
 
 interface MainActivityActions {

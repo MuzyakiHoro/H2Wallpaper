@@ -56,7 +56,10 @@ class WallpaperPreviewView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private val TAG = "WallpaperPreviewView" // 日志标签
-
+    private enum class BlurTarget {
+        P2_BACKGROUND, // 用于P2层全局背景模糊
+        STYLE_B_P1_MASK // 用于Style B的P1遮罩背景模糊
+    }
     // --- 可配置状态 (通常由 ViewModel 或外部设置) ---
     /** 当前显示的图片 URI */
     private var imageUri: Uri? = null
@@ -231,6 +234,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
      * @property timestamp 任务创建时的时间戳，用于处理任务队列中的优先级或丢弃旧任务。
      */
     private data class BlurTask(
+        val target: BlurTarget,
         val radius: Float,
         val downscaleFactor: Float,
         val iterations: Int,
@@ -1638,17 +1642,16 @@ class WallpaperPreviewView @JvmOverloads constructor(
      * 特别是当检测到单个模糊任务处理时间过长时。
      */
     private fun updateOnlyBlurredBackgroundForPreviewAsync() {
-        // 获取用于生成模糊效果的基础位图 (通常是未模糊的滚动背景图)
+
         val baseForBlur = wallpaperBitmaps?.scrollingBackgroundBitmap
-        // 如果没有基础位图，或View尺寸无效，或没有图片URI，则无法执行
         if (baseForBlur == null || viewWidth <= 0 || viewHeight <= 0 || imageUri == null) {
-            if (imageUri != null) { // 如果有URI但没有基础图，说明加载有问题，尝试完整重载
+            if (imageUri != null) {
                 Log.w(
                     TAG,
                     "updateOnlyBlurredBackgroundForPreviewAsync: Base scrolling bitmap is null. Attempting full reload."
                 )
                 loadFullBitmapsFromUri(this.imageUri, true)
-            } else { // 没有URI，直接重绘（可能会显示占位符）
+            } else {
                 invalidate()
             }
             return
@@ -1656,29 +1659,26 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
         Log.d(
             TAG,
-            "updateOnlyBlurredBackgroundForPreviewAsync: Queuing blur task with R=$currentBackgroundBlurRadius, DF=$currentBlurDownscaleFactor, It=$currentBlurIterations"
+            "updateOnlyBlurredBackgroundForPreviewAsync: Queuing P2 Background blur task with R=$currentBackgroundBlurRadius, DF=$currentBlurDownscaleFactor, It=$currentBlurIterations"
         )
 
-        // 创建新的模糊任务
         val newTask = BlurTask(
+            target = BlurTarget.P2_BACKGROUND, // <--- 指定目标类型
             radius = currentBackgroundBlurRadius,
             downscaleFactor = currentBlurDownscaleFactor,
             iterations = currentBlurIterations
         )
 
-        // 确保模糊任务处理器正在运行
         if (blurTaskProcessor == null || blurTaskProcessor?.isActive != true) {
-            startBlurTaskProcessor() // 启动模糊任务处理器协程
+            startBlurTaskProcessor()
         }
 
-        // 将新任务发送到队列
         viewScope.launch {
             try {
                 blurTaskQueue.send(newTask)
-                Log.d(TAG, "Added blur task to queue: $newTask")
+                Log.d(TAG, "Added P2 Background blur task to queue: $newTask")
             } catch (e: Exception) {
-                // Channel 可能已关闭 (例如 View detached)
-                Log.w(TAG, "Failed to send blur task to queue", e)
+                Log.w(TAG, "Failed to send P2 Background blur task to queue", e)
             }
         }
     }
@@ -1687,63 +1687,39 @@ class WallpaperPreviewView @JvmOverloads constructor(
      * 当样式 B 的专属模糊参数发生变化时调用此方法。
      */
     private fun updateStyleBP1MaskBlurredBitmapForPreviewAsync() {
-        styleBBlurUpdateJob?.cancel() // 取消上一个正在进行的样式B P1遮罩模糊更新任务
-
         val sourceBitmapToUse = wallpaperBitmaps?.sourceSampledBitmap
         if (sourceBitmapToUse == null || viewWidth <= 0 || viewHeight <= 0 || imageUri == null) {
-            Log.w(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync: Conditions not met (no source bitmap, invalid view size, or no URI).")
+            Log.w(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync: Conditions not met for queuing blur task.")
             if (imageUri != null && sourceBitmapToUse == null) {
-                // 如果有URI但没有源图，说明状态可能不一致，可能需要完整重载
-                loadFullBitmapsFromUri(imageUri, true) // forceInternalReload = true
+                loadFullBitmapsFromUri(imageUri, true)
             }
             return
         }
 
-        Log.d(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync: Starting. Style B P1 Mask BlurR=$currentStyleBP1MaskBlurRadius, DF=$currentStyleBP1MaskBlurDownscale, It=$currentStyleBP1MaskBlurIterations")
+        Log.d(
+            TAG,
+            "updateStyleBP1MaskBlurredBitmapForPreviewAsync: Queuing Style B P1 Mask blur task with R=$currentStyleBP1MaskBlurRadius, DF=$currentStyleBP1MaskBlurDownscale, It=$currentStyleBP1MaskBlurIterations"
+        )
 
-        styleBBlurUpdateJob = viewScope.launch { // 使用 viewScope
-            var newStyleBBlurred: Bitmap? = null
+        val newTask = BlurTask(
+            target = BlurTarget.STYLE_B_P1_MASK, // <--- 指定目标类型
+            radius = currentStyleBP1MaskBlurRadius,
+            downscaleFactor = currentStyleBP1MaskBlurDownscale,
+            iterations = currentStyleBP1MaskBlurIterations
+        )
+
+        // 确保模糊任务处理器正在运行
+        if (blurTaskProcessor == null || blurTaskProcessor?.isActive != true) {
+            startBlurTaskProcessor()
+        }
+
+        // 将新任务发送到队列
+        viewScope.launch {
             try {
-                ensureActive()
-                newStyleBBlurred = withContext(Dispatchers.IO) {
-                    ensureActive()
-                    SharedWallpaperRenderer.regenerateStyleBBlurredBitmap(
-                        context = context, // View的context
-                        sourceBitmap = sourceBitmapToUse,
-                        screenWidth = viewWidth,
-                        screenHeight = viewHeight,
-                        // 使用当前View持有的样式 B 专属模糊参数
-                        styleBP1MaskBlurRadius = currentStyleBP1MaskBlurRadius,
-                        styleBP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale,
-                        styleBP1MaskBlurIterations = currentStyleBP1MaskBlurIterations
-                    )
-                }
-                ensureActive()
-
-                val oldStyleBBlurred = wallpaperBitmaps?.styleBBlurredBitmap
-                // 再次检查在异步处理期间，图片URI和源位图是否未发生变化
-                if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.sourceSampledBitmap == sourceBitmapToUse) {
-                    wallpaperBitmaps?.styleBBlurredBitmap = newStyleBBlurred
-                    if (oldStyleBBlurred != newStyleBBlurred) oldStyleBBlurred?.recycle() // 回收旧的
-                    Log.d(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync: Successfully updated Style B P1 Mask blurred background for preview.")
-                } else {
-                    Log.w(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync: Conditions changed during async operation. Discarding result.")
-                    newStyleBBlurred?.recycle()
-                }
-            } catch (e: CancellationException) {
-                Log.d(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync cancelled.")
-                newStyleBBlurred?.recycle()
+                blurTaskQueue.send(newTask)
+                Log.d(TAG, "Added Style B P1 Mask blur task to queue: $newTask")
             } catch (e: Exception) {
-                Log.e(TAG, "updateStyleBP1MaskBlurredBitmapForPreviewAsync failed", e)
-                newStyleBBlurred?.recycle()
-                if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.sourceSampledBitmap == sourceBitmapToUse) {
-                    wallpaperBitmaps?.styleBBlurredBitmap = null
-                }
-            } finally {
-                if (isActive && coroutineContext[Job] == styleBBlurUpdateJob) styleBBlurUpdateJob = null
-                if (isActive && this@WallpaperPreviewView.imageUri != null) {
-                    invalidate() // 完成后重绘
-                }
+                Log.w(TAG, "Failed to send Style B P1 Mask blur task to queue", e)
             }
         }
     }
@@ -1759,110 +1735,139 @@ class WallpaperPreviewView @JvmOverloads constructor(
      * 以确保预览能尽快响应用户的最新输入，避免因处理旧的、已过时的模糊请求而卡顿。
      */
     private fun startBlurTaskProcessor() {
-        blurTaskProcessor?.cancel() // 取消任何已在运行的处理器
+        blurTaskProcessor?.cancel()
         blurTaskProcessor = viewScope.launch {
             Log.d(TAG, "Starting blur task processor coroutine.")
-            var lastProcessedTask: BlurTask? = null // 记录上一个处理的任务（当前未使用，但可用于更复杂的逻辑）
-            var slowTaskDetectedPreviously = false // 标记上一个任务是否是慢任务
+            var lastProcessedTaskTimestamp = 0L // 用于比较任务新旧，如果任务本身没有时间戳
+            var slowTaskDetectedPreviously = false
 
             try {
                 for (taskToProcess in blurTaskQueue) { // 循环从Channel接收任务
-                    ensureActive() // 确保协程仍然活动
+                    ensureActive()
 
                     var currentTask = taskToProcess
 
-                    // 智能调度：如果上个任务是慢任务，并且队列里还有更新的任务，则跳过旧任务
                     if (slowTaskDetectedPreviously) {
                         var newestTaskInQueue: BlurTask? = null
-                        // 尝试清空队列，只保留最新的
                         while (true) {
                             val received = blurTaskQueue.tryReceive().getOrNull() ?: break
-                            newestTaskInQueue = received // 不断更新为最新收到的
+                            newestTaskInQueue = received
                         }
-
                         if (newestTaskInQueue != null) {
                             Log.d(
                                 TAG,
                                 "Slow task detected previously, jumping to newest task in queue: $newestTaskInQueue"
                             )
-                            currentTask = newestTaskInQueue // 处理这个最新的
+                            currentTask = newestTaskInQueue
                         }
-                        slowTaskDetectedPreviously = false // 重置慢任务标记
+                        slowTaskDetectedPreviously = false
                     }
 
-                    // --- 执行模糊处理 ---
-                    val baseBitmapForThisTask = wallpaperBitmaps?.scrollingBackgroundBitmap
-                    // 再次检查执行任务前条件是否仍然满足
-                    if (baseBitmapForThisTask == null || baseBitmapForThisTask.isRecycled) {
-                        Log.w(
-                            TAG,
-                            "Blur task: Base bitmap became null or recycled before processing task $currentTask. Skipping."
-                        )
-                        continue // 跳过此任务
-                    }
-
-                    var newBlurredBitmap: Bitmap? = null
                     val taskStartTime = SystemClock.elapsedRealtime()
+                    var newBlurredBitmap: Bitmap? = null
+                    var bitmapChanged = false
+
                     try {
                         Log.d(TAG, "Blur task: Processing $currentTask")
-                        // 在IO调度器上执行耗时的模糊操作
-                        newBlurredBitmap = withContext(Dispatchers.IO) {
-                            ensureActive() // 确保IO协程也活动
-                            SharedWallpaperRenderer.regenerateBlurredBitmap(
-                                context,
-                                baseBitmapForThisTask, // 使用当前获取到的基础图
-                                baseBitmapForThisTask.width, // 目标尺寸与基础图一致
-                                baseBitmapForThisTask.height,
-                                currentTask.radius,      // 使用任务中的参数
-                                currentTask.downscaleFactor,
-                                currentTask.iterations
-                            )
-                        }
-                        val processingTime = SystemClock.elapsedRealtime() - taskStartTime
-                        ensureActive() // 返回主线程后再次检查活动状态
 
-                        // 更新慢任务标记
+                        when (currentTask.target) {
+                            BlurTarget.P2_BACKGROUND -> {
+                                val baseBitmapForP2 = wallpaperBitmaps?.scrollingBackgroundBitmap
+                                if (baseBitmapForP2 == null || baseBitmapForP2.isRecycled) {
+                                    Log.w(TAG, "Blur task (P2_BACKGROUND): Base scrollingBitmap became null or recycled. Skipping.")
+                                    continue // 跳过此任务
+                                }
+                                newBlurredBitmap = withContext(Dispatchers.IO) {
+                                    ensureActive()
+                                    SharedWallpaperRenderer.regenerateBlurredBitmap(
+                                        context,
+                                        baseBitmapForP2,
+                                        baseBitmapForP2.width, // 目标尺寸与基础图一致
+                                        baseBitmapForP2.height,
+                                        currentTask.radius,
+                                        currentTask.downscaleFactor,
+                                        currentTask.iterations
+                                    )
+                                }
+                                ensureActive()
+                                val oldBlurred = wallpaperBitmaps?.blurredScrollingBackgroundBitmap
+                                if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.scrollingBackgroundBitmap == baseBitmapForP2) {
+                                    wallpaperBitmaps?.blurredScrollingBackgroundBitmap = newBlurredBitmap
+                                    if (oldBlurred != newBlurredBitmap) {
+                                        oldBlurred?.recycle()
+                                        bitmapChanged = true
+                                    }
+                                    Log.d(TAG, "Blur task (P2_BACKGROUND): Successfully updated blurred scrolling background.")
+                                } else {
+                                    newBlurredBitmap?.recycle() // 条件不匹配，丢弃
+                                    Log.d(TAG, "Blur task (P2_BACKGROUND): Conditions changed. Discarding result.")
+                                }
+                            }
+
+                            BlurTarget.STYLE_B_P1_MASK -> {
+                                val baseBitmapForStyleB = wallpaperBitmaps?.sourceSampledBitmap
+                                if (baseBitmapForStyleB == null || baseBitmapForStyleB.isRecycled) {
+                                    Log.w(TAG, "Blur task (STYLE_B_P1_MASK): Base sourceSampledBitmap became null or recycled. Skipping.")
+                                    continue // 跳过此任务
+                                }
+                                newBlurredBitmap = withContext(Dispatchers.IO) {
+                                    ensureActive()
+                                    // regenerateStyleBBlurredBitmap 包含了为 Style B 准备全屏源图的逻辑
+                                    SharedWallpaperRenderer.regenerateStyleBBlurredBitmap(
+                                        context,
+                                        baseBitmapForStyleB,
+                                        viewWidth, // 需要 View 的当前尺寸
+                                        viewHeight,
+                                        currentTask.radius,
+                                        currentTask.downscaleFactor,
+                                        currentTask.iterations
+                                    )
+                                }
+                                ensureActive()
+                                val oldStyleBBlurred = wallpaperBitmaps?.styleBBlurredBitmap
+                                if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.sourceSampledBitmap == baseBitmapForStyleB) {
+                                    wallpaperBitmaps?.styleBBlurredBitmap = newBlurredBitmap
+                                    if (oldStyleBBlurred != newBlurredBitmap) {
+                                        oldStyleBBlurred?.recycle()
+                                        bitmapChanged = true
+                                    }
+                                    Log.d(TAG, "Blur task (STYLE_B_P1_MASK): Successfully updated Style B P1 mask blurred background.")
+                                } else {
+                                    newBlurredBitmap?.recycle() // 条件不匹配，丢弃
+                                    Log.d(TAG, "Blur task (STYLE_B_P1_MASK): Conditions changed. Discarding result.")
+                                }
+                            }
+                        }
+
+                        val processingTime = SystemClock.elapsedRealtime() - taskStartTime
                         slowTaskDetectedPreviously = processingTime > BLUR_TASK_TIME_THRESHOLD
                         if (slowTaskDetectedPreviously) {
-                            Log.d(
-                                TAG,
-                                "Blur task: SLOW task detected! Processing time: ${processingTime}ms for $currentTask"
-                            )
+                            Log.d(TAG, "Blur task: SLOW task detected! Type: ${currentTask.target}, Time: ${processingTime}ms for $currentTask")
                         } else {
-                            Log.d(
-                                TAG,
-                                "Blur task: Completed in ${processingTime}ms for $currentTask"
-                            )
+                            Log.d(TAG, "Blur task: Completed. Type: ${currentTask.target}, Time: ${processingTime}ms for $currentTask")
                         }
 
-                        // 检查结果是否仍然适用于当前状态 (例如，用户可能已经换了图片)
-                        val oldBlurred = wallpaperBitmaps?.blurredScrollingBackgroundBitmap
-                        if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.scrollingBackgroundBitmap == baseBitmapForThisTask) {
-                            wallpaperBitmaps?.blurredScrollingBackgroundBitmap = newBlurredBitmap
-                            if (oldBlurred != newBlurredBitmap) oldBlurred?.recycle() // 回收旧的模糊图
-                            invalidate() // 重绘以显示新的模糊效果
-                        } else {
-                            // 如果条件不再匹配 (例如图片已更改)，则丢弃生成的模糊图
-                            Log.d(
-                                TAG,
-                                "Blur task: Conditions changed during blur processing for $currentTask. Discarding result."
-                            )
-                            newBlurredBitmap?.recycle()
+                        if (bitmapChanged && isActive) { // 只有当位图实际发生变化且协程仍活动时才重绘
+                            invalidate()
                         }
 
                     } catch (e: CancellationException) {
-                        Log.d(TAG, "Blur task for $currentTask was cancelled during IO.")
+                        Log.d(TAG, "Blur task for ${currentTask.target} ($currentTask) was cancelled during IO.")
                         newBlurredBitmap?.recycle()
-                        throw e // 重新抛出，让外层捕获并停止处理器
+                        if (isActive) throw e // 重新抛出，让外层捕获并停止处理器
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error processing blur task $currentTask", e)
+                        Log.e(TAG, "Error processing blur task ${currentTask.target} ($currentTask)", e)
                         newBlurredBitmap?.recycle()
-                        // 错误发生，可以考虑清除当前的模糊图
-                        if (this@WallpaperPreviewView.imageUri != null && wallpaperBitmaps?.scrollingBackgroundBitmap == baseBitmapForThisTask) {
-                            // wallpaperBitmaps?.blurredScrollingBackgroundBitmap = null // 可选：清除
+                        // 根据类型选择性清除失败的模糊图
+                        if (isActive && this@WallpaperPreviewView.imageUri != null) {
+                            when (currentTask.target) {
+                                BlurTarget.P2_BACKGROUND -> if (wallpaperBitmaps?.scrollingBackgroundBitmap != null) wallpaperBitmaps?.blurredScrollingBackgroundBitmap = null
+                                BlurTarget.STYLE_B_P1_MASK -> if (wallpaperBitmaps?.sourceSampledBitmap != null) wallpaperBitmaps?.styleBBlurredBitmap = null
+                            }
+                            if (bitmapChanged) invalidate() // 如果之前标记了变化，即使出错也尝试重绘一次
                         }
                     }
-                    lastProcessedTask = currentTask // 更新上一个处理的任务
+                    lastProcessedTaskTimestamp = currentTask.timestamp // 更新时间戳
                 }
             } catch (e: CancellationException) {
                 Log.d(TAG, "Blur task processor coroutine was cancelled.")
@@ -1870,7 +1875,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
                 Log.e(TAG, "Exception in blur task processor coroutine", e)
             } finally {
                 Log.d(TAG, "Blur task processor coroutine stopped.")
-                if (coroutineContext[Job] == blurTaskProcessor) { // 如果是因为正常结束或外部取消
+                if (coroutineContext[Job] == blurTaskProcessor) {
                     blurTaskProcessor = null
                 }
             }
