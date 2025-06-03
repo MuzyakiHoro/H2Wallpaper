@@ -512,115 +512,182 @@ class WallpaperPreviewView @JvmOverloads constructor(
         isEditing: Boolean,
         initialNormFocusX: Float? = null,
         initialNormFocusY: Float? = null,
-        initialHeightRatio: Float? = null,
+        initialHeightRatio: Float? = null, // 对于样式B，此参数在进入编辑模式时通常不直接使用
         initialContentScale: Float? = null
     ) {
-        val wasEditing = this.isInP1EditMode // 记录之前的编辑状态
+        val wasEditing = this.isInP1EditMode
 
-        // 如果状态没有改变，或者尝试在已编辑模式下再次进入编辑模式（可能用于同步参数）
+        // 如果状态没有改变，并且是尝试在编辑模式下再次进入编辑模式 (可能用于同步外部参数)
         if (wasEditing && isEditing) {
-            Log.d(TAG, "setP1FocusEditMode: Staying in edit mode. Syncing params if provided.")
-            // 如果提供了初始参数，则更新当前编辑模式下的参数
-            currentEditP1HeightRatio = initialHeightRatio ?: currentEditP1HeightRatio
-            this.currentNormalizedFocusX = initialNormFocusX ?: this.currentNormalizedFocusX
-            this.currentNormalizedFocusY = initialNormFocusY ?: this.currentNormalizedFocusY
-            currentEditP1ContentScaleFactor = initialContentScale ?: currentEditP1ContentScaleFactor
+            Log.d(TAG, "setP1FocusEditMode: Staying in edit mode. Syncing params if provided for current style: $currentP1StyleType")
+            if (currentP1StyleType == 1 /* STYLE_B */) {
+                val focusX = initialNormFocusX ?: this.currentStyleBP1FocusX
+                val focusY = initialNormFocusY ?: this.currentStyleBP1FocusY
+                val scale = initialContentScale ?: this.currentStyleBP1ScaleFactor // 使用样式B的缩放
 
-            calculateP1DisplayRectView() // 重新计算P1显示区域
-            if (wallpaperBitmaps?.sourceSampledBitmap != null) {
-                // 根据新的焦点和缩放重置编辑矩阵
-                resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY)
+                this.currentStyleBP1FocusX = focusX
+                this.currentStyleBP1FocusY = focusY
+                this.currentStyleBP1ScaleFactor = scale
+                currentEditP1ContentScaleFactor = scale // 编辑模式内部统一用这个跟踪缩放
+
+                p1DisplayRectView.set(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat()) // 确保是全屏
+                if (wallpaperBitmaps?.sourceSampledBitmap != null) {
+                    resetP1EditMatrixToFocus(focusX, focusY, scale, p1DisplayRectView)
+                }
+
+            } else { // STYLE_A
+                currentEditP1HeightRatio = initialHeightRatio ?: currentEditP1HeightRatio // 编辑模式下用自己的高度
+                this.currentNormalizedFocusX = initialNormFocusX ?: this.currentNormalizedFocusX
+                this.currentNormalizedFocusY = initialNormFocusY ?: this.currentNormalizedFocusY
+                currentEditP1ContentScaleFactor = initialContentScale ?: currentEditP1ContentScaleFactor
+
+                calculateP1DisplayRectView() // 样式A依赖这个计算
+                if (wallpaperBitmaps?.sourceSampledBitmap != null) {
+                    resetP1EditMatrixToFocus(
+                        this.currentNormalizedFocusX,
+                        this.currentNormalizedFocusY,
+                        currentEditP1ContentScaleFactor,
+                        p1DisplayRectView
+                    )
+                }
             }
-            this.isTransitioningFromEditMode = false // 确保不在过渡状态
-            invalidate() // 重绘
+            this.isTransitioningFromEditMode = false
+            invalidate()
             return
         }
 
-        this.isInP1EditMode = isEditing // 更新编辑模式状态
+        this.isInP1EditMode = isEditing
 
         if (wasEditing && !isEditing) { // 从编辑模式退出 (true -> false)
-            Log.d(
-                TAG,
-                "setP1FocusEditMode: Exiting edit mode. Capturing last matrix and starting transition."
-            )
-            this.isTransitioningFromEditMode = true // 开始过渡状态
-            this.transitionMatrix.set(p1EditMatrix) // 保存当前的编辑矩阵用于过渡动画
+            Log.d(TAG, "setP1FocusEditMode: Exiting edit mode. Current Style: $currentP1StyleType. Capturing last matrix and starting transition.")
+            this.isTransitioningFromEditMode = true
+            this.transitionMatrix.set(p1EditMatrix)
 
-            parent?.requestDisallowInterceptTouchEvent(false) // 允许父View拦截事件
-            // 将编辑时的高度比例恢复为非编辑模式下的P1图片高度（通常由ViewModel控制）
-            // 注意：这里可能需要确认 nonEditModePage1ImageHeightRatio 是否是最新的
-            currentEditP1HeightRatio = nonEditModePage1ImageHeightRatio
-            calculateP1DisplayRectView() // 重新计算P1显示区域
+            parent?.requestDisallowInterceptTouchEvent(false)
 
-            // 重新生成非编辑模式下的P1顶部裁剪图
+            // 退出编辑时，currentEditP1HeightRatio 和 p1DisplayRectView 需要恢复到非编辑状态
+            // calculateP1DisplayRectView 会使用 nonEditModePage1ImageHeightRatio (对于样式A)
+            // 或在样式B时，我们可能不需要它，因为渲染器会全屏处理
+            // 为了统一，先调用 calculateP1DisplayRectView，它内部会根据 currentEffectiveP1HeightRatio
+            // 而 currentEffectiveP1HeightRatio 在非编辑模式下对于样式A会是 nonEditModePage1ImageHeightRatio
+            // 对于样式B，如果 nonEditModePage1ImageHeightRatio 也被设为1，那效果上也是全屏。
+            // 或者，确保 setP1FocusEditMode(false)后，onDraw中的逻辑能正确处理。
+            // 退出编辑时，将编辑时的高度比例恢复为非编辑模式下的P1图片高度（通常由ViewModel控制）
+            // 但这主要针对样式A。样式B的 "高度" 始终是全屏。
+            // 为了过渡动画的平滑，p1DisplayRectView在过渡期间的计算应基于退出编辑前的状态，
+            // 但最终渲染会切换到非编辑模式的参数。
+
+            // 确保p1DisplayRectView是基于非编辑模式的参数。
+            // 对于样式A，是nonEditModePage1ImageHeightRatio；对于样式B，理论上是全屏。
+            // 我们先简单地调用calculateP1DisplayRectView，它会使用 currentEffectiveP1HeightRatio,
+            // 而 currentEffectiveP1HeightRatio 在非编辑模式下会取 nonEditModePage1ImageHeightRatio
+            // 如果要确保样式B退出时也是全屏预览，可能需要调整 calculateP1DisplayRectView 或这里的逻辑。
+            // 暂时保持，calculateP1DisplayRectView 会基于 nonEditModePage1ImageHeightRatio。
+            // 如果nonEditModePage1ImageHeightRatio对于样式B不是1，则这里p1DisplayRectView可能不是全屏。
+            // 但由于onDraw中样式B的普通预览会强制全屏渲染，所以视觉上应该还好。
+            currentEditP1HeightRatio = nonEditModePage1ImageHeightRatio // 恢复到非编辑时的高度（主要对A有意义）
+            calculateP1DisplayRectView()
+
+
             if (imageUri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
-                updateOnlyPage1TopCroppedBitmap(
-                    heightRatioToUse = nonEditModePage1ImageHeightRatio,
-                    sourceBitmap = wallpaperBitmaps!!.sourceSampledBitmap!!,
-                    contentScaleToUse = this.currentP1ContentScaleFactor, // 使用非编辑模式的缩放因子
-                    onComplete = {
-                        Log.d(
-                            TAG,
-                            "setP1FocusEditMode: P1 top cropped bitmap update complete (on exit). Ending transition."
-                        )
-                        this.isTransitioningFromEditMode = false // 过渡结束
-                        invalidate() // 重绘
-                    }
-                )
+                if (currentP1StyleType == 1 /* STYLE_B */) {
+                    // 样式B退出编辑，不需要更新P1顶图，但要确保后续预览使用正确的变换
+                    // isTransitioningFromEditMode = false 会在下面处理
+                    Log.d(TAG, "setP1FocusEditMode (Style B exit): Transitioning. No P1 top bitmap update needed.")
+                    // 确保 isTransitioningFromEditMode 在一段时间后设为 false
+                    postDelayed({
+                        this.isTransitioningFromEditMode = false
+                        invalidate()
+                    }, 50) // 延迟一小段时间以允许过渡动画播放一帧
+                } else { // 样式A
+                    updateOnlyPage1TopCroppedBitmap(
+                        heightRatioToUse = nonEditModePage1ImageHeightRatio,
+                        sourceBitmap = wallpaperBitmaps!!.sourceSampledBitmap!!,
+                        contentScaleToUse = this.currentP1ContentScaleFactor, // 使用非编辑模式的缩放因子
+                        onComplete = {
+                            Log.d(TAG, "setP1FocusEditMode (Style A exit): P1 top cropped bitmap update complete. Ending transition.")
+                            this.isTransitioningFromEditMode = false
+                            invalidate()
+                        }
+                    )
+                }
             } else {
-                this.isTransitioningFromEditMode = false // 如果没有图片或源图，直接结束过渡
+                this.isTransitioningFromEditMode = false
                 invalidate()
             }
-            // 停止任何页面滚动或P1内容滚动动画
             if (!pageScroller.isFinished) pageScroller.abortAnimation()
             if (!p1ContentScroller.isFinished) p1ContentScroller.forceFinished(true)
 
-
         } else if (!wasEditing && isEditing) { // 进入编辑模式 (false -> true)
-            Log.d(TAG, "setP1FocusEditMode: Entering edit mode.")
-            this.isTransitioningFromEditMode = false // 确保不在过渡状态
+            Log.d(TAG, "setP1FocusEditMode: Entering edit mode. Current Style: $currentP1StyleType")
+            this.isTransitioningFromEditMode = false
 
-            // 如果没有源位图，则无法进入编辑模式，请求外部取消
             if (wallpaperBitmaps?.sourceSampledBitmap == null) {
                 Log.w(TAG, "P1EditMode: No source bitmap. Requesting cancel.")
-                this.isInP1EditMode = false; // 立即退出编辑模式
+                this.isInP1EditMode = false;
                 onRequestActionCallback?.invoke(PreviewViewAction.REQUEST_CANCEL_P1_EDIT_MODE)
                 invalidate()
                 return
             }
 
-            // 设置编辑模式下的初始参数
-            currentEditP1HeightRatio = initialHeightRatio ?: nonEditModePage1ImageHeightRatio
-            this.currentNormalizedFocusX = initialNormFocusX ?: this.currentNormalizedFocusX
-            this.currentNormalizedFocusY = initialNormFocusY ?: this.currentNormalizedFocusY
-            currentEditP1ContentScaleFactor =
-                initialContentScale ?: this.currentP1ContentScaleFactor
+            if (currentP1StyleType == 1 /* STYLE_B */) {
+                // 样式B的P1编辑
+                p1DisplayRectView.set(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat()) // 编辑目标是全屏
+                // 使用样式B的参数初始化
+                val focusX = initialNormFocusX ?: this.currentStyleBP1FocusX
+                val focusY = initialNormFocusY ?: this.currentStyleBP1FocusY
+                val scale = initialContentScale ?: this.currentStyleBP1ScaleFactor
 
-            calculateP1DisplayRectView() // 计算P1显示区域
-            // 根据初始焦点和缩放设置编辑矩阵
-            resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY)
+                // 更新 ViewModel 通过回调保存的当前焦点/缩放值 (如果 initialXXX 不为 null)
+                // 这些值会在 executeP1ConfigUpdate 中被手势的最终结果覆盖
+                this.currentStyleBP1FocusX = focusX
+                this.currentStyleBP1FocusY = focusY
+                this.currentStyleBP1ScaleFactor = scale
+                currentEditP1ContentScaleFactor = scale // 编辑模式内部统一用这个跟踪缩放
 
-            parent?.requestDisallowInterceptTouchEvent(true) // 请求父View不要拦截事件
-            isPageSwiping = false // 重置页面滑动状态
-            // 停止任何页面滚动或P1内容滚动动画
+                resetP1EditMatrixToFocus(focusX, focusY, scale, p1DisplayRectView)
+
+            } else { // 样式A的P1编辑
+                currentEditP1HeightRatio = initialHeightRatio ?: nonEditModePage1ImageHeightRatio
+                this.currentNormalizedFocusX = initialNormFocusX ?: this.currentNormalizedFocusX
+                this.currentNormalizedFocusY = initialNormFocusY ?: this.currentNormalizedFocusY
+                currentEditP1ContentScaleFactor = initialContentScale ?: this.currentP1ContentScaleFactor
+
+                calculateP1DisplayRectView() // 确保 p1DisplayRectView 更新
+                resetP1EditMatrixToFocus(
+                    this.currentNormalizedFocusX,
+                    this.currentNormalizedFocusY,
+                    currentEditP1ContentScaleFactor,
+                    p1DisplayRectView
+                )
+            }
+
+            parent?.requestDisallowInterceptTouchEvent(true)
+            isPageSwiping = false
             if (!pageScroller.isFinished) pageScroller.abortAnimation()
             if (!p1ContentScroller.isFinished) p1ContentScroller.forceFinished(true)
-            invalidate() // 重绘
+            invalidate()
 
         } else { // 模式未改变 (例如，初始调用时 isEditing 为 false)
-            Log.d(
-                TAG,
-                "setP1FocusEditMode: Mode not changing or initial call. current isEditing: $isEditing"
-            )
-            this.isTransitioningFromEditMode = false // 确保不在过渡状态
-            calculateP1DisplayRectView()
-            // 如果不在编辑模式，且有图片和源图，则确保P1顶图是最新的
+            Log.d(TAG, "setP1FocusEditMode: Mode not changing or initial call. current isEditing: $isEditing, style: $currentP1StyleType")
+            this.isTransitioningFromEditMode = false
+            // 确保 p1DisplayRectView 是最新的
+            if (this.isInP1EditMode && this.currentP1StyleType == 1) {
+                p1DisplayRectView.set(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
+            } else {
+                calculateP1DisplayRectView()
+            }
+
             if (!this.isInP1EditMode && imageUri != null && wallpaperBitmaps?.sourceSampledBitmap != null) {
-                updateOnlyPage1TopCroppedBitmap(
-                    nonEditModePage1ImageHeightRatio,
-                    wallpaperBitmaps!!.sourceSampledBitmap!!,
-                    this.currentP1ContentScaleFactor
-                )
+                if (this.currentP1StyleType == 0 /* STYLE_A */) {
+                    updateOnlyPage1TopCroppedBitmap(
+                        nonEditModePage1ImageHeightRatio,
+                        wallpaperBitmaps!!.sourceSampledBitmap!!,
+                        this.currentP1ContentScaleFactor
+                    )
+                } else { // Style B 非编辑模式，不需要更新P1顶图，onDraw会处理
+                    invalidate()
+                }
             } else {
                 invalidate()
             }
@@ -636,54 +703,71 @@ class WallpaperPreviewView @JvmOverloads constructor(
      * @param normFocusX 归一化的目标焦点 X 坐标 (0.0 - 1.0)。
      * @param normFocusY 归一化的目标焦点 Y 坐标 (0.0 - 1.0)。
      */
-    private fun resetP1EditMatrixToFocus(normFocusX: Float, normFocusY: Float) {
-        val source = wallpaperBitmaps?.sourceSampledBitmap // 获取源位图
-        // 如果没有源位图，或源位图已回收，或P1显示区域无效，则重置矩阵并返回
-        if (source == null || source.isRecycled || p1DisplayRectView.isEmpty) {
+    // 主方法，接受明确的目标矩形和内容缩放因子
+    private fun resetP1EditMatrixToFocus(
+        normFocusX: Float,
+        normFocusY: Float,
+        contentScaleFactor: Float, // 明确传入内容缩放因子
+        targetRectForFocus: RectF   // 明确传入焦点对准的目标区域
+    ) {
+        val source = wallpaperBitmaps?.sourceSampledBitmap
+        if (source == null || source.isRecycled || targetRectForFocus.isEmpty) {
             p1EditMatrix.reset()
             invalidate()
             return
         }
 
-        // 1. 计算基础填充缩放：使源图能刚好 "cover" P1显示区域所需的最小缩放值。
-        val baseFillScale = calculateP1BaseFillScale(source, p1DisplayRectView)
-        // 2. 计算总有效缩放：基础填充缩放 * 当前编辑模式下的内容缩放因子。
-        val totalEffectiveScale = baseFillScale * currentEditP1ContentScaleFactor
+        val baseFillScale = calculateP1BaseFillScale(source, targetRectForFocus)
+        val totalEffectiveScale = baseFillScale * contentScaleFactor.coerceAtLeast(1.0f) // 确保内容缩放至少为1
 
-        p1EditMatrix.reset() // 重置编辑矩阵
-        // 应用总有效缩放，确保缩放值有效
+        p1EditMatrix.reset()
         if (totalEffectiveScale > 0.00001f) {
             p1EditMatrix.setScale(totalEffectiveScale, totalEffectiveScale)
         } else {
             Log.w(
                 TAG,
-                "resetP1EditMatrixToFocus: totalEffectiveScale ($totalEffectiveScale) is invalid, using baseFillScale ($baseFillScale). currentEditP1ContentScaleFactor was $currentEditP1ContentScaleFactor"
+                "resetP1EditMatrixToFocus: totalEffectiveScale ($totalEffectiveScale) is invalid, using baseFillScale ($baseFillScale). contentScaleFactor was $contentScaleFactor"
             )
             if (baseFillScale > 0.00001f) p1EditMatrix.setScale(baseFillScale, baseFillScale)
             else p1EditMatrix.setScale(1.0f, 1.0f) // 极端情况下的回退
         }
 
-        // 获取实际应用到矩阵上的缩放值 (可能因totalEffectiveScale无效而调整)
         val currentActualScaleApplied = getCurrentP1EditMatrixScale()
-        // 将归一化焦点转换为源图像上的像素坐标
         val focusSourcePxX = normFocusX * source.width
         val focusSourcePxY = normFocusY * source.height
-        // 计算这个焦点在被缩放后的图像上的对应像素坐标
         val scaledFocusSourcePxX = focusSourcePxX * currentActualScaleApplied
         val scaledFocusSourcePxY = focusSourcePxY * currentActualScaleApplied
 
-        // 计算P1显示区域的中心点
-        val p1CenterX = p1DisplayRectView.centerX()
-        val p1CenterY = p1DisplayRectView.centerY()
+        val targetCenterX = targetRectForFocus.centerX()
+        val targetCenterY = targetRectForFocus.centerY()
 
-        // 计算平移量，使得缩放后的焦点 (scaledFocusSourcePxX, scaledFocusSourcePxY)
-        // 能够移动到P1显示区域的中心 (p1CenterX, p1CenterY)
-        val translateX = p1CenterX - scaledFocusSourcePxX
-        val translateY = p1CenterY - scaledFocusSourcePxY
-        p1EditMatrix.postTranslate(translateX, translateY) // 应用平移
+        val translateX = targetCenterX - scaledFocusSourcePxX
+        val translateY = targetCenterY - scaledFocusSourcePxY
+        p1EditMatrix.postTranslate(translateX, translateY)
 
-        applyP1EditMatrixBounds() // 确保变换后的图像仍在P1区域的边界内且缩放合理
-        invalidate() // 重绘
+        // 调用 applyP1EditMatrixBounds 的重载版本，传递正确的参数
+        applyP1EditMatrixBounds(targetRectForFocus, contentScaleFactor)
+        invalidate()
+    }
+
+    // 旧的签名，根据当前样式委派给新的重载版本
+// 这个版本主要在非手势驱动的重置（例如，从外部设置焦点）时被间接调用
+    private fun resetP1EditMatrixToFocus(normFocusX: Float, normFocusY: Float) {
+        val targetRect: RectF
+        val scaleToUse: Float
+
+        if (currentP1StyleType == 1 /* STYLE_B */) {
+            targetRect = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
+            // 如果在编辑模式，currentEditP1ContentScaleFactor 反映手势或初始值
+            // 如果非编辑模式，应使用 this.currentStyleBP1ScaleFactor
+            scaleToUse = if (isInP1EditMode) currentEditP1ContentScaleFactor else this.currentStyleBP1ScaleFactor
+            resetP1EditMatrixToFocus(normFocusX, normFocusY, scaleToUse, targetRect)
+        } else { // Style A
+            targetRect = p1DisplayRectView // 这个应该已经被 calculateP1DisplayRectView 正确设置
+            // 同上，区分编辑模式和非编辑模式的缩放因子来源
+            scaleToUse = if (isInP1EditMode) currentEditP1ContentScaleFactor else this.currentP1ContentScaleFactor
+            resetP1EditMatrixToFocus(normFocusX, normFocusY, scaleToUse, targetRect)
+        }
     }
 
     /**
@@ -724,91 +808,99 @@ class WallpaperPreviewView @JvmOverloads constructor(
      * 如果图片比 P1 区域大，则确保 P1 区域总是能看到图片的一部分，不允许出现空白。
      * 同时，此方法会根据最终的矩阵缩放值，反向更新 `currentEditP1ContentScaleFactor`。
      */
-    private fun applyP1EditMatrixBounds() {
-        val source = wallpaperBitmaps?.sourceSampledBitmap ?: return // 确保有源图
-        // 确保P1显示区域和源图尺寸有效
-        if (p1DisplayRectView.isEmpty || source.isRecycled || source.width == 0 || source.height == 0) return
+    // 主方法，接受明确的目标矩形和当前内容缩放因子
+    private fun applyP1EditMatrixBounds(
+        targetRect: RectF,
+        currentContentScaleFactorForBounds: Float // 主要用于可能的反向重置逻辑
+    ) {
+        val source = wallpaperBitmaps?.sourceSampledBitmap ?: return
+        if (targetRect.isEmpty || source.isRecycled || source.width == 0 || source.height == 0) return
 
-        var currentMatrixScaleVal = getCurrentP1EditMatrixScale() // 获取当前矩阵的实际缩放值
-        val baseFillScale = calculateP1BaseFillScale(source, p1DisplayRectView) // 计算基础填充缩放
+        var currentMatrixScaleVal = getCurrentP1EditMatrixScale()
+        val baseFillScale = calculateP1BaseFillScale(source, targetRect)
         if (baseFillScale <= 0.00001f) {
-            Log.e(TAG, "applyP1EditMatrixBounds: baseFillScale is zero or too small!"); return
+            Log.e(TAG, "applyP1EditMatrixBounds: baseFillScale is zero or too small for targetRect: $targetRect"); return
         }
 
-        // 计算允许的最小和最大全局缩放值 (基于基础填充缩放和用户定义的相对缩放范围)
         val minAllowedGlobalScale = baseFillScale * p1UserMinScaleFactorRelativeToCover
         val maxAllowedGlobalScale = baseFillScale * p1UserMaxScaleFactorRelativeToCover
-        var scaleCorrectionFactor = 1.0f // 缩放校正因子
+        var scaleCorrectionFactor = 1.0f
 
-        // 检查当前缩放是否超出允许范围，并计算校正因子
         if (currentMatrixScaleVal < minAllowedGlobalScale) {
-            scaleCorrectionFactor =
-                if (currentMatrixScaleVal > 0.00001f) minAllowedGlobalScale / currentMatrixScaleVal else 0f
+            scaleCorrectionFactor = if (currentMatrixScaleVal > 0.00001f) minAllowedGlobalScale / currentMatrixScaleVal else 0f
         } else if (currentMatrixScaleVal > maxAllowedGlobalScale) {
-            scaleCorrectionFactor =
-                if (currentMatrixScaleVal > 0.00001f) maxAllowedGlobalScale / currentMatrixScaleVal else 0f
+            scaleCorrectionFactor = if (currentMatrixScaleVal > 0.00001f) maxAllowedGlobalScale / currentMatrixScaleVal else 0f
         }
 
-        // 如果校正因子为0 (通常意味着当前缩放值无效)，则重置矩阵到安全状态
         if (scaleCorrectionFactor == 0f) {
-            Log.w(
-                TAG,
-                "applyP1EditMatrixBounds: scaleCorrectionFactor is zero, resetting matrix to safe scale."
-            )
-            resetP1EditMatrixToFocus(
-                this.currentNormalizedFocusX,
-                this.currentNormalizedFocusY
-            ); return
+            Log.w(TAG, "applyP1EditMatrixBounds: scaleCorrectionFactor is zero, resetting matrix to safe scale for targetRect: $targetRect")
+            // 根据当前样式和其对应的焦点/缩放重置
+            // 使用 currentContentScaleFactorForBounds 作为重置时的缩放依据
+            if (currentP1StyleType == 1 /* STYLE_B */) {
+                resetP1EditMatrixToFocus(this.currentStyleBP1FocusX, this.currentStyleBP1FocusY, currentContentScaleFactorForBounds, targetRect)
+            } else { // 样式A
+                resetP1EditMatrixToFocus(this.currentNormalizedFocusX, this.currentNormalizedFocusY, currentContentScaleFactorForBounds, targetRect)
+            }
+            return
         }
 
-        // 如果需要校正缩放，则以P1显示区域中心为锚点进行缩放校正
         if (abs(scaleCorrectionFactor - 1.0f) > 0.0001f) {
-            p1EditMatrix.postScale(
-                scaleCorrectionFactor,
-                scaleCorrectionFactor,
-                p1DisplayRectView.centerX(),
-                p1DisplayRectView.centerY()
-            )
+            p1EditMatrix.postScale(scaleCorrectionFactor, scaleCorrectionFactor, targetRect.centerX(), targetRect.centerY())
+            // 当缩放被修正后，currentEditP1ContentScaleFactor 应该反映这个修正。
+            val correctedGlobalScale = getCurrentP1EditMatrixScale()
+            if (baseFillScale > 0.00001f) {
+                currentEditP1ContentScaleFactor = (correctedGlobalScale / baseFillScale) // 直接计算新的内容缩放
+                    .coerceIn(p1UserMinScaleFactorRelativeToCover, p1UserMaxScaleFactorRelativeToCover) // 再约束一次确保安全
+            }
         }
-        // 根据校正后的实际矩阵缩放值，反向更新 currentEditP1ContentScaleFactor
-        currentEditP1ContentScaleFactor = (getCurrentP1EditMatrixScale() / baseFillScale)
-            .coerceIn(p1UserMinScaleFactorRelativeToCover, p1UserMaxScaleFactorRelativeToCover)
+        // 如果没有缩放校正，currentEditP1ContentScaleFactor 保持由 P1ContentScaleListener.onScale() 设置的值
 
 
         // --- 应用平移边界 ---
         val values = FloatArray(9)
-        p1EditMatrix.getValues(values) // 获取校正缩放后的矩阵参数
+        p1EditMatrix.getValues(values)
         val currentTransX = values[Matrix.MTRANS_X]
         val currentTransY = values[Matrix.MTRANS_Y]
-        val finalScaleAfterCorrection = getCurrentP1EditMatrixScale() // 校正后的最终缩放值
+        val finalScaleAfterCorrection = getCurrentP1EditMatrixScale()
         val scaledBitmapWidth = source.width * finalScaleAfterCorrection
         val scaledBitmapHeight = source.height * finalScaleAfterCorrection
-        var dx = 0f // X方向需要校正的平移量
-        var dy = 0f // Y方向需要校正的平移量
+        var dx = 0f
+        var dy = 0f
 
-        // 如果缩放后的图片宽度小于等于P1区域宽度，则使其在P1区域内水平居中
-        if (scaledBitmapWidth <= p1DisplayRectView.width() + 0.1f) { // 加0.1f是为了处理浮点精度问题
-            dx = p1DisplayRectView.centerX() - (currentTransX + scaledBitmapWidth / 2f)
-        } else { // 如果图片宽度大于P1区域宽度 (即可以左右拖动)
-            // 确保图片左边界不超过P1区域左边界
-            if (currentTransX > p1DisplayRectView.left) dx = p1DisplayRectView.left - currentTransX
-            // 确保图片右边界不小于P1区域右边界
-            else if (currentTransX + scaledBitmapWidth < p1DisplayRectView.right) dx =
-                p1DisplayRectView.right - (currentTransX + scaledBitmapWidth)
-        }
-
-        // 类似地处理垂直方向的平移边界
-        if (scaledBitmapHeight <= p1DisplayRectView.height() + 0.1f) {
-            dy = p1DisplayRectView.centerY() - (currentTransY + scaledBitmapHeight / 2f)
+        // 使用传入的 targetRect 进行边界判断
+        if (scaledBitmapWidth <= targetRect.width() + 0.1f) {
+            dx = targetRect.centerX() - (currentTransX + scaledBitmapWidth / 2f)
         } else {
-            if (currentTransY > p1DisplayRectView.top) dy = p1DisplayRectView.top - currentTransY
-            else if (currentTransY + scaledBitmapHeight < p1DisplayRectView.bottom) dy =
-                p1DisplayRectView.bottom - (currentTransY + scaledBitmapHeight)
+            if (currentTransX > targetRect.left) dx = targetRect.left - currentTransX
+            else if (currentTransX + scaledBitmapWidth < targetRect.right) dx =
+                targetRect.right - (currentTransX + scaledBitmapWidth)
         }
 
-        // 如果需要校正平移，则应用
+        if (scaledBitmapHeight <= targetRect.height() + 0.1f) {
+            dy = targetRect.centerY() - (currentTransY + scaledBitmapHeight / 2f)
+        } else {
+            if (currentTransY > targetRect.top) dy = targetRect.top - currentTransY
+            else if (currentTransY + scaledBitmapHeight < targetRect.bottom) dy =
+                targetRect.bottom - (currentTransY + scaledBitmapHeight)
+        }
+
         if (abs(dx) > 0.001f || abs(dy) > 0.001f) {
             p1EditMatrix.postTranslate(dx, dy)
+        }
+    }
+
+    // 旧的签名，根据当前样式委派给新的重载版本
+    private fun applyP1EditMatrixBounds() {
+        val targetRect: RectF
+        // 在编辑模式下，currentEditP1ContentScaleFactor 是手势进行中或初始化时的内容缩放
+        val scaleFactorForBounds = currentEditP1ContentScaleFactor
+
+        if (currentP1StyleType == 1 /* STYLE_B */) {
+            targetRect = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
+            applyP1EditMatrixBounds(targetRect, scaleFactorForBounds)
+        } else { // Style A
+            targetRect = p1DisplayRectView // 这个应该已经被 calculateP1DisplayRectView 正确设置
+            applyP1EditMatrixBounds(targetRect, scaleFactorForBounds)
         }
     }
 
@@ -848,60 +940,87 @@ class WallpaperPreviewView @JvmOverloads constructor(
      * 然后，通过 `onP1ConfigEditedListener` 回调将新的焦点、当前编辑高度比例和内容缩放因子通知外部。
      */
     private fun executeP1ConfigUpdate() {
-        lastP1ConfigUpdateTime = System.currentTimeMillis() // 更新上次执行时间
-        isThrottledP1ConfigUpdatePending = false // 清除待处理标记
-        throttledP1ConfigUpdateRunnable?.let { mainHandler.removeCallbacks(it) } // 移除可能存在的延迟任务
+        lastP1ConfigUpdateTime = System.currentTimeMillis()
+        isThrottledP1ConfigUpdatePending = false
+        throttledP1ConfigUpdateRunnable?.let { mainHandler.removeCallbacks(it) }
         throttledP1ConfigUpdateRunnable = null
 
-        val source = wallpaperBitmaps?.sourceSampledBitmap ?: return // 必须有源图
-        // 如果P1显示区域无效或源图尺寸无效，则直接使用当前已有的焦点值回调
-        if (p1DisplayRectView.isEmpty || source.width <= 0 || source.height <= 0) {
-            onP1ConfigEditedListener?.invoke(
-                this.currentNormalizedFocusX,
-                this.currentNormalizedFocusY,
-                currentEditP1HeightRatio,
-                currentEditP1ContentScaleFactor
-            )
+        val source = wallpaperBitmaps?.sourceSampledBitmap ?: return
+
+        val targetRectForFocusCalculation: RectF
+        // float contentScaleToReport; // 改为在下面计算
+
+        if (currentP1StyleType == 1 /* STYLE_B */) {
+            targetRectForFocusCalculation = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
+        } else { // 样式A
+            targetRectForFocusCalculation = p1DisplayRectView
+        }
+
+        if (targetRectForFocusCalculation.isEmpty || source.width <= 0 || source.height <= 0) {
+            // ... (错误处理和回调当前值的逻辑保持不变，但 contentScaleToReport 需要定义)
+            // 对于错误情况，我们可以使用 currentEditP1ContentScaleFactor 作为回退
+            val fallbackScale = currentEditP1ContentScaleFactor
+            if (currentP1StyleType == 1) {
+                onP1ConfigEditedListener?.invoke(this.currentStyleBP1FocusX, this.currentStyleBP1FocusY, 1.0f, fallbackScale)
+            } else {
+                onP1ConfigEditedListener?.invoke(this.currentNormalizedFocusX, this.currentNormalizedFocusY, currentEditP1HeightRatio, fallbackScale)
+            }
             return
         }
 
-        // 获取P1显示区域的中心点坐标 (在View坐标系下)
-        val viewCenter = floatArrayOf(p1DisplayRectView.centerX(), p1DisplayRectView.centerY())
+        // 从 p1EditMatrix 计算归一化焦点
+        val viewCenter = floatArrayOf(targetRectForFocusCalculation.centerX(), targetRectForFocusCalculation.centerY())
         val invertedMatrix = Matrix()
-        // 获取当前P1编辑矩阵的逆矩阵
         if (!p1EditMatrix.invert(invertedMatrix)) {
             Log.e(TAG, "executeP1ConfigUpdate: p1EditMatrix non-invertible!")
-            // 如果矩阵不可逆，则使用当前焦点值回调
-            onP1ConfigEditedListener?.invoke(
-                this.currentNormalizedFocusX,
-                this.currentNormalizedFocusY,
-                currentEditP1HeightRatio,
-                currentEditP1ContentScaleFactor
-            )
+            val fallbackScale = currentEditP1ContentScaleFactor
+            if (currentP1StyleType == 1) {
+                onP1ConfigEditedListener?.invoke(this.currentStyleBP1FocusX, this.currentStyleBP1FocusY, 1.0f, fallbackScale)
+            } else {
+                onP1ConfigEditedListener?.invoke(this.currentNormalizedFocusX, this.currentNormalizedFocusY, currentEditP1HeightRatio, fallbackScale)
+            }
             return
         }
-        // 使用逆矩阵将View坐标系下的中心点映射回源图像坐标系
         invertedMatrix.mapPoints(viewCenter)
-
-        // 将源图像坐标系下的焦点转换为归一化焦点 (0.0 - 1.0)
         val newNormX = (viewCenter[0] / source.width.toFloat()).coerceIn(0f, 1f)
         val newNormY = (viewCenter[1] / source.height.toFloat()).coerceIn(0f, 1f)
 
-        // 更新ViewModel持有的当前焦点值
-        this.currentNormalizedFocusX = newNormX
-        this.currentNormalizedFocusY = newNormY
+        // 从 p1EditMatrix 计算归一化的内容缩放因子
+        val actualMatrixScale = getCurrentP1EditMatrixScale()
+        val baseFillScale = calculateP1BaseFillScale(source, targetRectForFocusCalculation)
+        val normalizedContentScale = if (baseFillScale > 0.00001f) {
+            (actualMatrixScale / baseFillScale).coerceIn(p1UserMinScaleFactorRelativeToCover, p1UserMaxScaleFactorRelativeToCover)
+        } else {
+            currentEditP1ContentScaleFactor // 回退到当前编辑值
+        }
+        val contentScaleToReport = normalizedContentScale
 
-        Log.d(
-            TAG,
-            "executeP1ConfigUpdate: Calling listener with NXY=($newNormX,$newNormY), HR=$currentEditP1HeightRatio, CS=$currentEditP1ContentScaleFactor"
-        )
-        // 回调监听器，传递新的焦点、当前编辑高度比例和内容缩放因子
-        onP1ConfigEditedListener?.invoke(
-            newNormX,
-            newNormY,
-            currentEditP1HeightRatio,
-            currentEditP1ContentScaleFactor
-        )
+        // 根据当前样式更新 ViewModel 持有的对应参数，并回调
+        if (currentP1StyleType == 1 /* STYLE_B */) {
+            this.currentStyleBP1FocusX = newNormX
+            this.currentStyleBP1FocusY = newNormY
+            this.currentStyleBP1ScaleFactor = contentScaleToReport // 确保内部也更新为这个精确计算的值
+
+            Log.d(TAG, "executeP1ConfigUpdate (Style B): Calling listener with NXY=($newNormX,$newNormY), CS=$contentScaleToReport")
+            onP1ConfigEditedListener?.invoke(
+                newNormX,
+                newNormY,
+                1.0f,
+                contentScaleToReport
+            )
+        } else { // 样式A
+            this.currentNormalizedFocusX = newNormX
+            this.currentNormalizedFocusY = newNormY
+            this.currentP1ContentScaleFactor = contentScaleToReport // 更新样式A的内部保存值
+
+            Log.d(TAG, "executeP1ConfigUpdate (Style A): Calling listener with NXY=($newNormX,$newNormY), HR=$currentEditP1HeightRatio, CS=$contentScaleToReport")
+            onP1ConfigEditedListener?.invoke(
+                newNormX,
+                newNormY,
+                currentEditP1HeightRatio, // heightRatio 对于样式A仍然来自 currentEditP1HeightRatio
+                contentScaleToReport
+            )
+        }
     }
 
 
@@ -1081,204 +1200,198 @@ class WallpaperPreviewView @JvmOverloads constructor(
      */
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val touchX = event.x // 当前触摸点 X 坐标 (View 内)
-        val touchY = event.y // 当前触摸点 Y 坐标 (View 内)
-        var eventHandled = false // 标记事件是否已被某个逻辑处理
+        val touchX = event.x
+        val touchY = event.y
+        var eventHandled = false
 
         // --- P1 编辑模式下的专属手势处理 ---
         if (isInP1EditMode && wallpaperBitmaps?.sourceSampledBitmap != null) {
-            // 1. P1 高度调整手势 (具有最高优先级)
-            if (event.actionMasked == MotionEvent.ACTION_DOWN && !isP1HeightResizing) {
-                // 计算P1高度调整手柄的有效触摸区域 (比视觉区域稍大)
-                val effectiveTouchSlopForResize = touchSlop * p1HeightResizeTouchSlopFactor
-                val heightHandleHotZone = RectF(
-                    p1DisplayRectView.left,
-                    p1DisplayRectView.bottom - effectiveTouchSlopForResize, // 从手柄上方开始
-                    p1DisplayRectView.right,
-                    p1DisplayRectView.bottom + effectiveTouchSlopForResize  // 到手柄下方结束
-                )
-                // 如果P1区域本身高度足够，并且触摸点在手柄热区内，则开始高度调整
-                if (p1DisplayRectView.height() > effectiveTouchSlopForResize * 1.5f && heightHandleHotZone.contains(
-                        touchX,
-                        touchY
+            // 1. P1 高度调整手势
+            //    对于样式B，这个逻辑应该被跳过或禁用
+            if (currentP1StyleType != 1 /* NOT STYLE_B */) { // 仅在非样式B时启用高度调整
+                if (event.actionMasked == MotionEvent.ACTION_DOWN && !isP1HeightResizing) {
+                    val effectiveTouchSlopForResize = touchSlop * p1HeightResizeTouchSlopFactor
+                    // p1DisplayRectView 在样式A的P1编辑模式下，应该已经被 setP1FocusEditMode 和 calculateP1DisplayRectView 设置为正确的P1区域
+                    val heightHandleHotZone = RectF(
+                        p1DisplayRectView.left,
+                        p1DisplayRectView.bottom - effectiveTouchSlopForResize,
+                        p1DisplayRectView.right,
+                        p1DisplayRectView.bottom + effectiveTouchSlopForResize
                     )
-                ) {
-                    if (!p1ContentScroller.isFinished) {
-                        p1ContentScroller.forceFinished(true)
-                    } // 停止内容滚动
-                    isP1HeightResizing = true // 进入高度调整状态
-                    p1HeightResizeStartRawY = event.rawY // 记录起始触摸点Y坐标(屏幕绝对坐标)
-                    p1HeightResizeStartRatio = currentEditP1HeightRatio // 记录起始高度比例
-                    parent?.requestDisallowInterceptTouchEvent(true) // 请求父容器不拦截事件
-                    eventHandled = true // DOWN 事件被高度调整逻辑初步处理
-                }
-            }
-
-            if (isP1HeightResizing) { // 如果正在调整P1高度
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_MOVE -> {
-                        val dy = event.rawY - p1HeightResizeStartRawY // 计算Y方向的滑动距离
-                        val deltaRatio = dy / viewHeight.toFloat() // 将滑动距离转换为高度比例的变化量
-                        var newRatio = p1HeightResizeStartRatio + deltaRatio
-                        // 限制新高度比例在允许范围内
-                        newRatio = newRatio.coerceIn(
-                            WallpaperConfigConstants.MIN_HEIGHT_RATIO,
-                            WallpaperConfigConstants.MAX_HEIGHT_RATIO
+                    if (p1DisplayRectView.height() > effectiveTouchSlopForResize * 1.5f && heightHandleHotZone.contains(
+                            touchX,
+                            touchY
                         )
-                        // 仅当高度比例实际变化超过一个阈值时才更新，避免过于频繁的重计算
-                        if (abs(newRatio - currentEditP1HeightRatio) > 0.002f) {
-                            currentEditP1HeightRatio = newRatio
-                            calculateP1DisplayRectView() // 更新P1显示区域
-                            // 高度变化后，通常需要重置P1内容的矩阵以保持焦点
-                            resetP1EditMatrixToFocus(
-                                this.currentNormalizedFocusX,
-                                this.currentNormalizedFocusY
-                            )
-                            attemptThrottledP1ConfigUpdate() // 尝试节流更新P1配置
+                    ) {
+                        if (!p1ContentScroller.isFinished) {
+                            p1ContentScroller.forceFinished(true)
                         }
+                        isP1HeightResizing = true
+                        p1HeightResizeStartRawY = event.rawY
+                        p1HeightResizeStartRatio = currentEditP1HeightRatio
+                        parent?.requestDisallowInterceptTouchEvent(true)
                         eventHandled = true
                     }
-
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        // 手指抬起或手势取消，结束高度调整
-                        if (isThrottledP1ConfigUpdatePending) executeP1ConfigUpdate() // 如果有待处理的配置更新，立即执行
-                        isP1HeightResizing = false
-                        parent?.requestDisallowInterceptTouchEvent(false) // 允许父容器拦截事件
-                        eventHandled = true
-                    }
-
-                    MotionEvent.ACTION_DOWN -> eventHandled = true // 理论上不应发生，但以防万一
                 }
-                if (eventHandled) return true // 如果高度调整逻辑处理了事件，则直接返回
+
+                if (isP1HeightResizing) { // 如果正在调整P1高度 (此分支仅对样式A可能进入)
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_MOVE -> {
+                            val dyPixels = event.rawY - p1HeightResizeStartRawY
+                            val deltaRatio = dyPixels / viewHeight.toFloat()
+                            var newRatio = p1HeightResizeStartRatio + deltaRatio
+                            newRatio = newRatio.coerceIn(
+                                WallpaperConfigConstants.MIN_HEIGHT_RATIO,
+                                WallpaperConfigConstants.MAX_HEIGHT_RATIO
+                            )
+                            if (abs(newRatio - currentEditP1HeightRatio) > 0.002f) {
+                                currentEditP1HeightRatio = newRatio
+                                calculateP1DisplayRectView() // 更新P1显示区域 (主要影响样式A)
+                                // 高度变化后，重置P1内容的矩阵以保持焦点 (主要影响样式A)
+                                // 对于样式A，targetRectForFocus 是 p1DisplayRectView
+                                resetP1EditMatrixToFocus(
+                                    this.currentNormalizedFocusX,
+                                    this.currentNormalizedFocusY,
+                                    currentEditP1ContentScaleFactor, // 使用当前编辑模式的缩放
+                                    p1DisplayRectView
+                                )
+                                attemptThrottledP1ConfigUpdate()
+                            }
+                            eventHandled = true
+                        }
+
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            if (isThrottledP1ConfigUpdatePending) executeP1ConfigUpdate()
+                            isP1HeightResizing = false
+                            parent?.requestDisallowInterceptTouchEvent(false)
+                            eventHandled = true
+                        }
+
+                        MotionEvent.ACTION_DOWN -> eventHandled = true
+                    }
+                    if (eventHandled) return true // 高度调整逻辑已处理事件
+                }
+            } else { // currentP1StyleType == 1 (STYLE_B)
+                // 如果是样式B，确保 isP1HeightResizing 始终为 false，不处理高度调整
+                if (isP1HeightResizing) { // 理论上不应该进入，但作为防御
+                    isP1HeightResizing = false
+                    parent?.requestDisallowInterceptTouchEvent(false) // 允许父拦截，因为我们不处理这个手势了
+                    Log.w(TAG, "onTouchEvent: isP1HeightResizing was true in Style B edit mode. Resetting.")
+                }
             }
+
 
             // 2. P1 内容缩放 和 P1内容拖动/P1区域内单击 手势检测器
-            //    仅当触摸点在 P1 显示区域内，且不是在高度调整中，才让这些检测器处理。
+            //    对于样式B，p1DisplayRectView 在进入编辑模式时已被设为全屏
+            //    对于样式A，p1DisplayRectView 是其特定的P1区域
             var handledByP1SpecificDetectors = false
-            if (p1DisplayRectView.contains(touchX, touchY) && !isP1HeightResizing) {
-                // 将事件传递给P1内容缩放手势检测器
-                val scaleResult = p1ContentScaleGestureDetector.onTouchEvent(event)
-                // 将事件传递给P1内容拖动/单击手势检测器
-                val dragOrTapResult = p1ContentDragGestureDetector.onTouchEvent(event)
+            // 确保触摸点在当前有效的 p1DisplayRectView 内 (样式A是P1区域，样式B是全屏)
+            val currentActiveP1Rect = if (currentP1StyleType == 1 && isInP1EditMode) RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat()) else p1DisplayRectView
 
+            if (currentActiveP1Rect.contains(touchX, touchY) && !isP1HeightResizing) {
+                val scaleResult = p1ContentScaleGestureDetector.onTouchEvent(event)
+                val dragOrTapResult = p1ContentDragGestureDetector.onTouchEvent(event)
                 if (scaleResult || dragOrTapResult) {
                     handledByP1SpecificDetectors = true
                 }
             }
 
             if (handledByP1SpecificDetectors) {
-                // 如果是P1区域内的特定手势（拖动、缩放、P1内单击），它们优先处理
-                // 如果不是UP或CANCEL事件，请求父容器不拦截
                 if (event.actionMasked != MotionEvent.ACTION_UP && event.actionMasked != MotionEvent.ACTION_CANCEL) {
                     parent?.requestDisallowInterceptTouchEvent(true)
-                } else { // 如果是UP或CANCEL
-                    if (isThrottledP1ConfigUpdatePending) executeP1ConfigUpdate() // 执行待处理的更新
-                    parent?.requestDisallowInterceptTouchEvent(false) // 允许父容器拦截
+                } else {
+                    if (isThrottledP1ConfigUpdatePending) executeP1ConfigUpdate()
+                    parent?.requestDisallowInterceptTouchEvent(false)
                 }
                 return true // P1专属手势消耗了事件
             }
-            // 如果在P1编辑模式，但事件既不是高度调整，也不是P1区域内的特定手势
-            // (例如，点击P1区域外部)，则事件会流向下面的全局处理逻辑。
         }
 
         // --- 全局触摸处理逻辑 (适用于非P1编辑模式，或P1编辑模式下未被上述P1专属逻辑消耗的事件) ---
-        if (velocityTracker == null) { // 获取或创建速度追踪器
+        if (velocityTracker == null) {
             velocityTracker = VelocityTracker.obtain()
         }
-        velocityTracker!!.addMovement(event) // 将当前事件添加到速度追踪器
+        velocityTracker!!.addMovement(event)
 
         val action = event.actionMasked
-        val currentGlobalX = event.x // 当前事件的X坐标 (用于页面滑动)
-        var globalEventHandled = false // 标记全局逻辑是否处理了事件
+        val currentGlobalX = event.x
+        var globalEventHandled = false
 
         when (action) {
             MotionEvent.ACTION_DOWN -> {
-                // 如果页面或P1内容正在滚动，则停止它们
                 if (!pageScroller.isFinished) pageScroller.abortAnimation()
-                if (isInP1EditMode && !p1ContentScroller.isFinished) p1ContentScroller.forceFinished(
-                    true
-                )
+                if (isInP1EditMode && !p1ContentScroller.isFinished) p1ContentScroller.forceFinished(true)
 
-                lastTouchX = currentGlobalX // 记录按下时的X坐标
-                downTouchX = currentGlobalX // 同上，用于判断单击
-                activePointerId = event.getPointerId(0) // 获取活动触摸点的ID
-                isPageSwiping = false // 重置页面滑动标记
-                parent?.requestDisallowInterceptTouchEvent(true) // 请求父容器不拦截，以便View可以开始处理滑动
-                globalEventHandled = true // 总是处理DOWN事件，以接收后续MOVE/UP事件
+                lastTouchX = currentGlobalX
+                downTouchX = currentGlobalX
+                activePointerId = event.getPointerId(0)
+                isPageSwiping = false
+                parent?.requestDisallowInterceptTouchEvent(true) // View想开始处理滑动
+                globalEventHandled = true // Down事件总是被初步处理
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false
+                if (activePointerId == MotionEvent.INVALID_POINTER_ID) return false // Should not happen
                 val pointerIndex = event.findPointerIndex(activePointerId)
-                if (pointerIndex < 0) return false
+                if (pointerIndex < 0) return false // Should not happen
 
-                val moveX = event.getX(pointerIndex) // 获取活动触摸点的当前X坐标
-                val deltaX = lastTouchX - moveX // 计算X方向的滑动距离 (与上次MOVE事件相比)
+                val moveX = event.getX(pointerIndex)
+                val deltaX = lastTouchX - moveX
 
                 // 页面滑动逻辑仅在非P1编辑模式下生效
                 if (!isInP1EditMode) {
-                    // 如果还未开始页面滑动，且手指滑动的总距离超过touchSlop，则标记为开始滑动
                     if (!isPageSwiping && abs(moveX - downTouchX) > touchSlop) {
                         isPageSwiping = true
-                        parent?.requestDisallowInterceptTouchEvent(true) // 确保滑动时父容器不拦截
+                        parent?.requestDisallowInterceptTouchEvent(true) // 确认滑动，父View不应拦截
                     }
-                    if (isPageSwiping) { // 如果正在页面滑动
-                        // 更新当前预览的X偏移量，限制在[0, 1]范围内
-                        // 偏移量增量 = (本次滑动距离 / (View宽度 * (虚拟页数 - 1)))
-                        // 这样，滑动一个View宽度的距离，大致对应一个页面的切换（如果numVirtualPages > 1）
+                    if (isPageSwiping) {
                         currentPreviewXOffset = if (viewWidth > 0 && numVirtualPages > 1) {
                             (currentPreviewXOffset + deltaX / (viewWidth.toFloat() * (numVirtualPages - 1)))
                                 .coerceIn(0f, 1f)
                         } else 0f
-                        invalidate() // 重绘以反映新的偏移量
+                        invalidate()
                     }
                 }
-                lastTouchX = moveX // 更新上次触摸X坐标
+                lastTouchX = moveX
                 globalEventHandled = true
             }
 
             MotionEvent.ACTION_UP -> {
                 if (activePointerId == MotionEvent.INVALID_POINTER_ID) {
                     recycleVelocityTracker()
-                    isPageSwiping = false
-                    parent?.requestDisallowInterceptTouchEvent(false)
-                    return false // 无效指针，未处理
+                    isPageSwiping = false; parent?.requestDisallowInterceptTouchEvent(false)
+                    return false
                 }
 
-                if (isPageSwiping) { // 如果之前是在页面滑动 (仅在非P1编辑模式下为true)
+                if (isPageSwiping) { // 仅在非P1编辑模式下可能为true
                     val vt = this.velocityTracker!!
-                    vt.computeCurrentVelocity(1000, maxFlingVelocity.toFloat()) // 计算当前速度
-                    val velocityX = vt.getXVelocity(activePointerId) // 获取X方向的速度
-                    // 如果速度超过最小Fling速度，则执行Fling动画
+                    vt.computeCurrentVelocity(1000, maxFlingVelocity.toFloat())
+                    val velocityX = vt.getXVelocity(activePointerId)
                     if (abs(velocityX) > minFlingVelocity && numVirtualPages > 1) {
-                        flingPage(velocityX) // 页面快速滑动
+                        flingPage(velocityX)
                     } else {
-                        snapToNearestPage(currentPreviewXOffset) // 否则，吸附到最近的页面
+                        snapToNearestPage(currentPreviewXOffset)
                     }
                     globalEventHandled = true
-                } else { // 如果不是页面滑动
-                    // 判断是否为单击：手指按下和抬起的位置差小于touchSlop
-                    if (abs(currentGlobalX - downTouchX) < touchSlop) {
-                        performClick() // 执行View的单击事件
+                } else { // 不是页面滑动
+                    if (abs(currentGlobalX - downTouchX) < touchSlop) { // 是单击
+                        performClick()
                         globalEventHandled = true
-                    } else {
-                        // 如果移动超过touchSlop但不足以判定为isPageSwiping (例如，拖动了一小段距离后释放)
-                        // 只有在非P1编辑模式下，才考虑吸附到最近页面
+                    } else { // 拖动了一小段距离后释放 (非P1编辑模式下)
                         if (!isInP1EditMode) {
                             snapToNearestPage(currentPreviewXOffset)
                         }
                         globalEventHandled = true
                     }
                 }
-                recycleVelocityTracker() // 回收速度追踪器
-                activePointerId = MotionEvent.INVALID_POINTER_ID // 重置活动指针ID
-                isPageSwiping = false // 重置页面滑动标记
-                parent?.requestDisallowInterceptTouchEvent(false) // 允许父容器拦截事件
+                recycleVelocityTracker()
+                activePointerId = MotionEvent.INVALID_POINTER_ID
+                isPageSwiping = false
+                parent?.requestDisallowInterceptTouchEvent(false) // 允许父View拦截
             }
 
             MotionEvent.ACTION_CANCEL -> {
-                // 手势被取消 (例如被父View拦截)
-                if (isPageSwiping && !isInP1EditMode) { // 如果正在页面滑动，则吸附到最近页面
+                if (isPageSwiping && !isInP1EditMode) {
                     snapToNearestPage(currentPreviewXOffset)
                 }
                 recycleVelocityTracker()
@@ -1289,9 +1402,8 @@ class WallpaperPreviewView @JvmOverloads constructor(
             }
         }
 
-        if (globalEventHandled) return true // 如果自定义逻辑处理了事件，则返回true
+        if (globalEventHandled) return true
 
-        // 否则，调用父类的实现
         return super.onTouchEvent(event)
     }
 
@@ -1307,112 +1419,147 @@ class WallpaperPreviewView @JvmOverloads constructor(
      * @param canvas 要绘制的 Canvas 对象。
      */
     override fun onDraw(canvas: Canvas) {
-        if (viewWidth <= 0 || viewHeight <= 0) return // View尺寸无效则不绘制
-        val currentWallBitmaps = wallpaperBitmaps // 获取当前持有的位图资源
+        if (viewWidth <= 0 || viewHeight <= 0) return
+        val currentWallBitmaps = wallpaperBitmaps
 
-        // --- 情况1: 从 P1 编辑模式退出，正在进行过渡动画 ---
+        // --- 辅助方法，用于构建传递给 SharedRenderer 的 WallpaperConfig ---
+        // 你可以将这个辅助方法移到 WallpaperPreviewView 类的顶层或者作为一个私有方法
+        fun buildConfigForRenderer(currentTransformForStyleB: Matrix? = null): SharedWallpaperRenderer.WallpaperConfig {
+            // 确保 currentP1StyleType, currentStyleBP1FocusX 等都是 WallpaperPreviewView 的成员变量，
+            // 并且它们的值是从 ViewModel 同步过来的，或者在 P1 编辑模式下被更新。
+            return SharedWallpaperRenderer.WallpaperConfig(
+                screenWidth = viewWidth,
+                screenHeight = viewHeight,
+                page1BackgroundColor = selectedBackgroundColor,
+                page1ImageHeightRatio = if (currentP1StyleType == 1) 1.0f else currentEffectiveP1HeightRatio, // 样式B P1高度是全屏
+                currentXOffset = currentPreviewXOffset,
+                numVirtualPages = numVirtualPages,
+                p1OverlayFadeTransitionRatio = currentP1OverlayFadeRatio,
+                scrollSensitivityFactor = currentScrollSensitivity,
+                normalizedInitialBgScrollOffset = currentNormalizedInitialBgScrollOffset,
+                p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio,
+                // 样式B的P1前景通常没有独立的投影或底部融入，这些是样式A的特性
+                p1ShadowRadius = if (currentP1StyleType == 1) 0f else this.currentP1ShadowRadius,
+                p1ShadowDx = if (currentP1StyleType == 1) 0f else this.currentP1ShadowDx,
+                p1ShadowDy = if (currentP1StyleType == 1) 0f else this.currentP1ShadowDy,
+                p1ShadowColor = this.currentP1ShadowColor, // 颜色可以保持，但半径为0则无效
+                p1ImageBottomFadeHeight = if (currentP1StyleType == 1) 0f else this.currentP1ImageBottomFadeHeight,
+
+                p1StyleType = this.currentP1StyleType,
+                styleBMaskAlpha = currentStyleBMaskAlpha,
+                styleBRotationParamA = currentStyleBRotationParamA,
+                styleBGapSizeRatio = currentStyleBGapSizeRatio,
+                styleBGapPositionYRatio = currentStyleBGapPositionYRatio,
+                styleBUpperMaskMaxRotation = currentStyleBUpperMaskMaxRotation,
+                styleBLowerMaskMaxRotation = currentStyleBLowerMaskMaxRotation,
+                // 样式B的P1背景焦点和缩放，这些由 PreviewView 内部的 currentStyleBP1... 变量提供
+                styleBP1FocusX = this.currentStyleBP1FocusX,
+                styleBP1FocusY = this.currentStyleBP1FocusY,
+                styleBP1ScaleFactor = this.currentStyleBP1ScaleFactor,
+                styleBMasksHorizontallyFlipped = if (this.currentP1StyleType == 1) this.currentStyleBMasksHorizontallyFlipped else false,
+                // 样式B P1遮罩的模糊参数
+                styleBModeP1MaskBlurRadius = currentStyleBP1MaskBlurRadius,
+                styleBModeP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale,
+                styleBModeP1MaskBlurIterations = currentStyleBP1MaskBlurIterations,
+                // 关键：传递P1背景图的变换矩阵
+                styleBP1BackgroundTransform = currentTransformForStyleB
+            )
+        }
+
+
         if (isTransitioningFromEditMode && currentWallBitmaps?.sourceSampledBitmap != null) {
             val sourceToDraw = currentWallBitmaps.sourceSampledBitmap!!
             canvas.drawColor(Color.DKGRAY) // 过渡时背景可以简单处理
 
             canvas.save()
-            canvas.clipRect(p1DisplayRectView) // 裁剪到P1显示区域
+            // 检查退出前是否是样式B，如果是，则裁剪区域是全屏
+            // 这个状态可能需要额外记录，或者基于 transitionMatrix 来判断
+            // 简单起见，如果 transitionMatrix 存在，我们假设它是P1编辑状态的延续
+            // 更准确的做法是记录退出编辑前的样式类型
+            val clipRectForTransition = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat()) // 假设P1编辑总是全屏目标
+            // 如果你的样式A编辑区域不是全屏，这里需要更复杂的逻辑判断是从哪个样式退出的
+            // 或者，setP1FocusEditMode(false)时，根据当前样式设置一个标记
+            // 此处为了简化，先统一用全屏裁剪，具体效果可能需要调整
+            canvas.clipRect(clipRectForTransition)
             canvas.concat(transitionMatrix) // 应用过渡开始时保存的P1编辑矩阵
             canvas.drawBitmap(sourceToDraw, 0f, 0f, p1EditContentPaint) // 绘制源图
             canvas.restore()
 
-            // 绘制P1区域下方的背景色
-            p1OverlayBgPaint.color = selectedBackgroundColor
-            if (p1DisplayRectView.bottom < viewHeight) {
-                canvas.drawRect(
-                    0f,
-                    p1DisplayRectView.bottom,
-                    viewWidth.toFloat(),
-                    viewHeight.toFloat(),
-                    p1OverlayBgPaint
-                )
+            // 对于样式B，下方的纯色背景意义不大，因为P1是全屏的
+            if (currentP1StyleType != 1) { // 只为样式A绘制
+                p1OverlayBgPaint.color = selectedBackgroundColor
+                if (p1DisplayRectView.bottom < viewHeight) { // p1DisplayRectView 应该反映样式A的P1区域
+                    canvas.drawRect(
+                        0f,
+                        p1DisplayRectView.bottom,
+                        viewWidth.toFloat(),
+                        viewHeight.toFloat(),
+                        p1OverlayBgPaint
+                    )
+                }
             }
-        }
-        // --- 情况2: 处于 P1 编辑模式 ---
-        else if (isInP1EditMode && currentWallBitmaps?.sourceSampledBitmap != null) {
-            val sourceBitmapToDraw = currentWallBitmaps.sourceSampledBitmap!!
-            canvas.drawColor(Color.DKGRAY) // 编辑模式下背景简单处理
+        } else if (isInP1EditMode && currentWallBitmaps?.sourceSampledBitmap != null) {
+            // P1编辑模式
+            if (currentP1StyleType == 1 /* STYLE_B */) {
+                // 样式B的P1编辑模式: 直接让 SharedRenderer 绘制，并传递当前的 p1EditMatrix
+                // p1EditMatrix 此时作用于全屏P1背景图
+                val editConfig = buildConfigForRenderer(currentTransformForStyleB = Matrix(p1EditMatrix))
+                SharedWallpaperRenderer.drawFrame(canvas, editConfig, currentWallBitmaps)
+                // 样式B编辑模式下通常不绘制额外的边框或高度调整手柄
+            } else { // 样式A的P1编辑模式
+                val sourceBitmapToDraw = currentWallBitmaps.sourceSampledBitmap!!
+                canvas.drawColor(Color.DKGRAY)
+                canvas.save()
+                canvas.clipRect(p1DisplayRectView) // p1DisplayRectView 应该是样式A的P1区域
+                canvas.concat(p1EditMatrix)
+                canvas.drawBitmap(sourceBitmapToDraw, 0f, 0f, p1EditContentPaint)
+                canvas.restore()
 
-            canvas.save()
-            canvas.clipRect(p1DisplayRectView) // 裁剪到P1显示区域
-            canvas.concat(p1EditMatrix) // 应用当前的P1编辑矩阵
-            canvas.drawBitmap(sourceBitmapToDraw, 0f, 0f, p1EditContentPaint) // 绘制源图
-            canvas.restore()
-
-            // 绘制P1区域的虚线边框
-            canvas.drawRect(p1DisplayRectView, p1EditBorderPaint)
-            // 绘制P1高度调整手柄 (如果P1区域高度足够大)
-            if (p1DisplayRectView.height() > touchSlop * p1HeightResizeTouchSlopFactor * 1.2f) {
-                canvas.drawRoundRect(
-                    p1HeightResizeHandleRect,
-                    5f * resources.displayMetrics.density,
-                    5f * resources.displayMetrics.density,
-                    p1HeightResizeHandlePaint
-                )
+                canvas.drawRect(p1DisplayRectView, p1EditBorderPaint)
+                // 绘制P1高度调整手柄 (如果P1区域高度足够大)
+                if (p1DisplayRectView.height() > touchSlop * p1HeightResizeTouchSlopFactor * 1.2f) {
+                    canvas.drawRoundRect(
+                        p1HeightResizeHandleRect,
+                        5f * resources.displayMetrics.density,
+                        5f * resources.displayMetrics.density,
+                        p1HeightResizeHandlePaint
+                    )
+                }
+                // 绘制P1区域下方的背景色
+                p1OverlayBgPaint.color = selectedBackgroundColor
+                if (p1DisplayRectView.bottom < viewHeight) {
+                    canvas.drawRect(
+                        0f,
+                        p1DisplayRectView.bottom,
+                        viewWidth.toFloat(),
+                        viewHeight.toFloat(),
+                        p1OverlayBgPaint
+                    )
+                }
             }
-
-            // 绘制P1区域下方的背景色
-            p1OverlayBgPaint.color = selectedBackgroundColor
-            if (p1DisplayRectView.bottom < viewHeight) {
-                canvas.drawRect(
-                    0f,
-                    p1DisplayRectView.bottom,
-                    viewWidth.toFloat(),
-                    viewHeight.toFloat(),
-                    p1OverlayBgPaint
-                )
-            }
-        }
-        // --- 情况3: 标准预览模式 (非编辑、非过渡) ---
-        else {
-            if (currentWallBitmaps?.sourceSampledBitmap != null) { // 如果有源图
-                // 构建渲染配置对象
-                val config = SharedWallpaperRenderer.WallpaperConfig(
-                    viewWidth, viewHeight, selectedBackgroundColor, currentEffectiveP1HeightRatio,
-                    currentPreviewXOffset,
-                    numVirtualPages,
-                    p1OverlayFadeTransitionRatio = currentP1OverlayFadeRatio,
-                    scrollSensitivityFactor = currentScrollSensitivity,
-                    normalizedInitialBgScrollOffset = currentNormalizedInitialBgScrollOffset,
-                    p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio,
-                    p1ShadowRadius = currentP1ShadowRadius,
-                    p1ShadowDx = currentP1ShadowDx,
-                    p1ShadowDy = currentP1ShadowDy,
-                    p1ShadowColor = currentP1ShadowColor,
-                    p1ImageBottomFadeHeight = currentP1ImageBottomFadeHeight,
-
-                    // 更新为使用 WallpaperPreviewView 的成员变量
-                    p1StyleType = currentP1StyleType, // 使用 this.currentP1StyleType
-                    styleBMaskAlpha = currentStyleBMaskAlpha, // 使用 this.currentStyleBMaskAlpha
-                    styleBRotationParamA = currentStyleBRotationParamA, // 使用 this.currentStyleBRotationParamA
-                    styleBGapSizeRatio = currentStyleBGapSizeRatio, // 使用 this.currentStyleBGapSizeRatio
-
-                    styleBGapPositionYRatio = currentStyleBGapPositionYRatio, // 使用 this.currentStyleBGapPositionYRatio
-                    styleBUpperMaskMaxRotation = currentStyleBUpperMaskMaxRotation, // 使用 this.currentStyleBUpperMaskMaxRotation
-                    styleBLowerMaskMaxRotation = currentStyleBLowerMaskMaxRotation, // 使用 this.currentStyleBLowerMaskMaxRotation
-                    styleBP1FocusX = currentStyleBP1FocusX, // 使用 this.currentStyleBP1FocusX
-                    styleBP1FocusY = currentStyleBP1FocusY, // 使用 this.currentStyleBP1FocusY
-                    styleBP1ScaleFactor = currentStyleBP1ScaleFactor, // 使用 this.currentStyleBP1ScaleFactor
-                    styleBMasksHorizontallyFlipped = if (this.currentP1StyleType == 1) this.currentStyleBMasksHorizontallyFlipped else false,
-                    styleBModeP1MaskBlurRadius = currentStyleBP1MaskBlurRadius,
-                    styleBModeP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale,
-                    styleBModeP1MaskBlurIterations = currentStyleBP1MaskBlurIterations
-                )
-                // 调用共享渲染器绘制完整的一帧预览
-                SharedWallpaperRenderer.drawFrame(canvas, config, currentWallBitmaps)
-            } else { // 如果没有源图 (例如，未选择图片或正在加载)
-                // 根据状态绘制不同的占位文本
+        } else { // 标准预览模式 (非编辑、非过渡)
+            if (currentWallBitmaps?.sourceSampledBitmap != null) {
+                var transformForStyleBNormalPreview: Matrix? = null
+                if (currentP1StyleType == 1 /* STYLE_B */) {
+                    transformForStyleBNormalPreview = Matrix()
+                    // 使用 SharedWallpaperRenderer 中的静态/伴生对象方法
+                    SharedWallpaperRenderer.calculateMatrixFromFocusAndScale(
+                        currentWallBitmaps.sourceSampledBitmap,
+                        viewWidth.toFloat(), viewHeight.toFloat(),
+                        this.currentStyleBP1FocusX, // 使用 WallpaperPreviewView 内部存储的样式B焦点
+                        this.currentStyleBP1FocusY,
+                        this.currentStyleBP1ScaleFactor, // 使用 WallpaperPreviewView 内部存储的样式B缩放
+                        transformForStyleBNormalPreview
+                    )
+                }
+                val previewConfig = buildConfigForRenderer(currentTransformForStyleB = transformForStyleBNormalPreview)
+                SharedWallpaperRenderer.drawFrame(canvas, previewConfig, currentWallBitmaps)
+            } else {
+                // 绘制占位符
                 val loadingText = context.getString(R.string.image_loading_in_preview_placeholder)
-                val selectImageText =
-                    context.getString(R.string.please_select_image_for_preview_placeholder)
+                val selectImageText = context.getString(R.string.please_select_image_for_preview_placeholder)
                 SharedWallpaperRenderer.drawPlaceholder(
                     canvas, viewWidth, viewHeight,
-                    // 如果有图片URI且正在加载，显示加载中；否则显示请选择图片
                     if (imageUri != null && (fullBitmapLoadingJob?.isActive == true || topBitmapUpdateJob?.isActive == true)) loadingText
                     else selectImageText
                 )

@@ -187,7 +187,8 @@ object SharedWallpaperRenderer {
         // 新增：样式 B 遮罩专用的模糊参数
         val styleBModeP1MaskBlurRadius: Float,
         val styleBModeP1MaskBlurDownscale: Float,
-        val styleBModeP1MaskBlurIterations: Int
+        val styleBModeP1MaskBlurIterations: Int,
+        val styleBP1BackgroundTransform: Matrix? = null // 新增字段
 
     )
 
@@ -1299,10 +1300,6 @@ object SharedWallpaperRenderer {
     /**
      * 绘制 P1 层 - 样式 B (P1独立背景图 + 上下旋转遮罩 + 中间间隔)
      */
-    // 在 SharedWallpaperRenderer.kt 文件中
-
-    // 在 SharedWallpaperRenderer.kt 文件中
-
     private fun drawStyleBLayer(
         canvas: Canvas,
         config: WallpaperConfig,
@@ -1311,44 +1308,58 @@ object SharedWallpaperRenderer {
     ) {
         canvas.saveLayerAlpha(0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(), p1OverallAlpha)
 
-        Log.d(TAG, "Drawing P1 Layer with Style B (Stretching Upper Inner Shadow to Diagonal)")
-        val p1FullScreenBackgroundBitmap = bitmaps.sourceSampledBitmap
-        val horizontalInnerShadowBitmap = bitmaps.shadowTextureBitmap // 您的横向内阴影贴图
+        Log.d(TAG, "Drawing P1 Layer with Style B") // 可以保留或调整日志级别
+        val p1FullScreenBackgroundBitmap = bitmaps.sourceSampledBitmap // 主背景图
+        val horizontalInnerShadowBitmap = bitmaps.shadowTextureBitmap // 内阴影纹理
+        val blurredBitmapForMask = bitmaps.styleBBlurredBitmap // 预生成的、用于遮罩的模糊图
 
         if (p1FullScreenBackgroundBitmap != null && !p1FullScreenBackgroundBitmap.isRecycled) {
-            // 1. 绘制 P1 独立背景图 (逻辑不变)
+            // 1. 绘制 P1 独立背景图 (应用 styleBP1BackgroundTransform)
+            //    注意：原先这里是根据 styleBP1FocusX/Y/ScaleFactor 计算矩阵并绘制。
+            //    现在，如果 config.styleBP1BackgroundTransform 非空 (例如在编辑模式或服务中已计算好)，
+            //    我们应该直接使用它来绘制 p1FullScreenBackgroundBitmap。
+            //    如果为null (例如在非编辑模式的预览视图，且尚未实现根据参数计算矩阵的逻辑)，
+            //    则可以回退到原有的基于 focus/scale 参数的绘制方式。
+
             val p1BgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-            val bgMatrix = Matrix()
-            val scale: Float
-            val dx: Float
-            val dy: Float
-            if (p1FullScreenBackgroundBitmap.width * config.screenHeight > config.screenWidth * p1FullScreenBackgroundBitmap.height) {
-                scale = config.screenHeight.toFloat() / p1FullScreenBackgroundBitmap.height.toFloat()
-                dx = (config.screenWidth.toFloat() - p1FullScreenBackgroundBitmap.width * scale) * 0.5f
-                dy = 0f
+            val finalP1BgMatrix = Matrix()
+
+            if (config.styleBP1BackgroundTransform != null) {
+                finalP1BgMatrix.set(config.styleBP1BackgroundTransform)
             } else {
-                scale = config.screenWidth.toFloat() / p1FullScreenBackgroundBitmap.width.toFloat()
-                dx = 0f
-                dy = (config.screenHeight.toFloat() - p1FullScreenBackgroundBitmap.height * scale) * 0.5f
+                // 回退逻辑：根据焦点和缩放参数计算变换矩阵 (这部分逻辑可以封装)
+                // (这里的回退逻辑与 H2WallpaperService 中计算 styleBTransformForService 的逻辑应一致)
+                val scale: Float
+                val dx: Float
+                val dy: Float
+                if (p1FullScreenBackgroundBitmap.width * config.screenHeight > config.screenWidth * p1FullScreenBackgroundBitmap.height) {
+                    scale = config.screenHeight.toFloat() / p1FullScreenBackgroundBitmap.height.toFloat()
+                    dx = (config.screenWidth.toFloat() - p1FullScreenBackgroundBitmap.width * scale) * config.styleBP1FocusX // 使用 focusX
+                    dy = 0f
+                } else {
+                    scale = config.screenWidth.toFloat() / p1FullScreenBackgroundBitmap.width.toFloat()
+                    dx = 0f
+                    dy = (config.screenHeight.toFloat() - p1FullScreenBackgroundBitmap.height * scale) * config.styleBP1FocusY // 使用 focusY
+                }
+                // 应用基础的 "cover" 缩放和基于焦点的平移
+                finalP1BgMatrix.setScale(scale, scale)
+                finalP1BgMatrix.postTranslate(dx, dy)
+
+                // 应用 styleBP1ScaleFactor (作为内容缩放，围绕图像中心或焦点)
+                // 为了简化，我们假设 styleBP1ScaleFactor 是在 "cover" 之后，围绕图像当前可见中心进行缩放
+                // 这部分可能需要更精细的实现，与 WallpaperPreviewView 中的编辑逻辑对齐
+                // 暂时先应用一个简单的基于图像中心的缩放
+                if (config.styleBP1ScaleFactor != 1.0f) {
+                    // 计算缩放中心点 (基于变换后的图像中心)
+                    val tempRect = RectF(0f, 0f, p1FullScreenBackgroundBitmap.width.toFloat(), p1FullScreenBackgroundBitmap.height.toFloat())
+                    finalP1BgMatrix.mapRect(tempRect)
+                    finalP1BgMatrix.postScale(config.styleBP1ScaleFactor, config.styleBP1ScaleFactor, tempRect.centerX(), tempRect.centerY())
+                }
             }
-            bgMatrix.setScale(scale, scale)
-            bgMatrix.postTranslate(dx, dy)
+            canvas.drawBitmap(p1FullScreenBackgroundBitmap, finalP1BgMatrix, p1BgPaint)
 
 
-
-            
-            // 使用预先生成的模糊背景图，无需实时生成
-
-            val blurredBitmap = bitmaps.styleBBlurredBitmap
-            
-            if (blurredBitmap == null || blurredBitmap.isRecycled) {
-                Log.d(TAG, "Pre-generated blurred bitmap not available, using fallback color")
-                // 在这种情况下，blurredBitmap将保持为null，后续代码会使用纯色回退
-            }
-            
-            // 绘制原始背景图
-            canvas.drawBitmap(p1FullScreenBackgroundBitmap, bgMatrix, p1BgPaint)
-
+            // 保存画布状态，用于可能的水平翻转
             val flipRestorePoint = canvas.saveCount
             if (config.styleBMasksHorizontallyFlipped) {
                 canvas.scale(-1f, 1f, config.screenWidth / 2f, config.screenHeight / 2f)
@@ -1359,7 +1370,7 @@ object SharedWallpaperRenderer {
             val gapSizeRatio = config.styleBGapSizeRatio
             val gapPositionYRatio = config.styleBGapPositionYRatio
             val maskAlpha = config.styleBMaskAlpha
-            val maskColorForFallback = config.page1BackgroundColor
+            val maskColorForFallback = config.page1BackgroundColor // 使用 P1 背景色作为回退
             val upperMaxRotation = config.styleBUpperMaskMaxRotation
             val lowerMaxRotation = config.styleBLowerMaskMaxRotation
 
@@ -1371,171 +1382,228 @@ object SharedWallpaperRenderer {
 
             // 4. 计算画布旋转角度 (不变)
             val actualRotationUpper = -upperMaxRotation * parameterA
-            val actualRotationLower = -lowerMaxRotation * parameterA
+            val actualRotationLower = -lowerMaxRotation * parameterA // 视频中是同向的，之前代码也是，这里保持
 
             val screenWidthF = config.screenWidth.toFloat()
             val screenHeightF = config.screenHeight.toFloat()
-
-            // --- 计算屏幕对角线长度 ---
             val diagonalScreenLength = kotlin.math.sqrt(screenWidthF * screenWidthF + screenHeightF * screenHeightF)
-
-            // overdrawExtension 现在也应该基于这个对角线长度，如果上遮罩路径宽度也想用它
-            // 或者，您可以为上遮罩路径定义一个宽度，然后让阴影贴图拉伸到该宽度。
-            // 我们假设上遮罩路径的宽度就是 diagonalScreenLength。
             val upperMaskPathWidth = diagonalScreenLength
 
-            // 创建使用模糊背景的Paint
-            val blurredMaskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
-                
-                if (blurredBitmap != null && !blurredBitmap.isRecycled) {
-                    // 使用模糊后的背景图作为shader
-                    val shader = BitmapShader(blurredBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-                    
-                    // 关键修改：不要让shader跟随画布旋转
-                    // 创建一个矩阵，用于在shader上应用逆向旋转
-                    val upperShaderMatrix = Matrix()
 
-                    // 如果遮罩被水平翻转，在shader矩阵中应用反向翻转以抵消效果
-                    if (config.styleBMasksHorizontallyFlipped) {
-                        upperShaderMatrix.postScale(-1f, 1f, config.screenWidth / 2f, config.screenHeight / 2f)
+            // --- 准备遮罩Paint (包括模糊背景和内阴影) ---
+            val createMaskPaint = { isUpperMask: Boolean ->
+                Paint(Paint.ANTI_ALIAS_FLAG).apply paintApply@{
+                    style = Paint.Style.FILL
+                    alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
+
+                    // A. 准备模糊背景 Shader (如果可用)
+                    val blurredBgShader: BitmapShader? = if (blurredBitmapForMask != null && !blurredBitmapForMask.isRecycled) {
+                        BitmapShader(blurredBitmapForMask, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                    } else {
+                        null
                     }
-                    // 上部遮罩的逆向旋转
-                    upperShaderMatrix.postRotate(-actualRotationUpper, 0f, gapTopY)
-                    shader.setLocalMatrix(upperShaderMatrix)
-                    
-                    this.shader = shader
-                } else {
-                    // 回退到纯色
-                    color = maskColorForFallback
-                }
-            }
 
-            // 为下部遮罩创建单独的Paint，因为需要不同的shader矩阵
-            val lowerBlurredMaskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
-                
-                if (blurredBitmap != null && !blurredBitmap.isRecycled) {
-                    // 使用模糊后的背景图作为shader
-                    val shader = BitmapShader(blurredBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-                    
-                    // 关键修改：不要让shader跟随画布旋转
-                    // 创建一个矩阵，用于在shader上应用逆向旋转
-                    val lowerShaderMatrix = Matrix()
-                    // 如果遮罩被水平翻转，在shader矩阵中应用反向翻转以抵消效果
-                    if (config.styleBMasksHorizontallyFlipped) {
-                        lowerShaderMatrix.postScale(-1f, 1f, config.screenWidth / 2f, config.screenHeight / 2f)
+                    // B. 准备内阴影 Shader (如果可用)
+                    val shadowShader: BitmapShader? = if (horizontalInnerShadowBitmap != null && !horizontalInnerShadowBitmap.isRecycled) {
+                        BitmapShader(horizontalInnerShadowBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                    } else {
+                        null
                     }
-                    // 下部遮罩的逆向旋转
-                    lowerShaderMatrix.postRotate(-actualRotationLower, screenWidthF, gapBottomY)
-                    shader.setLocalMatrix(lowerShaderMatrix)
-                    
-                    this.shader = shader
-                } else {
-                    // 回退到纯色
-                    color = maskColorForFallback
+
+                    if (blurredBgShader != null) {
+                        val shaderMatrixForBlurredBg = Matrix()
+                        // 1. 应用P1背景图的当前变换 (实现同步拖动缩放的关键)
+                        config.styleBP1BackgroundTransform?.let {
+                            shaderMatrixForBlurredBg.set(it) // 使用 set 或 preConcat 取决于后续变换的基准
+                        }
+
+                        // 2. 应用抵消画布翻转的变换 (如果画布为整体翻转)
+                        //    这部分比较tricky，因为shader的localMatrix是作用在shader自己的坐标系。
+                        //    如果画布在中心点镜像，shader的localMatrix也需要在内容的相应中心点镜像。
+                        //    暂时先不处理shader的镜像，依赖于画布的整体镜像。
+
+                        // 3. 应用抵消遮罩旋转的变换
+                        val rotationToCancel = if (isUpperMask) actualRotationUpper else actualRotationLower
+                        val pivotXForRotation = if (isUpperMask) 0f else screenWidthF
+                        val pivotYForRotation = if (isUpperMask) gapTopY else gapBottomY
+
+                        val inverseRotationMatrix = Matrix()
+                        inverseRotationMatrix.postRotate(-rotationToCancel, pivotXForRotation, pivotYForRotation)
+                        shaderMatrixForBlurredBg.preConcat(inverseRotationMatrix) // 或者 postConcat，顺序需要测试
+
+                        blurredBgShader.setLocalMatrix(shaderMatrixForBlurredBg)
+                        this.shader = blurredBgShader // 主要shader是模糊背景
+                    } else {
+                        // 回退到纯色
+                        this.color = maskColorForFallback
+                        this.shader = null // 确保没有旧的shader
+                    }
+
+                    // C. 如果有阴影，并且也有模糊背景Shader，我们需要将阴影绘制在模糊背景之上。
+                    //    这通常意味着需要多层绘制，或者使用 ComposeShader。
+                    //    简单起见，如果优先显示模糊背景，阴影可能会被覆盖或效果不佳。
+                    //    或者，如果阴影shader不为null, 直接将其设为paint的shader，覆盖模糊背景。
+                    //    我们先按之前的逻辑，如果shadowShader存在，就用它，它会覆盖blurredBgShader的设置。
+                    //    更好的方法是分两步绘制：先画模糊背景，再画内阴影。但drawPath一次只能用一个paint。
+                    //    这里我们让内阴影优先（如果存在）。
+                    if (shadowShader != null) {
+                        val shaderMatrixForShadow = Matrix()
+                        val shadowTexWidth = horizontalInnerShadowBitmap!!.width.toFloat()
+                        val shadowTexHeight = horizontalInnerShadowBitmap.height.toFloat()
+
+                        if (isUpperMask) {
+                            shaderMatrixForShadow.postRotate(180f, shadowTexWidth / 2f, shadowTexHeight / 2f)
+                            val adjacentLengthUpper = screenWidthF / cos(Math.toRadians(actualRotationUpper.toDouble())).toFloat()
+                            val scaleXUpper = (adjacentLengthUpper / shadowTexWidth) * 1.2f
+                            shaderMatrixForShadow.postScale(scaleXUpper, 1f)
+                            val translateYUpper = gapTopY - shadowTexHeight + 4f
+                            shaderMatrixForShadow.postTranslate(-50f, translateYUpper) // -50f 是魔数，需要注意
+                        } else { // Lower mask
+                            val adjacentLengthLower = screenWidthF / cos(Math.toRadians(actualRotationLower.toDouble())).toFloat()
+                            val scaleXLower = (adjacentLengthLower / shadowTexWidth) * 1.2f
+                            shaderMatrixForShadow.postScale(scaleXLower, 1f)
+                            val translateYLower = gapBottomY - 4f
+                            val translateXLower = screenWidthF - (shadowTexWidth * scaleXLower) + 50f // +50f 是魔数
+                            shaderMatrixForShadow.postTranslate(translateXLower, translateYLower)
+                        }
+                        shadowShader.setLocalMatrix(shaderMatrixForShadow)
+                        this.shader = shadowShader // 阴影shader会覆盖模糊背景shader
+                    }
                 }
             }
 
-            // 5. 准备上遮罩的 Paint (用于阴影效果)
-            val upperMaskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
+            val upperMaskPaint = createMaskPaint(true)
+            val lowerMaskPaint = createMaskPaint(false)
 
-                if (horizontalInnerShadowBitmap != null && !horizontalInnerShadowBitmap.isRecycled) {
-                    // 使用 CLAMP 模式，因为我们将精确缩放贴图以匹配目标尺寸
-                    val shader = BitmapShader(horizontalInnerShadowBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-                    val shaderMatrix = Matrix()
-                    // a. 贴图内容180度旋转 (围绕其中心)
-                    shaderMatrix.postRotate(180f,  horizontalInnerShadowBitmap.width.toFloat() / 2f, horizontalInnerShadowBitmap.height.toFloat() / 2f)
-                    // b. 计算缩放比例
-                    //    X轴：将贴图宽度拉伸到屏幕对角线长度 (upperMaskPathWidth)
-                    //    Y轴：保持贴图原始高度（即阴影厚度），所以scaleY = 1f
-                    val adjacentLength = screenWidthF / cos(Math.toRadians(upperMaxRotation * parameterA.toDouble()).toFloat())
-                    val scaleX = (adjacentLength /  horizontalInnerShadowBitmap.width.toFloat() )*1.2f
-                    val scaleY = 1f // Y轴不缩放，保持贴图原始高度作为阴影厚度
-                    // 在旋转之后应用缩放。缩放默认以(0,0)为中心。
-                    // 如果旋转中心不是(0,0)，顺序和缩放中心需要仔细考虑。
-                    // 当前：先旋转整个贴图，然后对这个已旋转的贴图进行缩放。
-                    shaderMatrix.postScale(scaleX, scaleY)
-                    // c. Y轴定位
-                    //    innerShadowEffectiveHeight 是经过Y轴缩放后的高度 (此处为贴图原始高度因为scaleY=1)
-                    val innerShadowEffectiveHeight = horizontalInnerShadowBitmap.height.toFloat() * scaleY
-                    val translateYUpper = gapTopY - innerShadowEffectiveHeight+4f
-                    // X轴平移：您之前测试好的-50f。
-                    // 由于贴图宽度已被精确拉伸到upperMaskPathWidth，X轴平移通常为0，除非您想调整拉伸后内容的相位。
-                    // 如果-50f是在非拉伸情况下调好的，现在可能需要重新评估或设为0。
-                    val translateXUpper = -50f // 建议先尝试0f
-                    shaderMatrix.postTranslate(translateXUpper, translateYUpper)
-                    shader.setLocalMatrix(shaderMatrix)
-                    this.shader = shader
-                } else {
-                    Log.w(TAG, "Horizontal inner shadow texture (for upper mask) is not available, falling back to solid color.")
-                    color = maskColorForFallback
-                }
-            }
-
-            // 6. 准备下遮罩的 Paint (保持之前的逻辑，如果您已调好或暂时不修改)
-            val lowerMaskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                alpha = (maskAlpha * 255).toInt().coerceIn(0, 255)
-                if (horizontalInnerShadowBitmap != null && !horizontalInnerShadowBitmap.isRecycled) {
-                    val shader = BitmapShader(horizontalInnerShadowBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-                    val shaderMatrix = Matrix()
-                    // a.
-
-                    // b. X轴缩放：下遮罩路径的宽度是 screenWidthF - (0f - overdrawExtension) = screenWidthF + overdrawExtension
-                    val lowerMaskDesignWidth = screenWidthF / cos(Math.toRadians(upperMaxRotation * parameterA.toDouble()).toFloat())
-
-                    val scaleXLower = (lowerMaskDesignWidth /  horizontalInnerShadowBitmap.width.toFloat())*1.2f
-                    shaderMatrix.postScale(scaleXLower, 1f) // Y轴不缩放
-                    // c. 定位贴图：
-                    val translateY = gapBottomY-4f
-                    val translateX = screenWidthF - ( horizontalInnerShadowBitmap.width.toFloat() * scaleXLower)+50f
-                    shaderMatrix.postTranslate(translateX, translateY)
-                    shader.setLocalMatrix(shaderMatrix)
-                    this.shader = shader
-                } else {
-                    Log.w(TAG, "Horizontal inner shadow texture (for lower mask) is not available, falling back to solid color.")
-                    color = maskColorForFallback
-                }
-            }
-
-            // 7. 绘制上部旋转遮罩
+            // 5. 绘制上部旋转遮罩
             canvas.save()
             canvas.rotate(actualRotationUpper, 0f, gapTopY)
             val upperMaskPath = Path()
-            // 上遮罩路径的宽度现在使用 upperMaskPathWidth (即屏幕对角线长度)
             upperMaskPath.addRect(0f, 0f, upperMaskPathWidth, gapTopY, Path.Direction.CW)
-            canvas.drawPath(upperMaskPath, blurredMaskPaint)
             canvas.drawPath(upperMaskPath, upperMaskPaint)
-
             canvas.restore()
-            // 8. 绘制下部旋转遮罩
+
+            // 6. 绘制下部旋转遮罩
             canvas.save()
             canvas.rotate(actualRotationLower, screenWidthF, gapBottomY)
             val lowerMaskPath = Path()
-            // 下遮罩路径宽度也应考虑 overdrawExtension 或一个足够大的值
-            // 当前定义是从 -overdrawExtension (即 -screenWidthF*2f) 到 screenWidthF
-            val lowerMaskRectLeft = 0f - (screenWidthF * 2f) // 使用您之前的 overdrawExtension
+            val lowerMaskRectLeft = 0f - (screenWidthF * 2f) // 保持之前的 overdraw
             val lowerMaskRectRight = screenWidthF
             lowerMaskPath.addRect(lowerMaskRectLeft, gapBottomY, lowerMaskRectRight, screenHeightF, Path.Direction.CW)
-            canvas.drawPath(lowerMaskPath, lowerBlurredMaskPaint)
             canvas.drawPath(lowerMaskPath, lowerMaskPaint)
             canvas.restore()
 
+            // 恢复画布的翻转状态
             canvas.restoreToCount(flipRestorePoint)
-            
 
-
-        } else {
-            // ... (占位符绘制逻辑)
+        } else { // p1FullScreenBackgroundBitmap 为 null 或已回收
+            // 可以绘制一个占位符或纯色背景
+            placeholderBgPaint.alpha = p1OverallAlpha
+            canvas.drawRect(0f, 0f, config.screenWidth.toFloat(), config.screenHeight.toFloat(), placeholderBgPaint)
+            val text = "Style B: P1 Background N/A"
+            val textY = config.screenHeight / 2f - ((placeholderTextPaint.descent() + placeholderTextPaint.ascent()) / 2f)
+            placeholderTextPaint.alpha = (0.7f * p1OverallAlpha).toInt()
+            canvas.drawText(text, config.screenWidth / 2f, textY, placeholderTextPaint)
         }
         canvas.restore() // 对应最外层的 saveLayerAlpha
     }
 
+    /**
+     * 辅助方法：根据源Bitmap、目标视图尺寸、归一化焦点和内容缩放因子，计算变换矩阵。
+     * 这个方法主要用于在非编辑模式下（例如壁纸服务中，或预览视图的普通预览状态），
+     * 根据保存的焦点和缩放参数来定位P1背景图。
+     *
+     * @param sourceBitmap 源 Bitmap。
+     * @param targetViewWidth 目标渲染区域的宽度。
+     * @param targetViewHeight 目标渲染区域的高度。
+     * @param normalizedFocusX 归一化的焦点X (0.0 - 1.0)。
+     * @param normalizedFocusY 归一化的焦点Y (0.0 - 1.0)。
+     * @param contentScaleFactor 内容缩放因子 (>= 1.0)。
+     * @param outMatrix 用于填充结果的Matrix对象。
+     * @return @param outMatrix，填充了计算得到的变换。
+     */
+    fun calculateMatrixFromFocusAndScale(
+        sourceBitmap: Bitmap?,
+        targetViewWidth: Float,
+        targetViewHeight: Float,
+        normalizedFocusX: Float,
+        normalizedFocusY: Float,
+        contentScaleFactor: Float,
+        outMatrix: Matrix // 传入一个Matrix对象用于填充结果
+    ): Matrix {
+        outMatrix.reset()
+        if (sourceBitmap == null || sourceBitmap.isRecycled || targetViewWidth <= 0 || targetViewHeight <= 0) {
+            return outMatrix
+        }
 
+        val bmWidth = sourceBitmap.width
+        val bmHeight = sourceBitmap.height
+        if (bmWidth <= 0 || bmHeight <= 0) {
+            return outMatrix
+        }
+
+        // 1. 计算基础填充缩放 (cover)
+        val scaleXToFill = targetViewWidth / bmWidth.toFloat()
+        val scaleYToFill = targetViewHeight / bmHeight.toFloat()
+        val baseFillScale = max(scaleXToFill, scaleYToFill)
+
+        // 2. 应用用户自定义的内容缩放因子
+        val totalEffectiveScale = baseFillScale * contentScaleFactor.coerceAtLeast(1.0f)
+
+        outMatrix.setScale(totalEffectiveScale, totalEffectiveScale)
+
+        // 3. 计算平移量，使归一化焦点对准目标区域中心
+        // 源图上的焦点像素坐标
+        val focusSourcePxX = normalizedFocusX * bmWidth
+        val focusSourcePxY = normalizedFocusY * bmHeight
+
+        // 缩放后，焦点在缩放图像中的像素坐标
+        val scaledFocusSourcePxX = focusSourcePxX * totalEffectiveScale
+        val scaledFocusSourcePxY = focusSourcePxY * totalEffectiveScale
+
+        // 目标区域的中心点
+        val targetCenterX = targetViewWidth / 2f
+        val targetCenterY = targetViewHeight / 2f
+
+        // 计算平移量
+        val translateX = targetCenterX - scaledFocusSourcePxX
+        val translateY = targetCenterY - scaledFocusSourcePxY
+
+        outMatrix.postTranslate(translateX, translateY)
+
+        // 4. 应用边界约束 (确保目标区域内始终有图像)
+        //    这部分逻辑可以参考 WallpaperPreviewView.applyP1EditMatrixBounds() 中的平移边界部分
+        //    对于全屏背景，如果缩放后的图像比视图小，则居中；如果大，则确保视图边缘不露出空白。
+        val scaledBitmapWidth = bmWidth * totalEffectiveScale
+        val scaledBitmapHeight = bmHeight * totalEffectiveScale
+        var dxCorrection = 0f
+        var dyCorrection = 0f
+
+        // 当前平移量
+        val currentValues = FloatArray(9)
+        outMatrix.getValues(currentValues)
+        val currentTransX = currentValues[Matrix.MTRANS_X]
+        val currentTransY = currentValues[Matrix.MTRANS_Y]
+
+        if (scaledBitmapWidth <= targetViewWidth) {
+            dxCorrection = targetCenterX - (currentTransX + scaledBitmapWidth / 2f)
+        } else {
+            if (currentTransX > 0f) dxCorrection = -currentTransX // 左边界不能移入视图右侧
+            else if (currentTransX + scaledBitmapWidth < targetViewWidth) dxCorrection = targetViewWidth - (currentTransX + scaledBitmapWidth) // 右边界不能移入视图左侧
+        }
+
+        if (scaledBitmapHeight <= targetViewHeight) {
+            dyCorrection = targetCenterY - (currentTransY + scaledBitmapHeight / 2f)
+        } else {
+            if (currentTransY > 0f) dyCorrection = -currentTransY
+            else if (currentTransY + scaledBitmapHeight < targetViewHeight) dyCorrection = targetViewHeight - (currentTransY + scaledBitmapHeight)
+        }
+
+        if (dxCorrection != 0f || dyCorrection != 0f) {
+            outMatrix.postTranslate(dxCorrection, dyCorrection)
+        }
+
+        return outMatrix
+    }
 
 }

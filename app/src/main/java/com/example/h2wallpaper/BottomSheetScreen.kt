@@ -87,7 +87,7 @@ val p1StyleASubCategories = listOf(
 )
 
 val p1StyleBSubCategories = listOf(
-   // SubCategory("p1_style_b_customize_action", "调整P1背景", type = "action", icon = Icons.Filled.AspectRatio),
+    SubCategory("p1_style_b_customize_action", "调整P1背景", type = "action", icon = Icons.Filled.AspectRatio),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO, "顶部高度", type = "parameter_slider", icon = Icons.Filled.Tune),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO, "中间高度", type = "parameter_slider", icon = Icons.Filled.Tune),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A, "倾斜角度", type = "parameter_slider", icon = Icons.Filled.Tune),

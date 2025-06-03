@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
 import android.service.wallpaper.WallpaperService
@@ -808,15 +809,12 @@ class H2WallpaperService : WallpaperService() {
          * 且屏幕尺寸有效时才执行绘制。
          */
         private fun drawCurrentFrame() {
-            // 检查绘制前提条件
             if (!isVisible || surfaceHolder?.surface?.isValid != true || screenWidth == 0 || screenHeight == 0) {
-                // Log.v(TAG, "drawCurrentFrame: Skipped due to pre-conditions not met (isVisible=$isVisible, surfaceValid=${surfaceHolder?.surface?.isValid}, W=$screenWidth, H=$screenHeight)")
                 return
             }
 
             var canvas: Canvas? = null
             try {
-                // 锁定 Canvas 以进行绘制。Android O 及以上版本可以使用硬件加速的 Canvas。
                 canvas = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     surfaceHolder!!.lockHardwareCanvas()
                 } else {
@@ -824,33 +822,57 @@ class H2WallpaperService : WallpaperService() {
                 }
 
                 if (canvas != null) {
-                    val currentWpBitmaps = engineWallpaperBitmaps // 获取当前持有的位图资源
-                    // 检查是否有有效的源图和P1顶图 (P1顶图是前景的关键部分)
-                    if (currentWpBitmaps?.sourceSampledBitmap != null && currentWpBitmaps.page1TopCroppedBitmap != null) {
-                        // 决定传递给 SharedWallpaperRenderer 的页面数量：
-                        // 如果不是预览模式（即实际壁纸服务）且启动器报告了多页，则使用启动器页数；
-                        // 否则（预览模式或单页启动器），使用默认的虚拟页数。
+                    val currentWpBitmaps = engineWallpaperBitmaps
+                    if (currentWpBitmaps?.sourceSampledBitmap != null &&
+                        // 对于样式A，需要page1TopCroppedBitmap；对于样式B，P1背景是sourceSampledBitmap本身，遮罩模糊是styleBBlurredBitmap
+                        // 所以这里的条件可以调整为：有源图，并且如果是样式A，则P1顶图也要有。
+                        // 或者更简单：只要有源图就尝试绘制，Renderer内部会处理。
+                        // 为了安全，先保持原条件，如果样式B不需要page1TopCroppedBitmap，后续可优化。
+                        // 但 SharedRenderer.drawStyleBLayer 内部如果 p1FullScreenBackgroundBitmap (即 sourceSampledBitmap) 为null会绘制占位符，
+                        // 所以这里的检查主要针对 sourceSampledBitmap。
+                        // 如果是样式A，page1TopCroppedBitmap 也需要存在。
+                        (currentP1StyleType == 1 /* STYLE_B */ || currentWpBitmaps.page1TopCroppedBitmap != null) // 样式B不依赖page1TopCroppedBitmap作为前景
+                    ) {
                         val pagesForRenderer = if (!isPreview && numPagesReportedByLauncher > 1) {
                             numPagesReportedByLauncher
                         } else {
                             DEFAULT_VIRTUAL_PAGES_FOR_SCROLLING
                         }
 
-                        // 构建渲染配置对象
+                        // --- 为样式B计算P1背景的变换矩阵 ---
+                        var styleBTransformForService: Matrix? = null
+                        if (currentP1StyleType == 1 /* STYLE_B */ && currentWpBitmaps.sourceSampledBitmap != null) {
+                            styleBTransformForService = Matrix()
+                            SharedWallpaperRenderer.calculateMatrixFromFocusAndScale(
+                                currentWpBitmaps.sourceSampledBitmap, // 源图
+                                screenWidth.toFloat(),               // 目标宽度 (全屏)
+                                screenHeight.toFloat(),              // 目标高度 (全屏)
+                                currentStyleBP1FocusX,               // 保存的样式B焦点X
+                                currentStyleBP1FocusY,               // 保存的样式B焦点Y
+                                currentStyleBP1ScaleFactor,          // 保存的样式B缩放因子
+                                styleBTransformForService            // 输出矩阵
+                            )
+                        }
+                        // --- 变换矩阵计算结束 ---
+
                         val config = SharedWallpaperRenderer.WallpaperConfig(
-                            screenWidth, screenHeight, page1BackgroundColor, page1ImageHeightRatio,
-                            currentPageOffset, // 当前壁纸的滚动偏移
-                            pagesForRenderer,  // 用于渲染的虚拟/实际页数
+                            screenWidth = screenWidth,
+                            screenHeight = screenHeight,
+                            page1BackgroundColor = page1BackgroundColor,
+                            page1ImageHeightRatio = if (currentP1StyleType == 1) 1.0f else page1ImageHeightRatio, // 样式B P1是全屏
+                            currentXOffset = currentPageOffset,
+                            numVirtualPages = pagesForRenderer,
                             p1OverlayFadeTransitionRatio = currentP1OverlayFadeRatio,
-                            scrollSensitivityFactor = this.currentScrollSensitivity,
-                            normalizedInitialBgScrollOffset = this.currentNormalizedInitialBgScrollOffset,
-                            p2BackgroundFadeInRatio = this.currentP2BackgroundFadeInRatio,
-                            p1ShadowRadius = this.currentP1ShadowRadius,
-                            p1ShadowDx = this.currentP1ShadowDx,
-                            p1ShadowDy = this.currentP1ShadowDy,
-                            p1ShadowColor = this.currentP1ShadowColor,
-                            p1ImageBottomFadeHeight = this.currentP1ImageBottomFadeHeight,
-                            // 更新为使用引擎的成员变量
+                            scrollSensitivityFactor = currentScrollSensitivity,
+                            normalizedInitialBgScrollOffset = currentNormalizedInitialBgScrollOffset,
+                            p2BackgroundFadeInRatio = currentP2BackgroundFadeInRatio,
+                            // 样式B的P1前景通常没有独立的投影或底部融入
+                            p1ShadowRadius = if (currentP1StyleType == 1) 0f else currentP1ShadowRadius,
+                            p1ShadowDx = if (currentP1StyleType == 1) 0f else currentP1ShadowDx,
+                            p1ShadowDy = if (currentP1StyleType == 1) 0f else currentP1ShadowDy,
+                            p1ShadowColor = currentP1ShadowColor,
+                            p1ImageBottomFadeHeight = if (currentP1StyleType == 1) 0f else currentP1ImageBottomFadeHeight,
+
                             p1StyleType = currentP1StyleType,
                             styleBMaskAlpha = currentStyleBMaskAlpha,
                             styleBRotationParamA = currentStyleBRotationParamA,
@@ -858,31 +880,31 @@ class H2WallpaperService : WallpaperService() {
                             styleBGapPositionYRatio = currentStyleBGapPositionYRatio,
                             styleBUpperMaskMaxRotation = currentStyleBUpperMaskMaxRotation,
                             styleBLowerMaskMaxRotation = currentStyleBLowerMaskMaxRotation,
+                            // 样式B的P1背景焦点和缩放参数 (这些主要是为了信息传递，实际变换已在styleBTransformForService中)
                             styleBP1FocusX = currentStyleBP1FocusX,
                             styleBP1FocusY = currentStyleBP1FocusY,
                             styleBP1ScaleFactor = currentStyleBP1ScaleFactor,
                             styleBMasksHorizontallyFlipped = if (currentP1StyleType == 1) currentStyleBMasksHorizontallyFlipped else false,
                             styleBModeP1MaskBlurRadius = currentStyleBP1MaskBlurRadius,
                             styleBModeP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale,
-                            styleBModeP1MaskBlurIterations = currentStyleBP1MaskBlurIterations
-                            // 确保没有遗漏 WallpaperConfig 中定义的其他参数
+                            styleBModeP1MaskBlurIterations = currentStyleBP1MaskBlurIterations,
+                            // 将计算得到的变换矩阵传递给渲染器
+                            styleBP1BackgroundTransform = styleBTransformForService
                         )
-                        // 调用共享渲染器绘制完整的一帧
-                        SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps) //
-                    } else { // 如果没有图片或P1顶图未准备好
-                        // 根据状态绘制不同的占位文本
-                        SharedWallpaperRenderer.drawPlaceholder( //
+                        SharedWallpaperRenderer.drawFrame(canvas, config, currentWpBitmaps)
+                    } else {
+                        // 绘制占位符
+                        SharedWallpaperRenderer.drawPlaceholder(
                             canvas, screenWidth, screenHeight,
                             if (imageUriString != null && (currentBitmapLoadJob?.isActive == true)) "壁纸加载中..."
                             else if (imageUriString == null) "请选择图片 (服务)"
-                            else "图片资源准备中..." // 源图已加载，但可能P1顶图等未就绪
+                            else "图片资源准备中..."
                         )
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error during drawFrame", e)
             } finally {
-                // 确保 Canvas 被正确解锁并提交绘制内容
                 if (canvas != null) {
                     try {
                         surfaceHolder!!.unlockCanvasAndPost(canvas)
