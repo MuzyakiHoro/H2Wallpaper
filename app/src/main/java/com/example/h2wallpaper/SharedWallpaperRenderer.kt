@@ -6,12 +6,14 @@ import android.graphics.BitmapFactory
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ComposeShader
 import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.PorterDuff
 import android.net.Uri
 import android.renderscript.Allocation
 import android.renderscript.Element
@@ -1439,13 +1441,7 @@ object SharedWallpaperRenderer {
                         this.shader = null // 确保没有旧的shader
                     }
 
-                    // C. 如果有阴影，并且也有模糊背景Shader，我们需要将阴影绘制在模糊背景之上。
-                    //    这通常意味着需要多层绘制，或者使用 ComposeShader。
-                    //    简单起见，如果优先显示模糊背景，阴影可能会被覆盖或效果不佳。
-                    //    或者，如果阴影shader不为null, 直接将其设为paint的shader，覆盖模糊背景。
-                    //    我们先按之前的逻辑，如果shadowShader存在，就用它，它会覆盖blurredBgShader的设置。
-                    //    更好的方法是分两步绘制：先画模糊背景，再画内阴影。但drawPath一次只能用一个paint。
-                    //    这里我们让内阴影优先（如果存在）。
+                    // C. 如果有阴影，并且也有模糊背景Shader，使用ComposeShader组合它们，而不是完全覆盖
                     if (shadowShader != null) {
                         val shaderMatrixForShadow = Matrix()
                         val shadowTexWidth = horizontalInnerShadowBitmap!!.width.toFloat()
@@ -1467,7 +1463,25 @@ object SharedWallpaperRenderer {
                             shaderMatrixForShadow.postTranslate(translateXLower, translateYLower)
                         }
                         shadowShader.setLocalMatrix(shaderMatrixForShadow)
-                        this.shader = shadowShader // 阴影shader会覆盖模糊背景shader
+                        
+                        // 修改这里: 使用ComposeShader组合模糊背景和阴影，而不是完全覆盖
+                        if (blurredBgShader != null) {
+                            // 如果有模糊背景，使用ComposeShader组合两个shader
+                            try {
+                                this.shader = ComposeShader(
+                                    blurredBgShader,
+                                    shadowShader,
+                                    PorterDuff.Mode.SRC_OVER
+                                )
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to create ComposeShader", e)
+                                // 出错时回退到只使用模糊背景
+                                this.shader = blurredBgShader
+                            }
+                        } else {
+                            // 没有模糊背景时，只使用阴影shader
+                            this.shader = shadowShader
+                        }
                     }
                 }
             }
