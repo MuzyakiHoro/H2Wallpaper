@@ -1468,25 +1468,26 @@ class WallpaperPreviewView @JvmOverloads constructor(
 
 
         if (isTransitioningFromEditMode && currentWallBitmaps?.sourceSampledBitmap != null) {
-            val sourceToDraw = currentWallBitmaps.sourceSampledBitmap!!
-            canvas.drawColor(Color.DKGRAY) // 过渡时背景可以简单处理
-
-            canvas.save()
-            // 检查退出前是否是样式B，如果是，则裁剪区域是全屏
-            // 这个状态可能需要额外记录，或者基于 transitionMatrix 来判断
-            // 简单起见，如果 transitionMatrix 存在，我们假设它是P1编辑状态的延续
-            // 更准确的做法是记录退出编辑前的样式类型
-            val clipRectForTransition = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat()) // 假设P1编辑总是全屏目标
-            // 如果你的样式A编辑区域不是全屏，这里需要更复杂的逻辑判断是从哪个样式退出的
-            // 或者，setP1FocusEditMode(false)时，根据当前样式设置一个标记
-            // 此处为了简化，先统一用全屏裁剪，具体效果可能需要调整
-            canvas.clipRect(clipRectForTransition)
-            canvas.concat(transitionMatrix) // 应用过渡开始时保存的P1编辑矩阵
-            canvas.drawBitmap(sourceToDraw, 0f, 0f, p1EditContentPaint) // 绘制源图
-            canvas.restore()
-
-            // 对于样式B，下方的纯色背景意义不大，因为P1是全屏的
-            if (currentP1StyleType != 1) { // 只为样式A绘制
+            if (currentP1StyleType == 1 /* STYLE_B */) {
+                // 对于样式B，即使在过渡期间也使用SharedWallpaperRenderer绘制完整效果
+                var transformForStyleBTransition = Matrix()
+                transformForStyleBTransition.set(transitionMatrix) // 使用过渡矩阵
+                
+                val transitionConfig = buildConfigForRenderer(currentTransformForStyleB = transformForStyleBTransition)
+                SharedWallpaperRenderer.drawFrame(canvas, transitionConfig, currentWallBitmaps)
+            } else {
+                // 原有的样式A过渡逻辑保持不变
+                val sourceToDraw = currentWallBitmaps.sourceSampledBitmap!!
+                canvas.drawColor(Color.DKGRAY) // 过渡时背景可以简单处理
+    
+                canvas.save()
+                val clipRectForTransition = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
+                canvas.clipRect(clipRectForTransition)
+                canvas.concat(transitionMatrix) // 应用过渡开始时保存的P1编辑矩阵
+                canvas.drawBitmap(sourceToDraw, 0f, 0f, p1EditContentPaint) // 绘制源图
+                canvas.restore()
+    
+                // 对于样式A，绘制下方的纯色背景
                 p1OverlayBgPaint.color = selectedBackgroundColor
                 if (p1DisplayRectView.bottom < viewHeight) { // p1DisplayRectView 应该反映样式A的P1区域
                     canvas.drawRect(
