@@ -1963,8 +1963,7 @@ class WallpaperPreviewView @JvmOverloads constructor(
                                     SharedWallpaperRenderer.regenerateStyleBBlurredBitmap(
                                         context,
                                         baseBitmapForStyleB,
-                                        viewWidth, // 需要 View 的当前尺寸
-                                        viewHeight,
+
                                         currentTask.radius,
                                         currentTask.downscaleFactor,
                                         currentTask.iterations

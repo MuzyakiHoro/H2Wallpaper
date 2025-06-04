@@ -943,9 +943,7 @@ class H2WallpaperService : WallpaperService() {
                         ensureActive()
                         SharedWallpaperRenderer.regenerateStyleBBlurredBitmap(
                             context = applicationContext,
-                            sourceBitmap = sourceBitmapToUse,
-                            screenWidth = screenWidth,
-                            screenHeight = screenHeight,
+                            sourceSampledBitmap = sourceBitmapToUse,
                             // 使用当前引擎持有的样式 B 专属模糊参数
                             styleBP1MaskBlurRadius = currentStyleBP1MaskBlurRadius,
                             styleBP1MaskBlurDownscale = currentStyleBP1MaskBlurDownscale,
