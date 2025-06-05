@@ -196,7 +196,7 @@ class H2WallpaperService : WallpaperService() {
          * @param key 发生变化的配置项的键名；如果为 null，表示多个配置项可能已改变 (例如 clear() 被调用)。
          */
         override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
-            Log.i(DEBUG_TAG, "onSharedPreferenceChanged: key=$key received by service.")
+            Log.i(DEBUG_TAG, "0002 onSharedPreferenceChanged: key=$key received by service.")
             var needsFullReload = false       // 标记是否需要完全重载所有位图
             var needsP1TopUpdate = false      // 标记是否只需要更新 P1 顶部裁剪图 (主要用于样式 A)
             var needsOnlyGlobalBlurUpdate = false   // 标记是否只需要更新 P2 全局背景模糊图
@@ -238,15 +238,16 @@ class H2WallpaperService : WallpaperService() {
 
             // --- 2. 重新从 SharedPreferences 加载所有当前配置到成员变量 ---
             loadPreferencesFromStorage()
+            Log.i(DEBUG_TAG, "0002 fter loadPreferencesFromStorage - New imageUriString: ${this.imageUriString}, New Version: ${this.currentImageContentVersion}")
 
             // --- 3. 检测具体哪些参数发生了变化 ---
 
             // 优先判断图片 URI 或 P1 样式类型这种可能导致根本性变化的参数
             if (oldImageUriString != imageUriString) {
-                Log.i(DEBUG_TAG, "Image URI changed. Triggering full reload.")
+                Log.i(DEBUG_TAG, "0002 Image URI changed. Triggering full reload.")
                 needsFullReload = true
             } else if (oldP1StyleType != currentP1StyleType) {
-                Log.i(DEBUG_TAG, "P1 Style Type changed. Triggering full reload (safer to ensure all bitmaps are correct for the style).")
+                Log.i(DEBUG_TAG, "0002 P1 Style Type changed. Triggering full reload (safer to ensure all bitmaps are correct for the style).")
                 // 切换样式通常意味着P1层的渲染方式完全不同，可能需要不同的位图或处理，完整重载更安全
                 needsFullReload = true
             } else {
@@ -255,7 +256,8 @@ class H2WallpaperService : WallpaperService() {
                 // 检查图片内容版本号（通常由ViewModel在参数保存后更新）
                 // 如果版本号变了，说明有实质性配置更改
                 if (oldImageContentVersion != currentImageContentVersion) {
-                    Log.i(DEBUG_TAG, "Image Content Version changed ($oldImageContentVersion -> $currentImageContentVersion). Determining specific updates.")
+                    Log.i(DEBUG_TAG, "0002 Image Content Version changed ($oldImageContentVersion -> $currentImageContentVersion). Determining specific updates.")
+
 
                     // 检查样式 A 的 P1 编辑参数变化
                     if (currentP1StyleType == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) { // 仅当是样式 A 时这些参数才直接影响 P1 顶图
@@ -263,7 +265,7 @@ class H2WallpaperService : WallpaperService() {
                             oldP1FocusY != currentP1FocusY ||
                             oldPage1ImageHeightRatio != page1ImageHeightRatio ||
                             oldP1ContentScaleFactor != currentP1ContentScaleFactor) {
-                            Log.i(DEBUG_TAG, "Style A P1 visual params (Focus/Height/Scale) changed. Triggering P1 top update.")
+                            Log.i(DEBUG_TAG, "0002 Style A P1 visual params (Focus/Height/Scale) changed. Triggering P1 top update.")
                             needsP1TopUpdate = true
                         }
                     }
@@ -302,8 +304,10 @@ class H2WallpaperService : WallpaperService() {
                     // (例如：滚动灵敏度、P1/P2淡出比例、P1阴影、样式B非模糊参数等)
                     // 如果上述更具体的更新没有被触发，并且版本号变了，那么至少需要重绘
                     if (!needsFullReload && !needsP1TopUpdate && !needsOnlyGlobalBlurUpdate && !needsStyleBP1MaskBlurUpdate) {
-                        needsRedrawOnly = true
-                        Log.i(DEBUG_TAG, "Other rendering params likely changed (due to version change). Triggering redraw.")
+                        Log.i(DEBUG_TAG, "0002 Version changed, and no specific bitmap update triggered. Setting needsFullReload=true as a fallback for parameter reset cases.")
+                        needsFullReload = true
+                        // needsRedrawOnly = true
+                       // Log.i(DEBUG_TAG, "Other rendering params likely changed (due to version change). Triggering redraw.")
                     }
 
                 } else if (key != null) { // 版本号未变，但某个具体的 key 变了 (作为备用逻辑)
@@ -345,11 +349,13 @@ class H2WallpaperService : WallpaperService() {
 
 
             // --- 4. 根据标记执行相应的更新操作 (优先级：Full Reload > 部分位图更新 > Redraw) ---
+            Log.i(DEBUG_TAG, "Final flags before action: full=$needsFullReload, p1top=$needsP1TopUpdate, globalBlur=$needsOnlyGlobalBlurUpdate, styleBBlur=$needsStyleBP1MaskBlurUpdate, redraw=$needsRedrawOnly")
             if (needsFullReload) {
-                Log.i(DEBUG_TAG, "Final Action: Executing full bitmap reload.")
+                Log.i(DEBUG_TAG, "0002 Final Action: Executing full bitmap reload.")
                 currentBitmapLoadJob?.cancel() // 取消正在进行的完整加载
                 currentBlurUpdateJob?.cancel() // 取消P2背景模糊更新
                 currentStyleBBlurUpdateJob?.cancel() // 取消样式B P1遮罩模糊更新
+                Log.e(DEBUG_TAG, "DECISION: Full reload selected.")
                 loadFullBitmapsAsync()
             } else {
                 // 如果不需要完整重载，才考虑部分更新
@@ -379,6 +385,7 @@ class H2WallpaperService : WallpaperService() {
                 if (needsP1TopUpdate && currentP1StyleType == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) { // 仅对样式A有效
                     if (engineWallpaperBitmaps?.sourceSampledBitmap != null && imageUriString != null) {
                         Log.i(DEBUG_TAG, "Final Action: Executing P1 top cropped bitmap update (Style A).")
+                        Log.e(DEBUG_TAG, "DECISION: P1 top update selected.")
                         updateTopCroppedBitmapAsync()
                         partialBitmapUpdateTriggered = true
                     } else if (imageUriString != null) {
@@ -486,6 +493,7 @@ class H2WallpaperService : WallpaperService() {
          */
         private fun loadPreferencesFromStorage() {
             imageUriString = preferencesRepository.getSelectedImageUri()?.toString() //
+            Log.d(DEBUG_TAG, "0002 loadPreferencesFromStorage: imageUriString loaded as: $imageUriString")
             page1BackgroundColor = preferencesRepository.getSelectedBackgroundColor() //
             page1ImageHeightRatio = preferencesRepository.getPage1ImageHeightRatio() //
             currentP1FocusX = preferencesRepository.getP1FocusX() //
@@ -505,7 +513,7 @@ class H2WallpaperService : WallpaperService() {
             currentP1ShadowColor = preferencesRepository.getP1ShadowColor() //
             currentP1ImageBottomFadeHeight = preferencesRepository.getP1ImageBottomFadeHeight() //
             currentImageContentVersion = preferencesRepository.getImageContentVersion() //
-
+            Log.d(DEBUG_TAG, "0002 loadPreferencesFromStorage: currentImageContentVersion loaded as: $currentImageContentVersion")
             // Load new style parameters
             currentP1StyleType = preferencesRepository.getP1StyleType()
             currentStyleBMaskAlpha = preferencesRepository.getStyleBMaskAlpha()
@@ -539,7 +547,9 @@ class H2WallpaperService : WallpaperService() {
             // 旧的位图会一直显示，直到新的位图加载完成并替换掉它。
 
             val uriStringToLoad = imageUriString // 获取当前配置的图片URI
+            Log.e(DEBUG_TAG, "0002 !!!!! LOAD_FULL_BITMAPS_ASYNC_CALLED !!!!! URI: $uriStringToLoad")
             // 如果URI为空或屏幕尺寸无效，则无法加载
+            Log.i(DEBUG_TAG, "0002 loadFullBitmapsAsync: Starting for URI: $uriStringToLoad. Current engine imageUriString: ${this.imageUriString}")
             if (uriStringToLoad == null || screenWidth <= 0 || screenHeight <= 0) {
                 // 如果之前有位图（例如，用户清除了图片选择），则回收它们
                 if (engineWallpaperBitmaps != null) {
@@ -550,7 +560,7 @@ class H2WallpaperService : WallpaperService() {
                 return
             }
             val uri = Uri.parse(uriStringToLoad)
-            Log.i(DEBUG_TAG, "loadFullBitmapsAsync: Starting for URI: $uri. Focus:($currentP1FocusX, $currentP1FocusY), Scale:$currentP1ContentScaleFactor, Blur:$currentBackgroundBlurRadius")
+            Log.i(DEBUG_TAG, "0002 loadFullBitmapsAsync: Starting for URI: $uri. Focus:($currentP1FocusX, $currentP1FocusY), Scale:$currentP1ContentScaleFactor, Blur:$currentBackgroundBlurRadius")
 
             // 如果壁纸可见但当前还没有任何位图，先绘制一次占位符（显示加载中）
             if (isVisible && engineWallpaperBitmaps == null) {
@@ -583,15 +593,23 @@ class H2WallpaperService : WallpaperService() {
                             styleBP1MaskBlurIterations = currentStyleBP1MaskBlurIterations
                         )
                     }
+                    if (newBitmapsHolder == null || newBitmapsHolder.sourceSampledBitmap == null) {
+                        Log.e(DEBUG_TAG, "0002 loadFullBitmapsAsync: newBitmapsHolder or its sourceSampledBitmap is null after loading from $uriStringToLoad.")
+                    } else {
+                        Log.i(DEBUG_TAG, "0002 loadFullBitmapsAsync: Successfully loaded bitmaps for $uriStringToLoad. Source size: ${newBitmapsHolder.sourceSampledBitmap?.width}x${newBitmapsHolder.sourceSampledBitmap?.height}")
+                    }
                     ensureActive() // 返回主线程后再次检查活动状态
 
                     val oldBitmaps = engineWallpaperBitmaps // 保存对旧位图资源的引用
+
+                    Log.i(DEBUG_TAG, "0002 loadFullBitmapsAsync: About to assign new bitmaps. Current engine URI: ${this@H2WallpaperEngine.imageUriString}, URI used for load: $uriStringToLoad")
                     // 再次检查在异步加载期间，用户配置的图片 URI 是否与本次加载的 URI 一致
                     if (this@H2WallpaperEngine.imageUriString == uriStringToLoad) {
                         engineWallpaperBitmaps = newBitmapsHolder // 更新为新加载的位图
                         // 如果新旧位图不是同一个对象，则回收旧的（非常重要，防止内存泄漏）
                         if (oldBitmaps != newBitmapsHolder) oldBitmaps?.recycleInternals()
                     } else { // 如果在加载期间 URI 发生了变化 (例如用户快速切换图片)
+                        Log.w(DEBUG_TAG, "0002 loadFullBitmapsAsync: URI changed during async load. Discarding loaded bitmaps for $uriStringToLoad. Current engine URI is ${this@H2WallpaperEngine.imageUriString}")
                         newBitmapsHolder?.recycleInternals() // 新加载的位图作废，不使用
                         // 如果当前配置的 URI 已被清除 (变为 null)，则也清除旧的位图资源
                         if (this@H2WallpaperEngine.imageUriString == null && oldBitmaps != null) {

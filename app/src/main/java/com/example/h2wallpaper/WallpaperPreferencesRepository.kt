@@ -3,6 +3,7 @@ package com.example.h2wallpaper
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import android.util.Log
 // 确保 WallpaperConfigConstants 被导入
 import com.example.h2wallpaper.WallpaperConfigConstants
 // 导入所有需要的默认值常量，或者使用 WallpaperConfigConstants.DEFAULT_...
@@ -386,8 +387,12 @@ class WallpaperPreferencesRepository(context: Context) {
      * @param newImageUri 新选择的图片的 Uri。
      */
     fun resetSettingsForNewImage(newImageUri: Uri) {
+
+        Log.d("PrefRepo", "0002 Saving new image URI to prefs: ${newImageUri.toString()}")
+        Log.d("PrefRepo", "0002 Saving new content version to prefs: ${System.currentTimeMillis()}")
         prefs.edit()
             .putString(WallpaperConfigConstants.KEY_IMAGE_URI, newImageUri.toString())
+            /*
             // 重置样式 A 的 P1 编辑参数
             .putFloat(WallpaperConfigConstants.KEY_P1_FOCUS_X, WallpaperConfigConstants.DEFAULT_P1_FOCUS_X)
             .putFloat(WallpaperConfigConstants.KEY_P1_FOCUS_Y, WallpaperConfigConstants.DEFAULT_P1_FOCUS_Y)
@@ -402,6 +407,7 @@ class WallpaperPreferencesRepository(context: Context) {
             .putInt(WallpaperConfigConstants.KEY_STYLE_B_BLUR_ITERATIONS, WallpaperConfigConstants.DEFAULT_STYLE_B_BLUR_ITERATIONS_INT)
             // 样式 B 的形状参数 (旋转、间隔等) 通常不需要随新图片重置，除非有此设计需求
             // .putInt(WallpaperConfigConstants.KEY_P1_STYLE_TYPE, WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) // P1样式类型是否重置？
+             */
             .putLong(WallpaperConfigConstants.KEY_IMAGE_CONTENT_VERSION, System.currentTimeMillis())
             .apply()
     }

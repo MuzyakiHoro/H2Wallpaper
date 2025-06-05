@@ -136,7 +136,7 @@ object WallpaperConfigConstants {
     /** (样式 B) 默认遮罩层透明度 (例如，0.7f 表示 70% 不透明) */
     const val DEFAULT_STYLE_B_MASK_ALPHA: Float = 1f
     /** (样式 B) 默认驱动遮罩旋转的参数 A (0.0 表示无旋转) */
-    const val DEFAULT_STYLE_B_ROTATION_PARAM_A: Float = 0.0f
+    const val DEFAULT_STYLE_B_ROTATION_PARAM_A: Float = 0.5f
     /** (样式 B) 默认中间间隔大小比例 (例如，屏幕高度的 20%) */
     const val DEFAULT_STYLE_B_GAP_SIZE_RATIO: Float = 0.2f
     /** (样式 B) 默认中间间隔中心位置Y轴比例 (屏幕垂直居中) */

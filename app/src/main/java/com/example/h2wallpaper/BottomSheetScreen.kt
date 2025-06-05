@@ -60,14 +60,13 @@ data class MainCategory(
 val mainCategoriesData = listOf(
     MainCategory("cat_general", "通用", listOf(
         SubCategory("sub_select_image", "选择图片", type = "action", icon = Icons.Filled.Image),
-        SubCategory("sub_bg_color", "背景颜色", type = "color_picker_trigger", icon = Icons.Filled.ColorLens),
         SubCategory("sub_toggle_style_selection", "切换 P1 样式", type = "action", icon = Icons.Filled.Style),
         SubCategory("sub_apply_wallpaper", "应用壁纸", type = "action", icon = Icons.Filled.Wallpaper)
     )),
     MainCategory("cat_p1_foreground", "P1 前景", emptyList()),
     MainCategory("cat_background_effects", "背景效果", listOf(
-        SubCategory(WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS, "模糊半径", type = "parameter_slider", icon = Icons.Filled.Tune),
-        SubCategory(WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR, "模糊降采样", type = "parameter_slider", icon = Icons.Filled.Tune),
+        SubCategory(WallpaperConfigConstants.KEY_BACKGROUND_BLUR_RADIUS, "模糊半径", type = "parameter_slider", icon = Icons.Filled.BlurOn),
+        SubCategory(WallpaperConfigConstants.KEY_BLUR_DOWNSCALE_FACTOR, "模糊降采样", type = "parameter_slider", icon = Icons.Filled.Compress),
         SubCategory(WallpaperConfigConstants.KEY_BLUR_ITERATIONS, "模糊迭代", type = "parameter_slider", icon = Icons.Filled.Tune)
     )),
     MainCategory("cat_scroll_transitions", "滚动与过渡", listOf(
@@ -80,6 +79,7 @@ val mainCategoriesData = listOf(
 
 val p1StyleASubCategories = listOf(
     SubCategory("p1_style_a_customize_action", "调整P1图片", type = "action", icon = Icons.Filled.AspectRatio),
+    SubCategory("sub_bg_color", "背景颜色", type = "color_picker_trigger", icon = Icons.Filled.ColorLens),
     SubCategory(WallpaperConfigConstants.KEY_P1_IMAGE_BOTTOM_FADE_HEIGHT, "底部融入", type = "parameter_slider", icon = Icons.Filled.Tune),
     SubCategory(WallpaperConfigConstants.KEY_P1_SHADOW_RADIUS, "投影半径", type = "parameter_slider", icon = Icons.Filled.Tune),
     SubCategory(WallpaperConfigConstants.KEY_P1_SHADOW_DY, "投影Y偏移", type = "parameter_slider", icon = Icons.Filled.Tune),
@@ -90,7 +90,7 @@ val p1StyleBSubCategories = listOf(
     SubCategory("p1_style_b_customize_action", "调整P1背景", type = "action", icon = Icons.Filled.AspectRatio),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_GAP_POSITION_Y_RATIO, "顶部高度", type = "parameter_slider", icon = Icons.Filled.Tune),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_GAP_SIZE_RATIO, "中间高度", type = "parameter_slider", icon = Icons.Filled.Tune),
-    SubCategory(WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A, "倾斜角度", type = "parameter_slider", icon = Icons.Filled.Tune),
+    SubCategory(WallpaperConfigConstants.KEY_STYLE_B_ROTATION_PARAM_A, "倾斜角度", type = "parameter_slider", icon = Icons.Filled.ChangeHistory),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_MASKS_HORIZONTALLY_FLIPPED, "翻转方向", type = "action", icon = Icons.Filled.Flip ),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_BLUR_RADIUS, "遮罩模糊半径", type = "parameter_slider", icon = Icons.Filled.BlurOn),
     SubCategory(WallpaperConfigConstants.KEY_STYLE_B_BLUR_DOWNSCALE_FACTOR, "遮罩模糊降采样", type = "parameter_slider", icon = Icons.Filled.Compress),
@@ -279,10 +279,10 @@ fun StyleSelectionButtons(viewModel: MainViewModel) {
         val styleAButtonColors = if (currentP1Style == WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary) else ButtonDefaults.outlinedButtonColors()
         val styleBButtonColors = if (currentP1Style == 1) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary) else ButtonDefaults.outlinedButtonColors()
         Button(onClick = { viewModel.selectP1Style(WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) }, modifier = Modifier.fillMaxWidth(0.75f).height(48.dp), shape = RoundedCornerShape(12.dp), colors = styleAButtonColors, border = if (currentP1Style != WallpaperConfigConstants.DEFAULT_P1_STYLE_TYPE) BorderStroke(1.dp, Color.White.copy(alpha = 0.7f)) else null) {
-            Icon(Icons.Filled.Layers, contentDescription = "氢样式", modifier = Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.size(ButtonDefaults.IconSpacing)); Text("氢样式 (经典)")
+            Icon(Icons.Filled.Layers, contentDescription = "氢样式", modifier = Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.size(ButtonDefaults.IconSpacing)); Text("氢样式")
         }
         Button(onClick = { viewModel.selectP1Style(1) }, modifier = Modifier.fillMaxWidth(0.75f).height(48.dp), shape = RoundedCornerShape(12.dp), colors = styleBButtonColors, border = if (currentP1Style != 1) BorderStroke(1.dp, Color.White.copy(alpha = 0.7f)) else null) {
-            Icon(Icons.Filled.Brush, contentDescription = "斜氢样式", modifier = Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.size(ButtonDefaults.IconSpacing)); Text("斜氢样式 (形变)")
+            Icon(Icons.Filled.Brush, contentDescription = "斜氢样式", modifier = Modifier.size(ButtonDefaults.IconSize)); Spacer(Modifier.size(ButtonDefaults.IconSpacing)); Text("氢斜样式")
         }
     }
 }
@@ -525,7 +525,7 @@ fun ParameterAdjustmentSection(viewModel: MainViewModel, subCategory: SubCategor
         }
     }
 
-    Column(modifier = Modifier.padding(horizontal = 0.dp, vertical = 4.dp).defaultMinSize(minHeight = 64.dp)) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).defaultMinSize(minHeight = 64.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(subCategory.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium, color = Color.White)
             Text(displayValueString, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.85f))
