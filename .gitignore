@@ -1,15 +1,29 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
+# Build files
 /build
+/app/build
+
+# Generated APK/AAB
+*.apk
+*.aab
+
+# Baseline Profiles
+*.dm
+
+# Local properties
+local.properties
+
+# IDE files
+.idea/
+.gradle/
+*.iml
+*.ipr
+*.iws
+
+# Log files
+*.log
+
+# Other
+.DS_Store
 /captures
 .externalNativeBuild
 .cxx
-local.properties
