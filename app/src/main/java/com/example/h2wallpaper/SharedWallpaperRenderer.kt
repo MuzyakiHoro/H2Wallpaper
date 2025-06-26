@@ -566,8 +566,10 @@ object SharedWallpaperRenderer {
             var srcY = (normalizedFocusY * bmHeight) - (cropHeightInSourcePx / 2f)
 
             // 5. 边界检查和校正：确保裁剪区域完全位于源图像内部。
-            srcX = srcX.coerceIn(0f, bmWidth - cropWidthInSourcePx)
-            srcY = srcY.coerceIn(0f, bmHeight - cropHeightInSourcePx)
+            // 修正：确保 coerceIn 的第二个参数（最大值）不会小于第一个参数（最小值 0f）。
+            // 如果 bmWidth - cropWidthInSourcePx 为负，则将其视为 0。
+            srcX = srcX.coerceIn(0f, (bmWidth - cropWidthInSourcePx).coerceAtLeast(0f))
+            srcY = srcY.coerceIn(0f, (bmHeight - cropHeightInSourcePx).coerceAtLeast(0f))
             // 再次确保裁剪的宽度和高度不超过源图像在 (srcX, srcY) 之后剩余的有效尺寸。
             val finalCropWidth = min(cropWidthInSourcePx, bmWidth - srcX).roundToInt()
             val finalCropHeight = min(cropHeightInSourcePx, bmHeight - srcY).roundToInt()
